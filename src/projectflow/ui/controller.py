@@ -1,0 +1,216 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable
+from pathlib import Path
+from typing import Protocol
+
+from PySide6.QtWidgets import QMessageBox
+
+from projectflow.config import AppConfig
+from projectflow.core.fiche_service import FicheService, standard_fiche_path
+from projectflow.core.models import ProjectInput
+from projectflow.core.numero import format_project_number, parse_project_number, project_folder_name
+from projectflow.core.project_service import ProjectService
+from projectflow.core.repertoire_service import RepertoireService
+from projectflow.exceptions import ProjectFlowError
+from projectflow.platform.filemanager import open_file_default_app
+from projectflow.services import ServiceContainer
+from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
+from projectflow.ui.dialogs.settings import SettingsDialog
+from projectflow.ui.main_window import MainWindow
+
+
+class ServiceProvider(Protocol):
+    def fiche(self) -> FicheService:
+        """Return fiche service."""
+
+    def repertoire(self) -> RepertoireService:
+        """Return repertoire service."""
+
+    def project(self) -> ProjectService:
+        """Return project service."""
+
+    def sign_out(self) -> None:
+        """Sign out from Microsoft."""
+
+
+class ProjectFlowController:
+    def __init__(
+        self,
+        *,
+        window: MainWindow,
+        config: AppConfig,
+        services: ServiceProvider | None = None,
+        save_config: Callable[[], None] | None = None,
+    ) -> None:
+        self._window = window
+        self._config = config
+        self._services = services or ServiceContainer(config)
+        self._save_config = save_config
+        self._connect()
+
+    def _connect(self) -> None:
+        tab = self._window.creation_tab
+        tab.create_requested.connect(lambda: asyncio.create_task(self.create_project()))
+        self._window.update_confirmed.connect(lambda: asyncio.create_task(self.update_project()))
+        tab.load_requested.connect(self.load_project)
+        tab.open_fiche_requested.connect(self.open_fiche)
+        tab.next_available_requested.connect(lambda: asyncio.create_task(self.next_available()))
+        self._window.settings_requested.connect(self.open_settings)
+        self._window.sign_out_requested.connect(self.sign_out)
+
+    async def create_project(self) -> None:
+        try:
+            project = self._project_from_form()
+            result = await self._services.project().create_project(project)
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return
+        self._save_config_if_available()
+        self._log(f"+ Projet cree: {result.project_dir}")
+
+    async def update_project(self) -> None:
+        try:
+            project = self._project_from_form()
+            result = await self._services.project().update_project(project)
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return
+        self._save_config_if_available()
+        self._log(f"+ Projet mis a jour: {result.fiche_path or result.project_dir}")
+
+    async def next_available(self) -> None:
+        try:
+            year = int(self._window.creation_tab.data().year)
+            result = await self._services.repertoire().next_available(year=year)
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return
+        if result is None:
+            self._log("! Aucun numero disponible trouve")
+            return
+        self._window.creation_tab.set_project_identity(
+            year=str(result.number.year),
+            project_id=result.number.project_id,
+        )
+        self._log(f"+ Numero disponible: {result.number}")
+
+    def load_project(self) -> None:
+        try:
+            number = parse_project_number(self._number_from_form())
+            project_dir = self._project_dir(number)
+            fiche_path = self._choose_fiche(project_dir)
+            fiche_path = self._services.fiche().standardize_fiche_name(
+                project_dir,
+                number,
+                fiche_path=fiche_path,
+            )
+            data = self._services.fiche().read_fiche(fiche_path)
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            self._error(str(exc))
+            return
+
+        self._window.creation_tab.designation_edit.setText(data.designation)
+        self._window.creation_tab.societe_edit.setText(data.societe)
+        self._window.creation_tab.contact_edit.setText(data.contact)
+        self._window.creation_tab.localisation_edit.setText(data.localisation)
+        self._window.creation_tab.gere_par_edit.setText(data.gere_par)
+        if data.number and data.number != str(number):
+            self._log(f"! C3 contient {data.number}, attendu {number}")
+        self._log(f"+ Fiche chargee: {fiche_path.name}")
+
+    def open_fiche(self) -> None:
+        try:
+            number = parse_project_number(self._number_from_form())
+            project_dir = self._project_dir(number)
+            fiche_path = standard_fiche_path(project_dir, number)
+            if not fiche_path.exists():
+                fiche_path = self._services.fiche().locate_fiche(project_dir)
+            opened = open_file_default_app(fiche_path)
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            self._error(str(exc))
+            return
+        if not opened:
+            self._error("Impossible d'ouvrir la fiche avec l'application par defaut.")
+            return
+        self._log(f"+ Fiche ouverte: {fiche_path.name}")
+
+    def open_settings(self) -> None:
+        dialog = SettingsDialog(self._config, parent=self._window)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        dialog.apply_to_config(self._config)
+        self._window.apply_config_labels()
+        self._save_config_if_available()
+        self._log("+ Parametres enregistres")
+
+    def sign_out(self) -> None:
+        answer = QMessageBox.question(
+            self._window,
+            "Se deconnecter",
+            "Effacer la session Microsoft de cet ordinateur ?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._services.sign_out()
+        except ProjectFlowError as exc:
+            self._error(str(exc))
+            return
+        self._config.user.tenant_id = ""
+        self._config.user.user_id = ""
+        self._config.user.display_name = ""
+        self._config.user.email = ""
+        self._save_config_if_available()
+        self._log("+ Session Microsoft effacee")
+
+    def _project_from_form(self) -> ProjectInput:
+        data = self._window.creation_tab.data()
+        number = parse_project_number(
+            format_project_number(data.year, data.project_id, data.subproject_id),
+        )
+        self._config.planner.enabled = data.planner_enabled
+        self._config.planner.due_days = data.due_days
+        return ProjectInput(
+            number=number,
+            designation=data.designation,
+            societe=data.societe,
+            contact=data.contact,
+            localisation=data.localisation,
+            gere_par=data.gere_par,
+        )
+
+    def _number_from_form(self) -> str:
+        data = self._window.creation_tab.data()
+        return format_project_number(data.year, data.project_id, data.subproject_id)
+
+    def _project_dir(self, number: object) -> Path:
+        root = self._config.paths.racine_projets
+        if root is None:
+            raise ValueError("Racine projets non configuree.")
+        parsed = parse_project_number(str(number))
+        return root / str(parsed.year) / project_folder_name(parsed)
+
+    def _choose_fiche(self, project_dir: Path) -> Path:
+        candidates = self._services.fiche().list_candidates(project_dir)
+        if len(candidates) <= 1:
+            return self._services.fiche().locate_fiche(project_dir)
+        dialog = FicheSelectionDialog(candidates, parent=self._window)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            raise ValueError("Selection de fiche annulee.")
+        selected = dialog.selected_path()
+        if selected is None:
+            raise ValueError("Aucune fiche selectionnee.")
+        return selected
+
+    def _log(self, message: str) -> None:
+        self._window.creation_tab.append_log(message)
+
+    def _save_config_if_available(self) -> None:
+        if self._save_config is not None:
+            self._save_config()
+
+    def _error(self, message: str) -> None:
+        self._window.creation_tab.append_log(f"! {message}")
+        QMessageBox.critical(self._window, "ProjectFlow", message)

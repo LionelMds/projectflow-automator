@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  workflow_call:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  quality:
+    name: Ruff, mypy, pytest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+      - name: Ruff
+        run: python -m ruff check .
+      - name: Mypy
+        run: python -m mypy
+      - name: Pytest
+        run: python -m pytest --cov=projectflow --cov-report=term-missing
+      - name: App smoke test
+        shell: bash
+        env:
+          PROJECTFLOW_CLIENT_ID: 00000000-0000-0000-0000-000000000000
+          PROJECTFLOW_SMOKE_EXIT_MS: "500"
+        run: python -m projectflow
