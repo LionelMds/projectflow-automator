@@ -32,6 +32,15 @@ Le workflow release genere `app_settings.json` depuis le secret GitHub `PROJECTF
 avant le build Windows/macOS. Ce secret n'est pas un client secret OAuth : il contient seulement
 l'identifiant public de l'app registration.
 
+## Mises a jour GitHub Releases
+
+Le meme fichier embarque contient `github_owner` et `github_repo`, generes depuis le depot
+GitHub Actions courant. Ces champs activent la verification de mise a jour au demarrage.
+
+Publier un tag `v*.*.*` declenche `.github/workflows/release.yml`, qui attache les artefacts
+Windows `.exe` et macOS `.dmg` a la GitHub Release. Les postes utilisateurs detectent ensuite
+la derniere release via l'API GitHub publique.
+
 ## Consentement admin
 
 Un administrateur Balz Metal peut pre-consentir les scopes avec l'URL `/adminconsent` de l'app registration. Cela evite aux utilisateurs de devoir approuver les permissions individuellement.

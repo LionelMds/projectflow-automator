@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
@@ -21,7 +23,13 @@ from projectflow.services import ServiceContainer
 from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow
-from projectflow.updates import GitHubReleaseChecker
+from projectflow.updates import (
+    GitHubReleaseChecker,
+    UpdateDownloader,
+    launch_install_plan,
+    prepare_install_plan,
+    select_platform_asset,
+)
 
 
 class ServiceProvider(Protocol):
@@ -171,18 +179,51 @@ class ProjectFlowController:
         self._save_config_if_available()
         self._log("+ Session Microsoft effacee")
 
-    async def check_updates(self) -> None:
+    async def check_updates(self, *, show_no_update: bool = True) -> None:
         try:
             update = await GitHubReleaseChecker(ApplicationSettings.load()).check(
                 current_version=__version__,
             )
-        except ProjectFlowError as exc:
+        except (ProjectFlowError, OSError) as exc:
             self._error(str(exc))
             return
         if update is None:
-            self._log("+ ProjectFlow est a jour")
+            if show_no_update:
+                self._log("+ ProjectFlow est a jour")
             return
-        self._log(f"! Mise a jour disponible: {update.latest_version} - {update.release_url}")
+        asset = select_platform_asset(update)
+        if asset is None:
+            self._log(
+                f"! Mise a jour disponible sans artefact compatible: {update.release_url}",
+            )
+            return
+        answer = QMessageBox.question(
+            self._window,
+            "Mise a jour disponible",
+            f"ProjectFlow {update.latest_version} est disponible. "
+            "Telecharger et installer maintenant ?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self._log(f"! Mise a jour disponible: {update.latest_version} - {update.release_url}")
+            return
+
+        try:
+            downloaded_path = await UpdateDownloader().download(
+                asset,
+                version=update.latest_version,
+            )
+            plan = prepare_install_plan(
+                downloaded_path,
+                current_executable=Path(sys.executable),
+                process_id=os.getpid(),
+            )
+            launch_install_plan(plan)
+        except (ProjectFlowError, OSError) as exc:
+            self._error(str(exc))
+            return
+        self._log(f"+ Mise a jour telechargee: {downloaded_path.name}")
+        if plan.should_quit_app:
+            QApplication.quit()
 
     def _project_from_form(self) -> ProjectInput:
         data = self._window.creation_tab.data()

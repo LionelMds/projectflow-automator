@@ -95,6 +95,18 @@ En developpement, `PROJECTFLOW_CLIENT_ID` garde la priorite. En release GitHub A
 le fichier est genere automatiquement depuis le secret `PROJECTFLOW_CLIENT_ID` et le depot
 GitHub courant. Les champs GitHub activent la verification de mise a jour via GitHub Releases.
 
+## Mises a jour
+
+Au demarrage, l'application interroge `releases/latest` du depot GitHub configure. Si une
+version plus recente est disponible, ProjectFlow selectionne automatiquement l'artefact adapte :
+
+- Windows : `.exe`
+- macOS : `.dmg`, puis `.zip` si aucun DMG n'est publie
+
+Le fichier est telecharge dans le dossier de donnees utilisateur ProjectFlow. Sous Windows,
+l'app lance un helper PowerShell qui attend la fermeture de ProjectFlow, remplace l'executable,
+puis redemarre l'application. Sous macOS, le DMG/ZIP est ouvert avec l'application par defaut.
+
 ## Packaging
 
 Build Windows local :

@@ -20,6 +20,10 @@ def data_dir() -> Path:
     return Path(user_data_dir(APP_NAME, APP_AUTHOR))
 
 
+def updates_dir() -> Path:
+    return data_dir() / "updates"
+
+
 def logs_dir() -> Path:
     return Path(user_log_dir(APP_NAME, APP_AUTHOR))
 
