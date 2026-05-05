@@ -21,7 +21,6 @@ DEFAULT_SCOPES = [
     "Mail.ReadWrite",
     "MailboxSettings.Read",
     "Tasks.ReadWrite",
-    "Group.Read.All",
 ]
 
 

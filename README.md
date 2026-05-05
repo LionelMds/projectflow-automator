@@ -146,3 +146,6 @@ Le MVP couvre deja :
 - parametrage et deconnexion Microsoft.
 
 Les appels Microsoft reels necessitent une app registration multi-tenant configuree selon [docs/admin-setup.md](docs/admin-setup.md).
+Le MVP evite les permissions Graph qui imposent un consentement admin, notamment
+`Group.Read.All`; les utilisateurs se connectent simplement depuis ProjectFlow et consentent
+les permissions deleguees si la politique du tenant l'autorise.

@@ -15,9 +15,17 @@ Permissions deleguees Microsoft Graph :
 - `Mail.ReadWrite`
 - `MailboxSettings.Read`
 - `Tasks.ReadWrite`
-- `Group.Read.All`
 
-Le Client ID est public et peut etre embarque dans l'application. Aucun secret client ne doit etre ajoute a l'application desktop.
+Ces permissions deleguees ne necessitent normalement pas de consentement administrateur dans
+une configuration Microsoft 365 standard. Chaque utilisateur consent une fois lors de la
+connexion Microsoft dans ProjectFlow. Aucun utilisateur ne doit aller modifier Entra ID.
+
+Ne pas ajouter `Group.Read.All` pour le MVP sans admin : cette permission demande souvent un
+consentement administrateur et n'est pas necessaire au flux ProjectFlow actuel. Planner est
+utilise via `Tasks.ReadWrite`.
+
+Le Client ID est public et peut etre embarque dans l'application. Aucun secret client ne doit
+etre ajoute a l'application desktop.
 
 ## Client ID embarque
 
@@ -41,9 +49,16 @@ Publier un tag `v*.*.*` declenche `.github/workflows/release.yml`, qui attache l
 Windows `.exe` et macOS `.dmg` a la GitHub Release. Les postes utilisateurs detectent ensuite
 la derniere release via l'API GitHub publique.
 
-## Consentement admin
+## Consentement admin optionnel
 
-Un administrateur Balz Metal peut pre-consentir les scopes avec l'URL `/adminconsent` de l'app registration. Cela evite aux utilisateurs de devoir approuver les permissions individuellement.
+Un administrateur Balz Metal peut pre-consentir les scopes avec l'URL `/adminconsent` de l'app
+registration. Cela evite aux utilisateurs de devoir approuver les permissions individuellement,
+mais ce n'est pas obligatoire si le tenant autorise le consentement utilisateur pour les
+permissions deleguees ci-dessus.
+
+Si le tenant bloque tout consentement utilisateur, Microsoft impose une validation admin. Dans
+ce cas, ProjectFlow ne peut pas contourner cette politique de securite ; il faut soit faire
+valider l'app une fois par un admin, soit utiliser uniquement le mode demo/local.
 
 ## Distribution
 
