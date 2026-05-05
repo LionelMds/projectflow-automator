@@ -70,7 +70,7 @@ def run(argv: Sequence[str]) -> int:
             onboarding_service.close()
 
     window = MainWindow(config)
-    ProjectFlowController(
+    controller = ProjectFlowController(
         window=window,
         config=config,
         services=services,
@@ -78,6 +78,8 @@ def run(argv: Sequence[str]) -> int:
     )
     window.show()
     logger.info("app.started")
+    if not demo_mode:
+        QTimer.singleShot(0, lambda: asyncio.create_task(controller.check_updates()))
     _schedule_smoke_exit(app, logger, smoke_delay_ms)
 
     with event_loop:

@@ -86,13 +86,14 @@ Format :
 ```json
 {
   "microsoft_client_id": "00000000-0000-0000-0000-000000000000",
-  "github_owner": "",
-  "github_repo": ""
+  "github_owner": "balz-metal",
+  "github_repo": "projectflow-automator"
 }
 ```
 
 En developpement, `PROJECTFLOW_CLIENT_ID` garde la priorite. En release GitHub Actions,
-le fichier est genere automatiquement depuis le secret `PROJECTFLOW_CLIENT_ID`.
+le fichier est genere automatiquement depuis le secret `PROJECTFLOW_CLIENT_ID` et le depot
+GitHub courant. Les champs GitHub activent la verification de mise a jour via GitHub Releases.
 
 ## Packaging
 

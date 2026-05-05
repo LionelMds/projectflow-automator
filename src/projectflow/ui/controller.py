@@ -7,6 +7,8 @@ from typing import Protocol
 
 from PySide6.QtWidgets import QMessageBox
 
+from projectflow import __version__
+from projectflow.application_settings import ApplicationSettings
 from projectflow.config import AppConfig
 from projectflow.core.fiche_service import FicheService, standard_fiche_path
 from projectflow.core.models import ProjectInput
@@ -19,6 +21,7 @@ from projectflow.services import ServiceContainer
 from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow
+from projectflow.updates import GitHubReleaseChecker
 
 
 class ServiceProvider(Protocol):
@@ -59,6 +62,9 @@ class ProjectFlowController:
         tab.next_available_requested.connect(lambda: asyncio.create_task(self.next_available()))
         self._window.settings_requested.connect(self.open_settings)
         self._window.sign_out_requested.connect(self.sign_out)
+        self._window.update_check_requested.connect(
+            lambda: asyncio.create_task(self.check_updates()),
+        )
 
     async def create_project(self) -> None:
         try:
@@ -164,6 +170,19 @@ class ProjectFlowController:
         self._config.user.email = ""
         self._save_config_if_available()
         self._log("+ Session Microsoft effacee")
+
+    async def check_updates(self) -> None:
+        try:
+            update = await GitHubReleaseChecker(ApplicationSettings.load()).check(
+                current_version=__version__,
+            )
+        except ProjectFlowError as exc:
+            self._error(str(exc))
+            return
+        if update is None:
+            self._log("+ ProjectFlow est a jour")
+            return
+        self._log(f"! Mise a jour disponible: {update.latest_version} - {update.release_url}")
 
     def _project_from_form(self) -> ProjectInput:
         data = self._window.creation_tab.data()

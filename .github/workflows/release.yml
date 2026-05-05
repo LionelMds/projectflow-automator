@@ -24,15 +24,24 @@ jobs:
         shell: python
         env:
           PROJECTFLOW_CLIENT_ID: ${{ secrets.PROJECTFLOW_CLIENT_ID }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           import json
           import os
           from pathlib import Path
 
+          owner, repo = os.environ.get("GITHUB_REPOSITORY", "/").split("/", 1)
           path = Path("src/projectflow/resources/app_settings.json")
           path.parent.mkdir(parents=True, exist_ok=True)
           path.write_text(
-              json.dumps({"microsoft_client_id": os.environ.get("PROJECTFLOW_CLIENT_ID", "")}, indent=2),
+              json.dumps(
+                  {
+                      "microsoft_client_id": os.environ.get("PROJECTFLOW_CLIENT_ID", ""),
+                      "github_owner": owner,
+                      "github_repo": repo,
+                  },
+                  indent=2,
+              ),
               encoding="utf-8",
           )
       - name: Build exe
@@ -58,15 +67,24 @@ jobs:
         shell: python
         env:
           PROJECTFLOW_CLIENT_ID: ${{ secrets.PROJECTFLOW_CLIENT_ID }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           import json
           import os
           from pathlib import Path
 
+          owner, repo = os.environ.get("GITHUB_REPOSITORY", "/").split("/", 1)
           path = Path("src/projectflow/resources/app_settings.json")
           path.parent.mkdir(parents=True, exist_ok=True)
           path.write_text(
-              json.dumps({"microsoft_client_id": os.environ.get("PROJECTFLOW_CLIENT_ID", "")}, indent=2),
+              json.dumps(
+                  {
+                      "microsoft_client_id": os.environ.get("PROJECTFLOW_CLIENT_ID", ""),
+                      "github_owner": owner,
+                      "github_repo": repo,
+                  },
+                  indent=2,
+              ),
               encoding="utf-8",
           )
       - name: Build app

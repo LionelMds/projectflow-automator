@@ -12,6 +12,7 @@ from projectflow.ui.creation_tab import CreationTab
 
 class MainWindow(QMainWindow):
     update_confirmed = Signal()
+    update_check_requested = Signal()
     settings_requested = Signal()
     sign_out_requested = Signal()
 
@@ -38,13 +39,16 @@ class MainWindow(QMainWindow):
         email_text = self._config.user.email
         header = self.menuBar().addMenu(f"{user_text}  {email_text}".strip())
         settings_action = QAction("Parametres", self)
+        update_action = QAction("Rechercher une mise a jour", self)
         sign_out_action = QAction("Se deconnecter", self)
         about_action = QAction("A propos", self)
         header.addAction(settings_action)
+        header.addAction(update_action)
         header.addAction(sign_out_action)
         header.addSeparator()
         header.addAction(about_action)
         settings_action.triggered.connect(self.settings_requested.emit)
+        update_action.triggered.connect(self.update_check_requested.emit)
         sign_out_action.triggered.connect(self.sign_out_requested.emit)
         about_action.triggered.connect(self._show_about)
 
