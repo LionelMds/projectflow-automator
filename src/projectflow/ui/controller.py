@@ -18,7 +18,7 @@ from projectflow.core.numero import format_project_number, parse_project_number,
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireService
 from projectflow.exceptions import ProjectFlowError
-from projectflow.platform.filemanager import open_file_default_app
+from projectflow.platform.filemanager import open_file_default_app, open_path
 from projectflow.services import ServiceContainer
 from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
@@ -96,6 +96,8 @@ class ProjectFlowController:
         if not result.project_dir_created and not existing_update:
             self._log("+ Informations existantes conservees")
         self._log_creation_integrations(result)
+        self._open_project_folder(result)
+        self._show_creation_confirmation(result)
 
     async def update_project(self) -> None:
         try:
@@ -323,6 +325,27 @@ class ProjectFlowController:
             self._log("! Outlook active mais aucun dossier Outlook cree")
         else:
             self._log("-> Outlook desactive")
+
+    def _open_project_folder(self, result: ProjectCreationResult) -> None:
+        try:
+            open_path(Path(result.project_dir))
+        except (ProjectFlowError, OSError) as exc:
+            self._log(f"! Projet cree, mais ouverture du dossier impossible: {exc}")
+            return
+        self._log("+ Dossier projet ouvert")
+
+    def _show_creation_confirmation(self, result: ProjectCreationResult) -> None:
+        title = "Projet cree" if result.project_dir_created else "Projet pret"
+        message = (
+            "Le projet a ete cree avec succes."
+            if result.project_dir_created
+            else "Le projet existant a ete reapplique avec succes."
+        )
+        QMessageBox.information(
+            self._window,
+            title,
+            f"{message}\n\nDossier:\n{result.project_dir}",
+        )
 
     def _save_config_if_available(self) -> None:
         if self._save_config is not None:

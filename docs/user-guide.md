@@ -33,6 +33,7 @@ Windows sans automation locale n'est pas supporte pour cette fonction.
 
 ProjectFlow cree le dossier projet, copie le dossier de reference sans ecraser, remplit la
 fiche client, inscrit la date de creation en `B9`, et met a jour le repertoire chantier local.
+Apres une creation reussie, ProjectFlow ouvre le dossier projet et affiche une confirmation.
 
 Si le dossier projet existe deja, `Creer` peut etre relance pour reappliquer Outlook et
 l'epinglage Explorer sans toucher aux informations existantes. Si les informations du

@@ -2,6 +2,7 @@
 
 - Premier lancement sans config existante affiche l'assistant de chemins.
 - Creation d'un projet principal cree le dossier annee/projet.
+- Apres creation, le dossier projet s'ouvre et un message de confirmation s'affiche.
 - La copie du dossier de reference n'ecrase pas les fichiers existants.
 - La fiche est renommee au format `{numero} - Fiche dossier clients.xlsx`.
 - La fiche contient la date de creation dans `B9`.

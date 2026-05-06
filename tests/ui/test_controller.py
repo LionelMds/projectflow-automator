@@ -79,8 +79,35 @@ def _window(qtbot: Any, tmp_path: Path) -> tuple[MainWindow, AppConfig, FakeServ
     return window, config, services
 
 
+@pytest.fixture(autouse=True)
+def project_creation_post_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, list[Any]]:
+    calls: dict[str, list[Any]] = {"opened": [], "infos": []}
+
+    def record_opened(path: Path) -> None:
+        calls["opened"].append(path)
+
+    def record_information(_parent: object, title: str, text: str) -> None:
+        calls["infos"].append((title, text))
+
+    monkeypatch.setattr(
+        "projectflow.ui.controller.open_path",
+        record_opened,
+    )
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QMessageBox.information",
+        record_information,
+    )
+    return calls
+
+
 @pytest.mark.asyncio
-async def test_controller_create_project_reads_form(qtbot: Any, tmp_path: Path) -> None:
+async def test_controller_create_project_reads_form(
+    qtbot: Any,
+    tmp_path: Path,
+    project_creation_post_actions: dict[str, list[Any]],
+) -> None:
     window, _config, services = _window(qtbot, tmp_path)
     controller = ProjectFlowController(
         window=window,
@@ -94,6 +121,8 @@ async def test_controller_create_project_reads_form(qtbot: Any, tmp_path: Path) 
     assert services.project_service.created[0][0].designation == "Escalier"
     assert services.project_service.created[0][1:] == (False, True)
     assert "Projet cree" in window.creation_tab.logs.toPlainText()
+    assert project_creation_post_actions["opened"] == [Path("C:/tmp/2026-4995")]
+    assert project_creation_post_actions["infos"][0][0] == "Projet cree"
 
 
 @pytest.mark.asyncio
