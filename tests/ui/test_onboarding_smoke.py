@@ -43,3 +43,30 @@ def test_creation_tab_uses_expanding_field_widths(qtbot) -> None:  # type: ignor
     assert tab.minimumWidth() >= 760
     assert tab.project_id_edit.minimumWidth() > tab.year_combo.minimumWidth()
     assert tab.designation_edit.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+
+
+def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # type: ignore[no-untyped-def]
+    tab = CreationTab()
+    qtbot.addWidget(tab)
+    tab.year_combo.addItem("2026")
+    tab.year_combo.setCurrentText("2026")
+    tab.project_id_edit.setText("4995")
+    tab.subproject_edit.setText("2")
+    tab.designation_edit.setText("Escalier")
+    tab.societe_edit.setText("Balz")
+    tab.contact_edit.setText("Lionel")
+    tab.localisation_edit.setText("Zurich")
+    tab.gere_par_edit.setText("LM")
+    tab.append_log("+ Log conserve")
+
+    tab.reset_button.click()
+
+    assert tab.year_combo.currentText() == "2026"
+    assert tab.project_id_edit.text() == ""
+    assert tab.subproject_edit.text() == ""
+    assert tab.designation_edit.text() == ""
+    assert tab.societe_edit.text() == ""
+    assert tab.contact_edit.text() == ""
+    assert tab.localisation_edit.text() == ""
+    assert tab.gere_par_edit.text() == ""
+    assert "+ Log conserve" in tab.logs.toPlainText()

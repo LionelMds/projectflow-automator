@@ -39,6 +39,9 @@ l'epinglage Explorer sans toucher aux informations existantes. Si les informatio
 formulaire different de la fiche existante, ProjectFlow demande confirmation avant de
 mettre a jour la fiche et le repertoire.
 
+Le bouton `Reinitialiser` vide uniquement les champs du formulaire pour passer a un autre
+projet. Il ne modifie aucun dossier, aucune fiche, aucun repertoire et aucune configuration.
+
 ## Creer un sous-projet
 
 Ajouter le numero de sous-projet dans le champ inline, par exemple `2` pour `2026-4995-2`.

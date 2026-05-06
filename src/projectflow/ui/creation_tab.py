@@ -67,6 +67,18 @@ class CreationTab(QWidget):
     def append_log(self, message: str) -> None:
         self.logs.append(message)
 
+    def reset_form_fields(self) -> None:
+        for edit in [
+            self.project_id_edit,
+            self.subproject_edit,
+            self.designation_edit,
+            self.societe_edit,
+            self.contact_edit,
+            self.localisation_edit,
+            self.gere_par_edit,
+        ]:
+            edit.clear()
+
     def _build_ui(self) -> None:
         self.setMinimumWidth(760)
         root_layout = QVBoxLayout(self)
@@ -145,15 +157,18 @@ class CreationTab(QWidget):
 
         actions = QHBoxLayout()
         actions.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.reset_button = QPushButton("Reinitialiser")
         self.load_button = QPushButton("Charger")
         self.open_button = QPushButton("Ouvrir fiche")
         self.create_button = QPushButton("Creer")
         self.update_button = QPushButton("Mettre a jour")
         self.create_button.setDefault(True)
+        self.reset_button.clicked.connect(self.reset_form_fields)
         self.load_button.clicked.connect(self.load_requested.emit)
         self.open_button.clicked.connect(self.open_fiche_requested.emit)
         self.create_button.clicked.connect(self.create_requested.emit)
         self.update_button.clicked.connect(self.update_requested.emit)
+        actions.addWidget(self.reset_button)
         actions.addWidget(self.load_button)
         actions.addWidget(self.open_button)
         actions.addWidget(self.create_button)

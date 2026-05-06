@@ -11,6 +11,8 @@
 - `Charger` lit une fiche existante sans renommer ni creer une fiche standard vierge.
 - Relancer `Creer` sur un projet existant reapplique Outlook/epingle sans modifier la fiche
   ni le repertoire quand les informations sont identiques.
+- `Reinitialiser` vide les champs du formulaire sans modifier les chemins, logs, fichiers ou
+  integrations.
 - Un sous-projet cree une fiche distincte sans creer de dossier et insere sa ligne dans le
   groupe parent, sans utiliser une ligne disponible de projet principal.
 - La ligne repertoire d'un sous-projet contient uniquement les valeurs saisies par l'utilisateur ;
