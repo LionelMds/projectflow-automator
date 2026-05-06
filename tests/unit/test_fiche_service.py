@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from projectflow.core.fiche_service import FicheService, standard_fiche_path
 from projectflow.core.models import ProjectInput
@@ -23,7 +24,7 @@ def test_fill_fiche_prefers_fiche_candidate_and_renames_to_standard(tmp_path: Pa
         gere_par="LM",
     )
 
-    fiche_path = FicheService().fill_fiche(project_dir, project)
+    fiche_path = FicheService(today=lambda: date(2026, 5, 6)).fill_fiche(project_dir, project)
 
     assert fiche_path == standard_fiche_path(project_dir, project.number)
     loaded = FicheService().read_fiche(fiche_path)
@@ -33,6 +34,22 @@ def test_fill_fiche_prefers_fiche_candidate_and_renames_to_standard(tmp_path: Pa
     assert loaded.designation == "Escalier"
     assert loaded.localisation == "Zurich"
     assert loaded.gere_par == "LM"
+    workbook = load_workbook(fiche_path)
+    assert workbook.active["B9"].value.date() == date(2026, 5, 6)
+    assert workbook.active["B9"].number_format == "DD.MM.YYYY"
+
+
+def test_fill_fiche_keeps_existing_creation_date(tmp_path: Path) -> None:
+    path = tmp_path / "modele fiche.xlsx"
+    workbook = Workbook()
+    workbook.active["B9"] = date(2025, 1, 2)
+    workbook.save(path)
+    project = ProjectInput(number=parse_project_number("2026-4995"))
+
+    fiche_path = FicheService(today=lambda: date(2026, 5, 6)).fill_fiche(tmp_path, project)
+
+    loaded = load_workbook(fiche_path)
+    assert loaded.active["B9"].value.date() == date(2025, 1, 2)
 
 
 def test_read_fiche_strips_prefixes_case_insensitively(tmp_path: Path) -> None:

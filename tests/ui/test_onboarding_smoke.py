@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from PySide6.QtWidgets import QSizePolicy
+
 from projectflow.config import AppConfig
+from projectflow.ui.creation_tab import CreationTab
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.onboarding.wizard import OnboardingWizard
 
@@ -31,3 +34,12 @@ def test_main_window_smoke(qtbot) -> None:  # type: ignore[no-untyped-def]
     qtbot.addWidget(window)
 
     assert window.windowTitle() == "ProjectFlow Automator - Balz Metal Sa"
+
+
+def test_creation_tab_uses_expanding_field_widths(qtbot) -> None:  # type: ignore[no-untyped-def]
+    tab = CreationTab()
+    qtbot.addWidget(tab)
+
+    assert tab.minimumWidth() >= 760
+    assert tab.project_id_edit.minimumWidth() > tab.year_combo.minimumWidth()
+    assert tab.designation_edit.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding

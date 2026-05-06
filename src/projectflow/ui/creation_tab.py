@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QTextEdit,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -68,16 +68,21 @@ class CreationTab(QWidget):
         self.logs.append(message)
 
     def _build_ui(self) -> None:
+        self.setMinimumWidth(760)
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(20, 16, 20, 16)
         root_layout.setSpacing(14)
 
         self.config_frame = QFrame()
         config_layout = QFormLayout(self.config_frame)
+        _configure_form_layout(config_layout)
         self.racine_label = QLabel("Non configure")
         self.reference_label = QLabel("Non configure")
         self.repertoire_label = QLabel("Non configure")
+        for label in [self.racine_label, self.reference_label, self.repertoire_label]:
+            _configure_value_label(label)
         settings_button = QPushButton("Parametres")
+        settings_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         settings_button.clicked.connect(self.settings_requested.emit)
         config_layout.addRow("Racine projets", self.racine_label)
         config_layout.addRow("Dossier de reference", self.reference_label)
@@ -87,18 +92,24 @@ class CreationTab(QWidget):
 
         identity_frame = QFrame()
         identity_layout = QFormLayout(identity_frame)
+        _configure_form_layout(identity_layout)
         row = QHBoxLayout()
+        row.setSpacing(8)
         self.year_combo = QComboBox()
         self.year_combo.setEditable(True)
+        _configure_text_control(self.year_combo, min_chars=6)
         self.project_id_edit = QLineEdit()
         self.project_id_edit.setPlaceholderText("4995")
+        _configure_text_control(self.project_id_edit, min_chars=12)
         self.subproject_edit = QLineEdit()
         self.subproject_edit.setPlaceholderText("Optionnel")
-        self.next_button = QToolButton()
+        _configure_text_control(self.subproject_edit, min_chars=12)
+        self.next_button = QPushButton("Suivant disponible")
+        self.next_button.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         self.next_button.setText("Suivant disponible")
         self.next_button.clicked.connect(self.next_available_requested.emit)
         row.addWidget(self.year_combo, 1)
-        row.addWidget(self.project_id_edit, 2)
+        row.addWidget(self.project_id_edit, 3)
         row.addWidget(self.subproject_edit, 1)
         row.addWidget(self.next_button)
         identity_layout.addRow("Annee / ID / Sous-projet", row)
@@ -108,10 +119,19 @@ class CreationTab(QWidget):
 
         client_frame = QFrame()
         client_layout = QFormLayout(client_frame)
+        _configure_form_layout(client_layout)
         self.societe_edit = QLineEdit()
         self.contact_edit = QLineEdit()
         self.localisation_edit = QLineEdit()
         self.gere_par_edit = QLineEdit()
+        for edit in [
+            self.designation_edit,
+            self.societe_edit,
+            self.contact_edit,
+            self.localisation_edit,
+            self.gere_par_edit,
+        ]:
+            _configure_text_control(edit, min_chars=48)
         client_layout.addRow("Societe", self.societe_edit)
         client_layout.addRow("Contact", self.contact_edit)
         client_layout.addRow("Localisation", self.localisation_edit)
@@ -139,3 +159,22 @@ class CreationTab(QWidget):
         actions.addWidget(self.create_button)
         actions.addWidget(self.update_button)
         root_layout.addLayout(actions)
+
+
+def _configure_form_layout(layout: QFormLayout) -> None:
+    layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+    layout.setHorizontalSpacing(14)
+    layout.setVerticalSpacing(10)
+
+
+def _configure_value_label(label: QLabel) -> None:
+    label.setWordWrap(True)
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+
+def _configure_text_control(widget: QWidget, *, min_chars: int) -> None:
+    width = widget.fontMetrics().horizontalAdvance("M" * min_chars) + 24
+    widget.setMinimumWidth(width)
+    widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)

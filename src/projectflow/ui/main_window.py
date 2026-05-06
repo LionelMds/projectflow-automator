@@ -19,7 +19,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._config = config
         self.setWindowTitle("ProjectFlow Automator - Balz Metal Sa")
-        self.resize(980, 760)
+        self.resize(1120, 760)
+        self.setMinimumSize(900, 680)
 
         central = QWidget()
         layout = QHBoxLayout(central)

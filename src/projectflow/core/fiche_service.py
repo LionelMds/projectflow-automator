@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Final, cast
 
@@ -38,6 +40,9 @@ class FicheCandidate:
 
 
 class FicheService:
+    def __init__(self, today: Callable[[], date] = date.today) -> None:
+        self._today = today
+
     def list_candidates(self, project_dir: Path) -> list[FicheCandidate]:
         candidates: list[FicheCandidate] = []
         for path in project_dir.glob("*.xlsx"):
@@ -87,6 +92,7 @@ class FicheService:
         _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
         if project.gere_par.strip():
             worksheet["C6"] = project.gere_par.strip()
+        self._write_creation_date(worksheet)
         workbook.save(fiche_path)
         return fiche_path
 
@@ -109,6 +115,7 @@ class FicheService:
         _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
         if project.gere_par.strip():
             worksheet["C6"] = project.gere_par.strip()
+        self._write_creation_date(worksheet)
         workbook.save(target_path)
         return target_path
 
@@ -123,6 +130,13 @@ class FicheService:
             localisation=_strip_prefix(_cell_text(worksheet["D6"].value)),
             gere_par=_cell_text(worksheet["C6"].value),
         )
+
+    def _write_creation_date(self, worksheet: Worksheet) -> None:
+        cell = worksheet["B9"]
+        if cell.value not in (None, ""):
+            return
+        cell.value = self._today()
+        cell.number_format = "DD.MM.YYYY"
 
 
 def standard_fiche_path(project_dir: Path, number: ProjectNumber) -> Path:

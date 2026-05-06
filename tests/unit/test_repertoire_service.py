@@ -68,9 +68,12 @@ class FakeWorkbook:
 
 
 @pytest.mark.asyncio
-async def test_next_available_returns_first_main_project_with_empty_description() -> None:
+async def test_next_available_returns_first_main_project_with_empty_info_columns() -> None:
     workbook = FakeWorkbook([
         ["2026-4995", "", "", "", "Occupe"],
+        ["2026-4996", "Balz", "", "", ""],
+        ["2026-4997", "", "Lionel", "", ""],
+        ["2026-4998", "", "", "Zurich", ""],
         ["2026-4996", "", "", "", ""],
         ["2026-4996-1", "", "", "", ""],
     ])
@@ -79,7 +82,7 @@ async def test_next_available_returns_first_main_project_with_empty_description(
 
     assert result is not None
     assert str(result.number) == "2026-4996"
-    assert result.row_index == 1
+    assert result.row_index == 4
     assert workbook.session_count == 1
 
 
@@ -108,6 +111,15 @@ async def test_upsert_project_rejects_filled_description_without_force() -> None
     project = ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier")
 
     with pytest.raises(ProjectCreationError):
+        await RepertoireService(workbook).upsert_project(project)
+
+
+@pytest.mark.asyncio
+async def test_upsert_project_rejects_filled_client_columns_without_force() -> None:
+    workbook = FakeWorkbook([["2026-4995", "", "Contact existant", "", "", ""]])
+    project = ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier")
+
+    with pytest.raises(ProjectCreationError, match="colonnes B a E"):
         await RepertoireService(workbook).upsert_project(project)
 
 
@@ -157,4 +169,21 @@ async def test_upsert_subproject_does_not_replace_unrelated_sixth_column() -> No
 
     assert workbook.updated_ranges == [
         ("2026", "A2:F2", [["2026-4995-2", "Balz", "", "", "Variante", "Code interne"]]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_upsert_existing_subproject_updates_existing_row_without_inserting() -> None:
+    workbook = FakeWorkbook([
+        ["2026-4995", "Balz", "", "", "Escalier", "Code interne"],
+        ["2026-4995-2", "Balz", "", "", "Ancienne variante", "Sous-code"],
+        ["2026-5000", "", "", "", "", ""],
+    ])
+    project = ProjectInput(number=parse_project_number("2026-4995-2"), designation="Variante")
+
+    await RepertoireService(workbook).upsert_project(project)
+
+    assert workbook.inserted_ranges == []
+    assert workbook.updated_ranges == [
+        ("2026", "A2:F2", [["2026-4995-2", "Balz", "", "", "Variante", "Sous-code"]]),
     ]

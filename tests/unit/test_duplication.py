@@ -31,5 +31,10 @@ def test_assert_description_empty_rejects_non_empty_description() -> None:
         assert_description_empty(["2026-4995", "", "", "", "Projet"], force_overwrite=False)
 
 
+def test_assert_description_empty_rejects_non_empty_client_columns() -> None:
+    with pytest.raises(ProjectCreationError):
+        assert_description_empty(["2026-4995", "", "Contact", "", ""], force_overwrite=False)
+
+
 def test_assert_description_empty_allows_force_overwrite() -> None:
     assert_description_empty(["2026-4995", "", "", "", "Projet"], force_overwrite=True)

@@ -10,6 +10,7 @@ from projectflow.core.duplication import (
     assert_description_empty,
     duplicate_subproject_row,
     find_project_row,
+    project_info_columns_empty,
 )
 from projectflow.core.models import ProjectInput
 from projectflow.core.numero import ProjectNumber, parse_project_number
@@ -75,8 +76,7 @@ class RepertoireService:
             rows = await self._workbook.used_range_values(worksheet_name)
             for index, row in enumerate(rows):
                 number = _cell_as_text(row, 0)
-                description = _cell_as_text(row, 4)
-                if MAIN_PROJECT_RE.fullmatch(number) and description == "":
+                if MAIN_PROJECT_RE.fullmatch(number) and project_info_columns_empty(row):
                     return NextAvailableProject(
                         number=parse_project_number(number),
                         row_index=index,
@@ -120,6 +120,17 @@ class RepertoireService:
         worksheet_name: str,
     ) -> None:
         tables = await self._workbook.list_tables(worksheet_name)
+        existing_index = find_project_row(rows, project.number)
+        if existing_index is not None:
+            existing_row = _ensure_width(rows[existing_index], width=6)
+            updated_row = _apply_project_to_row(existing_row, project)
+            await self._workbook.update_range_values(
+                worksheet_name,
+                _row_address(existing_index, width=len(updated_row)),
+                [updated_row],
+            )
+            return
+
         insert_index, duplicated_row = duplicate_subproject_row(rows, project.number)
         updated_row = _apply_project_to_row(_ensure_width(duplicated_row, width=6), project)
 

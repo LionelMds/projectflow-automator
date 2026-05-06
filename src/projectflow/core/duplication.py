@@ -7,7 +7,7 @@ from projectflow.core.numero import ProjectNumber
 from projectflow.exceptions import ProjectCreationError
 
 PROJECT_NUMBER_COLUMN = 0
-DESCRIPTION_COLUMN = 4
+PROJECT_INFO_COLUMNS = (1, 2, 3, 4)
 
 
 def find_project_row(rows: list[list[Any]], number: ProjectNumber) -> int | None:
@@ -21,12 +21,15 @@ def find_project_row(rows: list[list[Any]], number: ProjectNumber) -> int | None
 def assert_description_empty(row: list[Any], *, force_overwrite: bool) -> None:
     if force_overwrite:
         return
-    description = _cell_as_text(row, DESCRIPTION_COLUMN)
-    if description:
+    if not project_info_columns_empty(row):
         raise ProjectCreationError(
-            "La colonne E du repertoire contient deja une description. "
+            "Les colonnes B a E du repertoire contiennent deja des informations. "
             "Utilisez 'Mettre a jour' pour remplacer.",
         )
+
+
+def project_info_columns_empty(row: list[Any]) -> bool:
+    return all(_cell_as_text(row, column) == "" for column in PROJECT_INFO_COLUMNS)
 
 
 def duplicate_subproject_row(

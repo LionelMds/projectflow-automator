@@ -32,7 +32,7 @@ Windows sans automation locale n'est pas supporte pour cette fonction.
 4. Cliquer sur `Creer`.
 
 ProjectFlow cree le dossier projet, copie le dossier de reference sans ecraser, remplit la
-fiche client et met a jour le repertoire chantier local.
+fiche client, inscrit la date de creation en `B9`, et met a jour le repertoire chantier local.
 
 Si le dossier projet existe deja, `Creer` peut etre relance pour reappliquer Outlook et
 l'epinglage Explorer sans toucher aux informations existantes. Si les informations du
@@ -45,6 +45,9 @@ Ajouter le numero de sous-projet dans le champ inline, par exemple `2` pour `202
 
 Le sous-projet reutilise le dossier parent. Il cree uniquement une nouvelle fiche et une ligne
 de repertoire.
+
+La ligne du sous-projet est inseree dans le groupe du projet parent. Elle ne consomme pas une
+ligne disponible reservee aux projets principaux.
 
 ## Mettre a jour
 
