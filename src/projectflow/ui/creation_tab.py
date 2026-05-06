@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
@@ -12,7 +11,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QSpinBox,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
@@ -30,8 +28,6 @@ class CreationFormData:
     contact: str
     localisation: str
     gere_par: str
-    planner_enabled: bool
-    due_days: int
 
 
 class CreationTab(QWidget):
@@ -56,8 +52,6 @@ class CreationTab(QWidget):
             contact=self.contact_edit.text().strip(),
             localisation=self.localisation_edit.text().strip(),
             gere_par=self.gere_par_edit.text().strip(),
-            planner_enabled=self.planner_checkbox.isChecked(),
-            due_days=self.due_days_spin.value(),
         )
 
     def set_project_identity(self, *, year: str, project_id: str, subproject_id: str = "") -> None:
@@ -123,20 +117,6 @@ class CreationTab(QWidget):
         client_layout.addRow("Localisation", self.localisation_edit)
         client_layout.addRow("Gere par", self.gere_par_edit)
         root_layout.addWidget(client_frame)
-
-        planner_frame = QFrame()
-        planner_layout = QFormLayout(planner_frame)
-        self.planner_checkbox = QCheckBox("Creer une tache Planner")
-        self.plan_label = QLabel("Aucun plan selectionne")
-        self.bucket_label = QLabel("Aucun bucket selectionne")
-        self.due_days_spin = QSpinBox()
-        self.due_days_spin.setRange(0, 365)
-        self.due_days_spin.setValue(7)
-        planner_layout.addRow("", self.planner_checkbox)
-        planner_layout.addRow("Plan", self.plan_label)
-        planner_layout.addRow("Bucket", self.bucket_label)
-        planner_layout.addRow("Echeance (jours)", self.due_days_spin)
-        root_layout.addWidget(planner_frame)
 
         self.logs = QTextEdit()
         self.logs.setReadOnly(True)

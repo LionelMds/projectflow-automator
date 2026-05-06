@@ -103,9 +103,9 @@ class RepertoireService:
                 message = f"Projet introuvable dans le repertoire: {project.number}"
                 raise ProjectCreationError(message)
 
-            row = _ensure_width(rows[row_index], width=6)
+            row = _ensure_width(rows[row_index], width=5)
             assert_description_empty(row, force_overwrite=force_overwrite)
-            updated_row = _apply_project_to_row(row, project)
+            updated_row = _apply_project_to_row(row[:5], project)
             await self._workbook.update_range_values(
                 worksheet_name,
                 _row_address(row_index, width=len(updated_row)),
@@ -146,13 +146,12 @@ class RepertoireService:
 
 
 def _apply_project_to_row(row: list[Any], project: ProjectInput) -> list[Any]:
-    updated = _ensure_width(list(row), width=6)
+    updated = _ensure_width(list(row), width=5)
     updated[0] = str(project.number)
     _write_if_non_empty(updated, 1, project.societe)
     _write_if_non_empty(updated, 2, project.contact)
     _write_if_non_empty(updated, 3, project.localisation)
     _write_if_non_empty(updated, 4, project.designation)
-    _write_if_non_empty(updated, 5, project.gere_par)
     return updated
 
 
@@ -190,7 +189,7 @@ def _cell_as_text(row: list[Any], column: int) -> str:
 def _table_identifier(table: dict[str, Any]) -> str:
     raw_id = table.get("id") or table.get("name")
     if not isinstance(raw_id, str) or raw_id == "":
-        raise ProjectCreationError("Tableau structure sans identifiant Graph.")
+        raise ProjectCreationError("Tableau structure sans identifiant.")
     return raw_id
 
 

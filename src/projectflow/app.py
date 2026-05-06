@@ -9,11 +9,8 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
-from projectflow.auth.msal_client import MsalAuthClient
-from projectflow.auth.onboarding_service import MicrosoftOnboardingService
 from projectflow.config import AppConfig
 from projectflow.demo import build_demo_environment
-from projectflow.exceptions import AuthError
 from projectflow.logging import configure_logging, get_logger
 from projectflow.services import ServiceContainer
 from projectflow.ui.controller import ProjectFlowController, ServiceProvider
@@ -46,28 +43,17 @@ def run(argv: Sequence[str]) -> int:
         save_config = config.save
 
     if not config.is_onboarded:
-        onboarding_service = (
-            None if smoke_delay_ms is not None else _build_onboarding_service(logger)
-        )
-        wizard = OnboardingWizard(config, microsoft_service=onboarding_service)
+        wizard = OnboardingWizard(config)
         if smoke_delay_ms is not None:
             logger.info("app.smoke_exit.onboarding_scheduled", delay_ms=smoke_delay_ms)
             QTimer.singleShot(smoke_delay_ms, wizard.reject)
         if wizard.exec() != wizard.DialogCode.Accepted:
             logger.info("app.onboarding.cancelled")
             return 0
-        if wizard.demo_requested:
-            config, services = build_demo_environment()
-            save_config = None
-            logger.info(
-                "app.demo_mode.enabled_from_onboarding",
-                root=str(config.paths.racine_projets),
-            )
-        else:
-            config = wizard.config
-            config.save()
-        if onboarding_service is not None:
-            onboarding_service.close()
+        config = wizard.config
+        config.save()
+        services = ServiceContainer(config)
+        save_config = config.save
 
     window = MainWindow(config)
     controller = ProjectFlowController(
@@ -88,16 +74,6 @@ def run(argv: Sequence[str]) -> int:
     with event_loop:
         result = event_loop.run_forever()
         return result if isinstance(result, int) else 0
-
-
-def _build_onboarding_service(
-    logger: structlog.stdlib.BoundLogger,
-) -> MicrosoftOnboardingService | None:
-    try:
-        return MicrosoftOnboardingService(MsalAuthClient())
-    except AuthError as exc:
-        logger.warning("app.onboarding.auth_unavailable", error=str(exc))
-        return None
 
 
 def _schedule_smoke_exit(

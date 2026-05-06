@@ -1,38 +1,31 @@
 # Architecture
 
-ProjectFlow separe strictement UI, logique metier et integrations Microsoft Graph.
+ProjectFlow separe strictement UI, logique metier et integrations locales.
 
 ```mermaid
 flowchart LR
   UI["PySide6 UI"] --> Service["ProjectService"]
+  Service --> FS["Systeme fichiers"]
   Service --> Fiche["FicheService openpyxl"]
   Service --> Repertoire["RepertoireService"]
-  Repertoire --> Excel["Graph Excel API"]
-  Service --> Outlook["Graph Outlook"]
-  Service --> Planner["Graph Planner"]
-  Excel --> Graph["GraphClient httpx async"]
-  Outlook --> Graph
-  Planner --> Graph
-  Graph --> Auth["MSAL + cache keyring"]
+  Repertoire --> Excel["Excel local openpyxl"]
+  Service -. optionnel .-> Outlook["Connecteur Outlook local"]
+  Outlook --> WinOutlook["Profil Outlook classique Windows"]
 ```
 
-## Authentification
+## Premier lancement
 
 ```mermaid
 sequenceDiagram
   participant User as Utilisateur
   participant App as ProjectFlow
-  participant Browser as Navigateur
-  participant Entra as Microsoft Entra ID
-  participant Keyring as Keychain/DPAPI
+  participant Config as Config locale
 
-  User->>App: Se connecter
-  App->>App: Demarre serveur loopback localhost
-  App->>Browser: Ouvre auth_uri MSAL PKCE
-  Browser->>Entra: Sign-in + consentement
-  Entra->>App: Redirection localhost avec code
-  App->>Entra: Echange code contre tokens
-  App->>Keyring: Sauve cache MSAL chiffre
+  User->>App: Ouvre l'application
+  App->>User: Assistant de configuration
+  User->>App: Choisit racine, reference, repertoire Excel
+  App->>Config: Sauvegarde les chemins
+  App->>User: Affiche le formulaire projet
 ```
 
 ## Creation Projet Principal
@@ -44,16 +37,16 @@ sequenceDiagram
   participant FS as Systeme fichiers
   participant Fiche as FicheService
   participant Rep as RepertoireService
-  participant Graph as Microsoft Graph
+  participant Excel as Excel local
+  participant Outlook as Outlook local
 
   UI->>Service: create_project(ProjectInput)
   Service->>FS: Cree annee/projet si absent
   Service->>FS: Copie reference sans ecraser
   Service->>Fiche: Remplit fiche dossier
   Service->>Rep: upsert_project
-  Rep->>Graph: Excel range PATCH
-  Service->>Graph: Outlook ensure folders
-  Service->>Graph: Planner create task
+  Rep->>Excel: Lit/ecrit le fichier local
+  Service->>Outlook: Cree l'arborescence si activee
 ```
 
 ## Sous-projet
@@ -63,11 +56,11 @@ sequenceDiagram
   participant Service as ProjectService
   participant Fiche as FicheService
   participant Rep as RepertoireService
-  participant Excel as Graph Excel API
+  participant Excel as Excel local
 
   Service->>Fiche: Duplique/remplit fiche sous-projet
   Service->>Rep: upsert_project sous-projet
-  Rep->>Excel: Lit usedRange
+  Rep->>Excel: Lit le repertoire
   Rep->>Rep: Duplique ligne parent apres groupe consecutif
-  Rep->>Excel: Ajoute ligne table ou PATCH range
+  Rep->>Excel: Insere/met a jour la ligne localement
 ```

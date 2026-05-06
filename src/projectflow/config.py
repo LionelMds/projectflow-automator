@@ -30,6 +30,10 @@ class RepertoireChantierConfig(BaseModel):
     def is_configured(self) -> bool:
         return bool(self.drive_id and self.item_id)
 
+    @property
+    def has_target(self) -> bool:
+        return self.is_configured or bool(self.display_path.strip())
+
 
 class PathsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -50,21 +54,6 @@ class PathsConfig(BaseModel):
         return value
 
 
-class PlannerConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    plan_id: str = ""
-    plan_name: str = ""
-    bucket_id: str = ""
-    bucket_name: str = ""
-    due_days: int = Field(default=7, ge=0, le=365)
-
-    @property
-    def is_configured(self) -> bool:
-        return bool(self.enabled and self.plan_id and self.bucket_id)
-
-
 class OutlookFolderConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -75,12 +64,33 @@ class OutlookFolderConfig(BaseModel):
 class OutlookConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    enabled: bool = False
     company_domain: str = "balzmetal.ch"
+    mailbox_email: str = ""
+    mailbox_store_id: str = ""
+    base_folder: str = "root"
     arborescence: list[OutlookFolderConfig] = Field(
-        default_factory=lambda: [OutlookFolderConfig(name="[YYYY]", children=[
-            OutlookFolderConfig(name="[YYYY]-[XXXX]"),
-        ])],
+        default_factory=lambda: [
+            OutlookFolderConfig(
+                name="[YYYY]",
+                children=[
+                    OutlookFolderConfig(name="[YYYY]-[XXXX]"),
+                ],
+            )
+        ],
     )
+
+    @property
+    def target_mailbox(self) -> str:
+        return self.mailbox_email.strip()
+
+    @property
+    def target_store_id(self) -> str:
+        return self.mailbox_store_id.strip()
+
+    @property
+    def target_base_folder(self) -> str:
+        return self.base_folder.strip() or "root"
 
 
 class AppConfig(BaseModel):
@@ -89,16 +99,14 @@ class AppConfig(BaseModel):
     version: int = 1
     user: UserConfig = Field(default_factory=UserConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
-    planner: PlannerConfig = Field(default_factory=PlannerConfig)
     outlook: OutlookConfig = Field(default_factory=OutlookConfig)
 
     @property
     def is_onboarded(self) -> bool:
         return bool(
-            self.user.user_id
-            and self.paths.racine_projets
+            self.paths.racine_projets
             and self.paths.dossier_reference
-            and self.paths.repertoire_chantier.is_configured,
+            and self.paths.repertoire_chantier.has_target,
         )
 
     @classmethod
@@ -127,4 +135,6 @@ def migrate_config(data: dict[str, Any]) -> dict[str, Any]:
     version = data.get("version", 1)
     if version != 1:
         raise ConfigError(f"Version de configuration non supportee: {version}")
+    for key in ("micro" "soft" "_client_id", "plan" "ner"):
+        data.pop(key, None)
     return data

@@ -85,7 +85,7 @@ async def test_next_available_returns_first_main_project_with_empty_description(
 
 @pytest.mark.asyncio
 async def test_upsert_project_updates_existing_empty_row() -> None:
-    workbook = FakeWorkbook([["2026-4995", "", "", "", "", ""]])
+    workbook = FakeWorkbook([["2026-4995", "", "", "", "", "Ne pas toucher"]])
     project = ProjectInput(
         number=parse_project_number("2026-4995"),
         designation="Escalier",
@@ -98,7 +98,7 @@ async def test_upsert_project_updates_existing_empty_row() -> None:
     await RepertoireService(workbook).upsert_project(project)
 
     assert workbook.updated_ranges == [
-        ("2026", "A1:F1", [["2026-4995", "Balz", "Lionel", "Zurich", "Escalier", "LM"]]),
+        ("2026", "A1:E1", [["2026-4995", "Balz", "Lionel", "Zurich", "Escalier"]]),
     ]
 
 
@@ -125,6 +125,7 @@ async def test_upsert_subproject_appends_to_structured_table_when_present() -> N
     assert workbook.table_rows[0][1][0] == 0
     assert workbook.table_rows[0][1][1] == "2026-4995-2"
     assert workbook.table_rows[0][1][5] == "Variante"
+    assert workbook.table_rows[0][1][6] == "LM"
 
 
 @pytest.mark.asyncio
@@ -140,4 +141,20 @@ async def test_upsert_subproject_inserts_range_before_writing_without_table() ->
     assert workbook.inserted_ranges == [("2026", "A2:F2", "Down")]
     assert workbook.updated_ranges == [
         ("2026", "A2:F2", [["2026-4995-2", "Balz", "", "", "Variante", "LM"]]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_upsert_subproject_does_not_replace_unrelated_sixth_column() -> None:
+    workbook = FakeWorkbook([["2026-4995", "Balz", "", "", "Escalier", "Code interne"]])
+    project = ProjectInput(
+        number=parse_project_number("2026-4995-2"),
+        designation="Variante",
+        gere_par="LM",
+    )
+
+    await RepertoireService(workbook).upsert_project(project)
+
+    assert workbook.updated_ranges == [
+        ("2026", "A2:F2", [["2026-4995-2", "Balz", "", "", "Variante", "Code interne"]]),
     ]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 from openpyxl import Workbook
@@ -16,6 +15,7 @@ from projectflow.core.project_service import (
     outlook_folder_paths,
     render_outlook_folder_name,
 )
+from projectflow.exceptions import ConfigError
 
 
 class FakeRepertoireService:
@@ -29,32 +29,22 @@ class FakeRepertoireService:
 class FakeOutlook:
     def __init__(self) -> None:
         self.paths: list[list[str]] = []
+        self.validated = False
+
+    async def validate_target(self) -> None:
+        self.validated = True
 
     async def ensure_folder_path(self, names: list[str]) -> object:
         self.paths.append(names)
         return object()
 
 
-class FakePlanner:
-    def __init__(self) -> None:
-        self.tasks: list[dict[str, Any]] = []
+class BrokenOutlook:
+    async def validate_target(self) -> None:
+        raise ConfigError("Compte Outlook introuvable")
 
-    async def create_task(
-        self,
-        *,
-        plan_id: str,
-        bucket_id: str,
-        title: str,
-        due_days: int,
-    ) -> object:
-        self.tasks.append(
-            {
-                "plan_id": plan_id,
-                "bucket_id": bucket_id,
-                "title": title,
-                "due_days": due_days,
-            },
-        )
+    async def ensure_folder_path(self, names: list[str]) -> object:
+        del names
         return object()
 
 
@@ -76,9 +66,14 @@ def test_outlook_folder_templates_render_project_placeholders() -> None:
     arborescence = [
         OutlookFolderConfig(
             name="Clients",
-            children=[OutlookFolderConfig(name="[YYYY]", children=[
-                OutlookFolderConfig(name="[NUMERO] - [XXXX]"),
-            ])],
+            children=[
+                OutlookFolderConfig(
+                    name="[YYYY]",
+                    children=[
+                        OutlookFolderConfig(name="[NUMERO] - [XXXX]"),
+                    ],
+                )
+            ],
         ),
     ]
 
@@ -96,20 +91,16 @@ async def test_create_project_creates_folder_copies_reference_and_calls_integrat
     config.paths.dossier_reference.mkdir(parents=True)
     workbook = Workbook()
     workbook.save(config.paths.dossier_reference / "modele fiche.xlsx")
-    config.planner.enabled = True
-    config.planner.plan_id = "plan"
-    config.planner.bucket_id = "bucket"
+    config.outlook.enabled = True
 
     repertoire = FakeRepertoireService()
     outlook = FakeOutlook()
-    planner = FakePlanner()
     pinned: list[Path] = []
     service = ProjectService(
         config=config,
         fiche_service=FicheService(),
         repertoire_service=repertoire,  # type: ignore[arg-type]
         outlook=outlook,
-        planner=planner,
         pin_path=pinned.append,
     )
     project = ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier")
@@ -121,9 +112,146 @@ async def test_create_project_creates_folder_copies_reference_and_calls_integrat
     assert Path(result.project_dir) == project_dir
     assert (project_dir / "2026-4995 - Fiche dossier clients.xlsx").exists()
     assert repertoire.calls == [(project, False)]
+    assert outlook.validated is True
     assert outlook.paths == [["2026", "2026-4995"]]
-    assert planner.tasks[0]["title"] == "2026-4995 - Escalier"
     assert pinned == [project_dir]
+
+
+@pytest.mark.asyncio
+async def test_recreate_existing_project_reapplies_integrations_without_updating_info(
+    tmp_path: Path,
+) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir(parents=True)
+    Workbook().save(config.paths.dossier_reference / "modele fiche.xlsx")
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    fiche_path = project_dir / "2026-4995 - Fiche dossier clients.xlsx"
+    Workbook().save(fiche_path)
+    config.outlook.enabled = True
+
+    repertoire = FakeRepertoireService()
+    outlook = FakeOutlook()
+    pinned: list[Path] = []
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=repertoire,  # type: ignore[arg-type]
+        outlook=outlook,
+        pin_path=pinned.append,
+    )
+    project = ProjectInput(number=parse_project_number("2026-4995"), designation="Nouveau texte")
+
+    result = await service.create_project(project, update_existing_info=False)
+
+    assert result.project_dir_created is False
+    assert result.fiche_path == str(fiche_path)
+    assert not (project_dir / "modele fiche.xlsx").exists()
+    assert repertoire.calls == []
+    assert outlook.paths == [["2026", "2026-4995"]]
+    assert pinned == [project_dir]
+
+
+@pytest.mark.asyncio
+async def test_recreate_existing_project_can_force_information_update(tmp_path: Path) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir(parents=True)
+    Workbook().save(config.paths.dossier_reference / "modele fiche.xlsx")
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    Workbook().save(project_dir / "2026-4995 - Fiche dossier clients.xlsx")
+    repertoire = FakeRepertoireService()
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=repertoire,  # type: ignore[arg-type]
+    )
+    project = ProjectInput(number=parse_project_number("2026-4995"), designation="Corrige")
+
+    await service.create_project(project, force_overwrite=True, update_existing_info=True)
+
+    assert repertoire.calls == [(project, True)]
+
+
+@pytest.mark.asyncio
+async def test_create_project_skips_outlook_when_disabled(tmp_path: Path) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir(parents=True)
+    workbook = Workbook()
+    workbook.save(config.paths.dossier_reference / "modele fiche.xlsx")
+
+    repertoire = FakeRepertoireService()
+    outlook = FakeOutlook()
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=repertoire,  # type: ignore[arg-type]
+        outlook=outlook,
+    )
+
+    result = await service.create_project(
+        ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier"),
+    )
+
+    assert result.outlook_folder_created is False
+    assert outlook.validated is False
+    assert outlook.paths == []
+
+
+@pytest.mark.asyncio
+async def test_create_project_validates_outlook_before_file_operations(tmp_path: Path) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir(parents=True)
+    workbook = Workbook()
+    workbook.save(config.paths.dossier_reference / "modele fiche.xlsx")
+    config.outlook.enabled = True
+
+    repertoire = FakeRepertoireService()
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=repertoire,  # type: ignore[arg-type]
+        outlook=BrokenOutlook(),
+    )
+
+    with pytest.raises(ConfigError, match="Compte Outlook introuvable"):
+        await service.create_project(
+            ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier"),
+        )
+
+    assert not (config.paths.racine_projets / "2026" / "2026-4995").exists()
+    assert repertoire.calls == []
+
+
+@pytest.mark.asyncio
+async def test_create_project_requires_local_outlook_connector_when_enabled(tmp_path: Path) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir(parents=True)
+    workbook = Workbook()
+    workbook.save(config.paths.dossier_reference / "modele fiche.xlsx")
+    config.outlook.enabled = True
+
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=FakeRepertoireService(),  # type: ignore[arg-type]
+        outlook=None,
+    )
+
+    with pytest.raises(ConfigError, match="connecteur Outlook local"):
+        await service.create_project(
+            ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier"),
+        )
 
 
 @pytest.mark.asyncio
@@ -136,13 +264,11 @@ async def test_create_subproject_reuses_parent_folder_without_integrations(tmp_p
     workbook.save(project_dir / "2026-4995 - Fiche dossier clients.xlsx")
     repertoire = FakeRepertoireService()
     outlook = FakeOutlook()
-    planner = FakePlanner()
     service = ProjectService(
         config=config,
         fiche_service=FicheService(),
         repertoire_service=repertoire,  # type: ignore[arg-type]
         outlook=outlook,
-        planner=planner,
     )
     project = ProjectInput(number=parse_project_number("2026-4995-2"), designation="Variante")
 
@@ -152,4 +278,3 @@ async def test_create_subproject_reuses_parent_folder_without_integrations(tmp_p
     assert (project_dir / "2026-4995-2 - Fiche dossier clients.xlsx").exists()
     assert repertoire.calls == [(project, False)]
     assert outlook.paths == []
-    assert planner.tasks == []

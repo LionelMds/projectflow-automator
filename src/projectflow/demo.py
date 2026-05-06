@@ -13,6 +13,7 @@ from projectflow.core.fiche_service import FICHE_SUFFIX, FicheService
 from projectflow.core.local_repertoire import LocalWorkbookGateway
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireService
+from projectflow.outlook.local import create_local_outlook_client
 from projectflow.platform.paths import data_dir
 
 
@@ -35,10 +36,8 @@ class DemoServiceContainer:
             config=self.config,
             fiche_service=self.fiche(),
             repertoire_service=self.repertoire(),
+            outlook=create_local_outlook_client(self.config.outlook),
         )
-
-    def sign_out(self) -> None:
-        return
 
 
 def build_demo_environment(
@@ -69,7 +68,6 @@ def build_demo_environment(
         item_id=str(repertoire_path),
         display_path=str(repertoire_path),
     )
-    config.planner.enabled = False
     services = DemoServiceContainer(config=config, workbook_path=repertoire_path)
     return config, services
 

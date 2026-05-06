@@ -1,6 +1,11 @@
 # ProjectFlow Automator
 
-Application desktop cross-platform pour automatiser la creation de projets Balz Metal Sa.
+Application desktop pour automatiser la creation de projets Balz Metal Sa.
+
+ProjectFlow fonctionne maintenant en local : dossiers projet, fiche Excel, repertoire chantier
+Excel synchronise sur le poste, et Outlook local en option. Aucun identifiant d'application,
+aucune connexion cloud et aucune configuration de portail admin ne sont necessaires pour
+utiliser le flux principal.
 
 ## Developpement
 
@@ -21,22 +26,24 @@ $env:QT_QPA_PLATFORM='offscreen'; py -m pytest --cov=projectflow --cov-report=te
 ## Lancement
 
 ```powershell
-$env:PROJECTFLOW_CLIENT_ID='<client-id-azure-ad>'
 py -m projectflow
 ```
 
-La premiere ouverture affiche l'onboarding : connexion Microsoft, configuration des chemins, puis selection Planner.
+La premiere ouverture affiche un assistant simple pour choisir :
+
+- la racine projets,
+- le dossier de reference,
+- le repertoire chantier Excel.
 
 Smoke test non bloquant :
 
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
-$env:PROJECTFLOW_CLIENT_ID='<client-id-azure-ad>'
 $env:PROJECTFLOW_SMOKE_EXIT_MS='1000'
 py -m projectflow
 ```
 
-Mode demo local sans Microsoft Graph :
+## Mode demo
 
 PowerShell :
 
@@ -64,18 +71,20 @@ Ce mode cree un environnement local dans le dossier de donnees utilisateur Proje
 - `Modeles/10-Racine/`
 - `Repertoire chantier demo.xlsx`
 
-Il permet de tester `Suivant disponible`, `Creer`, `Charger`, `Ouvrir fiche` et `Mettre a jour` sans compte Microsoft.
+Il permet de tester `Suivant disponible`, `Creer`, `Charger`, `Ouvrir fiche`,
+`Mettre a jour`, et Outlook local si un profil Outlook classique est disponible.
 
 ## Variables utiles
 
-- `PROJECTFLOW_CLIENT_ID` : client id Azure AD public embarquable.
-- `PROJECTFLOW_APP_SETTINGS` : chemin vers un `app_settings.json` local pour tester un Client ID embarque sans modifier le code source.
-- `PROJECTFLOW_SMOKE_EXIT_MS` : ferme automatiquement l'app apres le delai indique, pour tests smoke.
-- `PROJECTFLOW_DEMO_MODE` : lance l'app avec un repertoire Excel local et sans appels Graph.
+- `PROJECTFLOW_APP_SETTINGS` : chemin vers un `app_settings.json` local pour tester la
+  verification de mise a jour sans modifier le code source.
+- `PROJECTFLOW_SMOKE_EXIT_MS` : ferme automatiquement l'app apres le delai indique, pour
+  tests smoke.
+- `PROJECTFLOW_DEMO_MODE` : lance l'app avec un repertoire Excel local de demonstration.
 
-## Configuration applicative embarquee
+## Configuration embarquee
 
-Pour une distribution reelle, le Client ID Microsoft peut etre integre dans :
+La verification de mise a jour peut etre configuree dans :
 
 ```text
 src/projectflow/resources/app_settings.json
@@ -85,15 +94,12 @@ Format :
 
 ```json
 {
-  "microsoft_client_id": "00000000-0000-0000-0000-000000000000",
   "github_owner": "balz-metal",
   "github_repo": "projectflow-automator"
 }
 ```
 
-En developpement, `PROJECTFLOW_CLIENT_ID` garde la priorite. En release GitHub Actions,
-le fichier est genere automatiquement depuis le secret `PROJECTFLOW_CLIENT_ID` et le depot
-GitHub courant. Les champs GitHub activent la verification de mise a jour via GitHub Releases.
+Ces champs activent la verification de mise a jour via GitHub Releases.
 
 ## Mises a jour
 
@@ -135,17 +141,20 @@ au push d'un tag `v*.*.*`.
 
 ## Etat courant
 
-Le MVP couvre deja :
+Le MVP couvre :
 
 - validation des numeros `YYYY-NNN[-S]`,
 - creation projet principal et sous-projet,
-- fiche dossier local via `openpyxl`,
-- repertoire chantier via Microsoft Graph Excel avec sessions persistantes,
-- Outlook via arborescence configurable,
-- Planner via selection onboarding Graph,
-- parametrage et deconnexion Microsoft.
+- copie non destructive du dossier de reference,
+- fiche dossier locale via `openpyxl`,
+- repertoire chantier via fichier Excel local synchronise sur le poste,
+- conservation de la colonne F du repertoire, le champ `Gere par` restant limite a la fiche,
+- bouton `Suivant disponible`,
+- `Charger`, `Ouvrir fiche`, `Mettre a jour`,
+- relance de `Creer` sur projet existant pour reappliquer Outlook/epingle sans ecraser,
+- Outlook local Windows via le profil Outlook classique, desactive par defaut,
+- assistant de premiere configuration base uniquement sur les chemins.
 
-Les appels Microsoft reels necessitent une app registration multi-tenant configuree selon [docs/admin-setup.md](docs/admin-setup.md).
-Le MVP evite les permissions Graph qui imposent un consentement admin, notamment
-`Group.Read.All`; les utilisateurs se connectent simplement depuis ProjectFlow et consentent
-les permissions deleguees si la politique du tenant l'autorise.
+Outlook local utilise le profil Outlook classique du poste Windows : `Parametres` -> `Outlook`
+-> `Detecter`, puis selection du compte ou magasin cible. macOS reste a valider separement,
+car Outlook Mac ne fournit pas le meme modele d'automation locale.

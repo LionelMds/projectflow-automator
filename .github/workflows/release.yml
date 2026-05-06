@@ -23,7 +23,6 @@ jobs:
       - name: Embed app settings
         shell: python
         env:
-          PROJECTFLOW_CLIENT_ID: ${{ secrets.PROJECTFLOW_CLIENT_ID }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           import json
@@ -36,7 +35,6 @@ jobs:
           path.write_text(
               json.dumps(
                   {
-                      "microsoft_client_id": os.environ.get("PROJECTFLOW_CLIENT_ID", ""),
                       "github_owner": owner,
                       "github_repo": repo,
                   },
@@ -66,7 +64,6 @@ jobs:
       - name: Embed app settings
         shell: python
         env:
-          PROJECTFLOW_CLIENT_ID: ${{ secrets.PROJECTFLOW_CLIENT_ID }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           import json
@@ -79,7 +76,6 @@ jobs:
           path.write_text(
               json.dumps(
                   {
-                      "microsoft_client_id": os.environ.get("PROJECTFLOW_CLIENT_ID", ""),
                       "github_owner": owner,
                       "github_repo": repo,
                   },

@@ -14,7 +14,6 @@ class MainWindow(QMainWindow):
     update_confirmed = Signal()
     update_check_requested = Signal()
     settings_requested = Signal()
-    sign_out_requested = Signal()
 
     def __init__(self, config: AppConfig) -> None:
         super().__init__()
@@ -35,21 +34,16 @@ class MainWindow(QMainWindow):
         self._connect_signals()
 
     def _build_header(self) -> None:
-        user_text = self._config.user.display_name or "Non connecte"
-        email_text = self._config.user.email
-        header = self.menuBar().addMenu(f"{user_text}  {email_text}".strip())
+        header = self.menuBar().addMenu("ProjectFlow")
         settings_action = QAction("Parametres", self)
         update_action = QAction("Rechercher une mise a jour", self)
-        sign_out_action = QAction("Se deconnecter", self)
         about_action = QAction("A propos", self)
         header.addAction(settings_action)
         header.addAction(update_action)
-        header.addAction(sign_out_action)
         header.addSeparator()
         header.addAction(about_action)
         settings_action.triggered.connect(self.settings_requested.emit)
         update_action.triggered.connect(self.update_check_requested.emit)
-        sign_out_action.triggered.connect(self.sign_out_requested.emit)
         about_action.triggered.connect(self._show_about)
 
     def _build_shortcuts(self) -> None:
@@ -79,14 +73,6 @@ class MainWindow(QMainWindow):
         self.creation_tab.repertoire_label.setText(
             paths.repertoire_chantier.display_path or "Non configure",
         )
-        self.creation_tab.planner_checkbox.setChecked(self._config.planner.enabled)
-        self.creation_tab.plan_label.setText(
-            self._config.planner.plan_name or "Aucun plan selectionne",
-        )
-        self.creation_tab.bucket_label.setText(
-            self._config.planner.bucket_name or "Aucun bucket selectionne",
-        )
-        self.creation_tab.due_days_spin.setValue(self._config.planner.due_days)
 
     def _confirm_update(self) -> None:
         answer = QMessageBox.question(

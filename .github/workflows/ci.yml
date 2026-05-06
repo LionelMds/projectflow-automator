@@ -34,6 +34,5 @@ jobs:
       - name: App smoke test
         shell: bash
         env:
-          PROJECTFLOW_CLIENT_ID: 00000000-0000-0000-0000-000000000000
           PROJECTFLOW_SMOKE_EXIT_MS: "500"
         run: python -m projectflow

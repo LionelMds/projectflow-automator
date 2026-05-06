@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 from projectflow.config import AppConfig, OutlookFolderConfig
-from projectflow.core.fiche_service import FicheService
+from projectflow.core.fiche_service import FicheService, standard_fiche_path
 from projectflow.core.models import ProjectCreationResult, ProjectInput
 from projectflow.core.numero import project_folder_name
 from projectflow.core.repertoire_service import RepertoireService
@@ -14,20 +14,11 @@ from projectflow.exceptions import ConfigError, ProjectCreationError
 
 
 class OutlookGateway(Protocol):
+    async def validate_target(self) -> None:
+        """Validate that the configured Outlook target is available."""
+
     async def ensure_folder_path(self, names: list[str]) -> object:
         """Ensure the nested Outlook folder path exists."""
-
-
-class PlannerGateway(Protocol):
-    async def create_task(
-        self,
-        *,
-        plan_id: str,
-        bucket_id: str,
-        title: str,
-        due_days: int,
-    ) -> object:
-        """Create a Planner task."""
 
 
 PinPathCallable = Callable[[Path], None]
@@ -41,49 +32,53 @@ class ProjectService:
         fiche_service: FicheService,
         repertoire_service: RepertoireService,
         outlook: OutlookGateway | None = None,
-        planner: PlannerGateway | None = None,
         pin_path: PinPathCallable | None = None,
     ) -> None:
         self._config = config
         self._fiche_service = fiche_service
         self._repertoire_service = repertoire_service
         self._outlook = outlook
-        self._planner = planner
         self._pin_path = pin_path
 
-    async def create_project(self, project: ProjectInput) -> ProjectCreationResult:
+    async def create_project(
+        self,
+        project: ProjectInput,
+        *,
+        force_overwrite: bool = False,
+        update_existing_info: bool = True,
+    ) -> ProjectCreationResult:
         if project.is_subproject:
             return await self.create_subproject(project)
 
         root = self._required_path(self._config.paths.racine_projets, "racine projets")
-        reference = self._required_path(
-            self._config.paths.dossier_reference,
-            "dossier de reference",
-        )
+        outlook = await self._validated_outlook()
         project_dir = root / str(project.number.year) / project_folder_name(project.number)
         project_dir_created = not project_dir.exists()
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        copy_reference_tree(reference, project_dir)
-        fiche_path = self._fiche_service.fill_fiche(project_dir, project)
-        await self._repertoire_service.upsert_project(project)
+        fiche_path: Path | None = None
+        if project_dir_created or update_existing_info:
+            reference = self._required_path(
+                self._config.paths.dossier_reference,
+                "dossier de reference",
+            )
+            copy_reference_tree(reference, project_dir)
+            fiche_path = self._fiche_service.fill_fiche(project_dir, project)
+            await self._repertoire_service.upsert_project(
+                project,
+                force_overwrite=force_overwrite,
+            )
+        else:
+            existing_fiche_path = standard_fiche_path(project_dir, project.number)
+            if existing_fiche_path.exists():
+                fiche_path = existing_fiche_path
 
         outlook_created = False
-        if self._outlook is not None:
+        if outlook is not None:
             folder_paths = outlook_folder_paths(project, self._config.outlook.arborescence)
             for folder_path in folder_paths:
-                await self._outlook.ensure_folder_path(folder_path)
+                await outlook.ensure_folder_path(folder_path)
             outlook_created = bool(folder_paths)
-
-        planner_created = False
-        if self._planner is not None and self._config.planner.is_configured:
-            await self._planner.create_task(
-                plan_id=self._config.planner.plan_id,
-                bucket_id=self._config.planner.bucket_id,
-                title=f"{project.number} - {project.designation}".strip(" -"),
-                due_days=self._config.planner.due_days,
-            )
-            planner_created = True
 
         if self._pin_path is not None:
             self._pin_path(project_dir)
@@ -91,9 +86,8 @@ class ProjectService:
         return ProjectCreationResult(
             project_dir_created=project_dir_created,
             project_dir=str(project_dir),
-            fiche_path=str(fiche_path),
+            fiche_path=str(fiche_path) if fiche_path is not None else None,
             outlook_folder_created=outlook_created,
-            planner_task_created=planner_created,
         )
 
     async def create_subproject(self, project: ProjectInput) -> ProjectCreationResult:
@@ -136,6 +130,16 @@ class ProjectService:
         if path is None:
             raise ConfigError(f"Chemin manquant: {label}")
         return path
+
+    async def _validated_outlook(self) -> OutlookGateway | None:
+        if not self._config.outlook.enabled:
+            return None
+        if self._outlook is None:
+            raise ConfigError(
+                "Creation Outlook activee mais aucun connecteur Outlook local n'est configure.",
+            )
+        await self._outlook.validate_target()
+        return self._outlook
 
 
 def copy_reference_tree(reference_dir: Path, project_dir: Path) -> None:

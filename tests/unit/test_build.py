@@ -29,7 +29,9 @@ def test_windows_pyinstaller_command_uses_onefile(tmp_path: Path) -> None:
     assert "--windowed" in command
     assert "--workpath" in command
     assert "--specpath" in command
-    assert "keyring.backends.Windows" in command
+    assert "win32com.client" in command
+    assert "pythoncom" in command
+    assert "pywintypes" in command
     assert "mypy" in command
     assert "ProjectFlowAutomator" in command
     assert command[-1] == str(tmp_path / "src" / "projectflow" / "__main__.py")
@@ -39,7 +41,6 @@ def test_macos_pyinstaller_command_uses_app_bundle(tmp_path: Path) -> None:
     command = pyinstaller_command(BuildSettings(project_root=tmp_path, target="macos"))
 
     assert "--onedir" in command
-    assert "keyring.backends.macOS" in command
     assert "ProjectFlow Automator" in command
     assert "ch.balzmetal.projectflow" in command
 

@@ -160,10 +160,10 @@ def _upx_dir_from_argument(value: str | None) -> Path | None:
 
 
 def _hidden_imports(target: BuildTarget) -> tuple[str, ...]:
-    keyring_backend = (
-        "keyring.backends.Windows" if target == "windows" else "keyring.backends.macOS"
-    )
-    return ("qasync", "keyring.backends.chainer", keyring_backend)
+    hidden_imports = ["qasync"]
+    if target == "windows":
+        hidden_imports.extend(["pythoncom", "pywintypes", "win32com.client"])
+    return tuple(hidden_imports)
 
 
 def _excluded_modules() -> tuple[str, ...]:
