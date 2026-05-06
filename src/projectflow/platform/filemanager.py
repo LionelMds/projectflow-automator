@@ -13,9 +13,10 @@ from projectflow.exceptions import ProjectCreationError
 
 def open_path(path: Path) -> None:
     if platform.system() == "Windows":
-        os.startfile(path)
+        _open_windows_path(path)
         return
-    subprocess.run(["open", str(path)], check=False)
+    opener = "open" if platform.system() == "Darwin" else "xdg-open"
+    subprocess.run([opener, str(path)], check=False)
 
 
 def open_file_default_app(path: Path) -> bool:
@@ -49,6 +50,13 @@ def _pin_windows_quick_access(path: Path) -> None:
     )
     if completed.returncode != 0:
         raise ProjectCreationError("Impossible d'epingler le dossier dans l'acces rapide Windows.")
+
+
+def _open_windows_path(path: Path) -> None:
+    startfile = getattr(os, "startfile", None)
+    if not callable(startfile):
+        raise ProjectCreationError("Ouverture Windows indisponible sur cette plateforme.")
+    startfile(str(path))
 
 
 def _add_macos_finder_favorite(path: Path) -> None:

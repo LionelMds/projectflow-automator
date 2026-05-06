@@ -4,6 +4,9 @@ on:
   push:
     tags: ["v*.*.*"]
 
+permissions:
+  contents: write
+
 jobs:
   test:
     uses: ./.github/workflows/ci.yml
@@ -53,6 +56,11 @@ jobs:
     name: Build macOS
     needs: test
     runs-on: macos-latest
+    env:
+      APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PWD: ${{ secrets.APPLE_APP_PWD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -86,20 +94,20 @@ jobs:
       - name: Build app
         run: python -m projectflow.build --target macos
       - name: Sign app
-        if: ${{ secrets.APPLE_DEVELOPER_ID != '' && secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PWD != '' }}
+        if: ${{ env.APPLE_DEVELOPER_ID != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PWD != '' }}
         run: |
           codesign --deep --force --options runtime \
-            --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
+            --sign "$APPLE_DEVELOPER_ID" \
             "dist/ProjectFlow Automator.app"
       - name: Zip app for notarization
         run: ditto -c -k --keepParent "dist/ProjectFlow Automator.app" "dist/ProjectFlow Automator.zip"
       - name: Notarize app
-        if: ${{ secrets.APPLE_DEVELOPER_ID != '' && secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PWD != '' }}
+        if: ${{ env.APPLE_DEVELOPER_ID != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PWD != '' }}
         run: |
           xcrun notarytool submit "dist/ProjectFlow Automator.zip" \
-            --apple-id "${{ secrets.APPLE_ID }}" \
-            --team-id "${{ secrets.APPLE_TEAM_ID }}" \
-            --password "${{ secrets.APPLE_APP_PWD }}" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PWD" \
             --wait
           xcrun stapler staple "dist/ProjectFlow Automator.app"
       - name: Create DMG
