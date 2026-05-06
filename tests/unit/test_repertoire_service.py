@@ -22,7 +22,7 @@ class FakeWorkbook:
         self.rows = rows
         self.tables = tables or []
         self.updated_ranges: list[tuple[str, str, list[list[Any]]]] = []
-        self.inserted_ranges: list[tuple[str, str, str]] = []
+        self.inserted_ranges: list[tuple[str, str, str, int | None]] = []
         self.table_rows: list[tuple[str, list[Any]]] = []
         self.session_count = 0
 
@@ -51,8 +51,14 @@ class FakeWorkbook:
         address: str,
         *,
         shift: str = "Down",
+        copy_format_from_row_index: int | None = None,
     ) -> None:
-        self.inserted_ranges.append((worksheet_name, address, shift))
+        self.inserted_ranges.append((
+            worksheet_name,
+            address,
+            shift,
+            copy_format_from_row_index,
+        ))
 
     async def list_tables(self, worksheet_name: str) -> list[dict[str, Any]]:
         return self.tables
@@ -136,8 +142,9 @@ async def test_upsert_subproject_appends_to_structured_table_when_present() -> N
     assert workbook.table_rows[0][0] == "table-1"
     assert workbook.table_rows[0][1][0] == 0
     assert workbook.table_rows[0][1][1] == "2026-4995-2"
+    assert workbook.table_rows[0][1][2] == ""
     assert workbook.table_rows[0][1][5] == "Variante"
-    assert workbook.table_rows[0][1][6] == "LM"
+    assert workbook.table_rows[0][1][6] == ""
 
 
 @pytest.mark.asyncio
@@ -150,9 +157,9 @@ async def test_upsert_subproject_inserts_range_before_writing_without_table() ->
 
     await RepertoireService(workbook).upsert_project(project)
 
-    assert workbook.inserted_ranges == [("2026", "A2:F2", "Down")]
+    assert workbook.inserted_ranges == [("2026", "A2:F2", "Down", 1)]
     assert workbook.updated_ranges == [
-        ("2026", "A2:F2", [["2026-4995-2", "Balz", "", "", "Variante", "LM"]]),
+        ("2026", "A2:F2", [["2026-4995-2", "", "", "", "Variante", ""]]),
     ]
 
 
@@ -168,7 +175,7 @@ async def test_upsert_subproject_does_not_replace_unrelated_sixth_column() -> No
     await RepertoireService(workbook).upsert_project(project)
 
     assert workbook.updated_ranges == [
-        ("2026", "A2:F2", [["2026-4995-2", "Balz", "", "", "Variante", "Code interne"]]),
+        ("2026", "A2:F2", [["2026-4995-2", "", "", "", "Variante", ""]]),
     ]
 
 
@@ -185,5 +192,5 @@ async def test_upsert_existing_subproject_updates_existing_row_without_inserting
 
     assert workbook.inserted_ranges == []
     assert workbook.updated_ranges == [
-        ("2026", "A2:F2", [["2026-4995-2", "Balz", "", "", "Variante", "Sous-code"]]),
+        ("2026", "A2:F2", [["2026-4995-2", "", "", "", "Variante", ""]]),
     ]

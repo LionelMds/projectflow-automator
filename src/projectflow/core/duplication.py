@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import copy
 from typing import Any
 
 from projectflow.core.numero import ProjectNumber
@@ -32,7 +31,7 @@ def project_info_columns_empty(row: list[Any]) -> bool:
     return all(_cell_as_text(row, column) == "" for column in PROJECT_INFO_COLUMNS)
 
 
-def duplicate_subproject_row(
+def prepare_subproject_row(
     rows: list[list[Any]],
     subproject_number: ProjectNumber,
 ) -> tuple[int, list[Any]]:
@@ -53,11 +52,10 @@ def duplicate_subproject_row(
             continue
         break
 
-    duplicated_row = copy(rows[parent_index])
-    if len(duplicated_row) <= PROJECT_NUMBER_COLUMN:
-        duplicated_row.extend([""] * (PROJECT_NUMBER_COLUMN + 1 - len(duplicated_row)))
-    duplicated_row[PROJECT_NUMBER_COLUMN] = str(subproject_number)
-    return insert_after + 1, duplicated_row
+    width = max(len(rows[parent_index]), 5)
+    new_row = [""] * width
+    new_row[PROJECT_NUMBER_COLUMN] = str(subproject_number)
+    return insert_after + 1, new_row
 
 
 def _cell_as_text(row: list[Any], column: int) -> str:

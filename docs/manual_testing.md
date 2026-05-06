@@ -13,6 +13,8 @@
   ni le repertoire quand les informations sont identiques.
 - Un sous-projet cree une fiche distincte sans creer de dossier et insere sa ligne dans le
   groupe parent, sans utiliser une ligne disponible de projet principal.
+- La ligne repertoire d'un sous-projet contient uniquement les valeurs saisies par l'utilisateur ;
+  elle n'herite d'aucune cellule du projet parent, seulement du format d'une ligne disponible.
 - `Mettre a jour` demande une confirmation et ne cree aucune integration externe.
 - `Ouvrir fiche` ouvre Excel via l'application par defaut.
 - Outlook local peut etre active, teste, puis utiliser `Racine du compte` ou `Boite de reception`.

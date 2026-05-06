@@ -8,8 +8,8 @@ from typing import Any, Protocol
 
 from projectflow.core.duplication import (
     assert_description_empty,
-    duplicate_subproject_row,
     find_project_row,
+    prepare_subproject_row,
     project_info_columns_empty,
 )
 from projectflow.core.models import ProjectInput
@@ -40,6 +40,7 @@ class WorkbookGateway(Protocol):
         address: str,
         *,
         shift: str = "Down",
+        copy_format_from_row_index: int | None = None,
     ) -> None:
         """Insert a worksheet range and shift existing cells."""
 
@@ -122,8 +123,7 @@ class RepertoireService:
         tables = await self._workbook.list_tables(worksheet_name)
         existing_index = find_project_row(rows, project.number)
         if existing_index is not None:
-            existing_row = _ensure_width(rows[existing_index], width=6)
-            updated_row = _apply_project_to_row(existing_row, project)
+            updated_row = _project_values(project, width=6)
             await self._workbook.update_range_values(
                 worksheet_name,
                 _row_address(existing_index, width=len(updated_row)),
@@ -131,8 +131,9 @@ class RepertoireService:
             )
             return
 
-        insert_index, duplicated_row = duplicate_subproject_row(rows, project.number)
-        updated_row = _apply_project_to_row(_ensure_width(duplicated_row, width=6), project)
+        insert_index, blank_row = prepare_subproject_row(rows, project.number)
+        updated_row = _project_values(project, width=max(len(blank_row), 6))
+        format_source_index = _first_available_main_project_row_index(rows)
 
         if tables:
             table_id = _table_identifier(tables[0])
@@ -144,7 +145,12 @@ class RepertoireService:
             return
 
         insert_address = _row_address(insert_index, width=len(updated_row))
-        await self._workbook.insert_range(worksheet_name, insert_address, shift="Down")
+        await self._workbook.insert_range(
+            worksheet_name,
+            insert_address,
+            shift="Down",
+            copy_format_from_row_index=format_source_index,
+        )
         await self._workbook.update_range_values(
             worksheet_name,
             insert_address,
@@ -163,6 +169,16 @@ def _apply_project_to_row(row: list[Any], project: ProjectInput) -> list[Any]:
     _write_if_non_empty(updated, 2, project.contact)
     _write_if_non_empty(updated, 3, project.localisation)
     _write_if_non_empty(updated, 4, project.designation)
+    return updated
+
+
+def _project_values(project: ProjectInput, *, width: int) -> list[Any]:
+    updated = [""] * max(width, 5)
+    updated[0] = str(project.number)
+    updated[1] = project.societe.strip()
+    updated[2] = project.contact.strip()
+    updated[3] = project.localisation.strip()
+    updated[4] = project.designation.strip()
     return updated
 
 
@@ -202,6 +218,14 @@ def _table_identifier(table: dict[str, Any]) -> str:
     if not isinstance(raw_id, str) or raw_id == "":
         raise ProjectCreationError("Tableau structure sans identifiant.")
     return raw_id
+
+
+def _first_available_main_project_row_index(rows: list[list[Any]]) -> int | None:
+    for index, row in enumerate(rows):
+        number = _cell_as_text(row, 0)
+        if MAIN_PROJECT_RE.fullmatch(number) and project_info_columns_empty(row):
+            return index
+    return None
 
 
 @asynccontextmanager

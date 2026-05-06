@@ -47,7 +47,8 @@ Le sous-projet reutilise le dossier parent. Il cree uniquement une nouvelle fich
 de repertoire.
 
 La ligne du sous-projet est inseree dans le groupe du projet parent. Elle ne consomme pas une
-ligne disponible reservee aux projets principaux.
+ligne disponible reservee aux projets principaux. Elle reprend la mise en forme d'une ligne
+disponible, mais ses valeurs viennent uniquement du formulaire.
 
 ## Mettre a jour
 
