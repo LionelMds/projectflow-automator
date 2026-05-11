@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.10
+
+- Corrige l'installation automatique des mises a jour Windows apres confirmation utilisateur.
+- Ajoute un installateur Windows detache avec journal, retries de copie, verification de taille et relance de l'application mise a jour.
+- Affiche un message d'erreur avec chemin du journal si la copie Windows echoue au lieu d'echouer silencieusement.
+- Conserve les corrections critiques de `0.1.9` protegeant les colonnes comptables `F:L` du repertoire chantier.
+
 ## 0.1.9
 
 - Corrige un risque critique de duplication des colonnes comptables `F:L` lors de la creation d'un sous-projet.
