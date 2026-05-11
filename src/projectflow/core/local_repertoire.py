@@ -10,7 +10,7 @@ from typing import Any, cast
 
 from openpyxl import load_workbook
 from openpyxl.cell.cell import Cell
-from openpyxl.utils.cell import range_boundaries
+from openpyxl.utils.cell import get_column_letter, range_boundaries
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -88,58 +88,28 @@ class LocalWorkbookGateway:
                 if isinstance(value, date):
                     cell.number_format = "DD.MM.YYYY"
 
-    async def insert_range(
+    async def insert_blank_row(
         self,
         worksheet_name: str,
-        address: str,
+        row_index: int,
         *,
-        shift: str = "Down",
         copy_format_from_row_index: int | None = None,
+        format_width: int = 12,
     ) -> None:
-        if shift != "Down":
-            raise ProjectCreationError(f"Mode d'insertion local non supporte: {shift}")
         worksheet = self._worksheet(worksheet_name)
-        min_col, min_row, max_col, max_row = _range_boundaries(address)
+        target_row = row_index + 1
         row_format = _capture_row_format(
             worksheet,
             copy_format_from_row_index,
-            min_col=min_col,
-            max_col=max_col,
+            min_col=1,
+            max_col=format_width,
         )
-        height = max_row - min_row + 1
-        for row_index in range(worksheet.max_row, min_row - 1, -1):
-            for column_index in range(min_col, max_col + 1):
-                worksheet.cell(
-                    row=row_index + height,
-                    column=column_index,
-                    value=worksheet.cell(row=row_index, column=column_index).value,
-                )
-        for row_index in range(min_row, min_row + height):
-            for column_index in range(min_col, max_col + 1):
-                worksheet.cell(row=row_index, column=column_index).value = None
-            if row_format is not None:
-                _apply_row_format(
-                    worksheet,
-                    row_format,
-                    target_row=row_index,
-                    min_col=min_col,
-                )
-
-    async def list_tables(self, worksheet_name: str) -> list[dict[str, Any]]:
-        del worksheet_name
-        return []
-
-    async def add_table_row(
-        self,
-        table_id_or_name: str,
-        values: list[Any],
-        *,
-        index: int | None = None,
-    ) -> None:
-        del table_id_or_name, index
-        workbook = self._require_workbook()
-        worksheet = cast("Worksheet", workbook.active)
-        worksheet.append(values)
+        worksheet.insert_rows(target_row)
+        _expand_tables_for_inserted_row(worksheet, target_row)
+        if row_format is not None:
+            _apply_row_format(worksheet, row_format, target_row=target_row, min_col=1)
+        for column_index in range(1, format_width + 1):
+            worksheet.cell(row=target_row, column=column_index).value = None
 
     def _require_workbook(self) -> Workbook:
         if self._workbook is None:
@@ -155,6 +125,16 @@ class LocalWorkbookGateway:
 
 def _range_boundaries(address: str) -> tuple[int, int, int, int]:
     return cast("tuple[int, int, int, int]", range_boundaries(address))
+
+
+def _expand_tables_for_inserted_row(worksheet: Worksheet, row_number: int) -> None:
+    for table in worksheet.tables.values():
+        min_col, min_row, max_col, max_row = _range_boundaries(table.ref)
+        if min_row < row_number <= max_row + 1:
+            table.ref = (
+                f"{get_column_letter(min_col)}{min_row}:"
+                f"{get_column_letter(max_col)}{max_row + 1}"
+            )
 
 
 def _capture_row_format(

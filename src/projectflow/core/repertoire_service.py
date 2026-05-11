@@ -8,6 +8,7 @@ from datetime import date
 from typing import Any, Protocol
 
 from projectflow.core.duplication import (
+    PROJECT_WRITABLE_WIDTH,
     assert_description_empty,
     find_project_row,
     prepare_subproject_row,
@@ -18,6 +19,8 @@ from projectflow.core.numero import ProjectNumber, parse_project_number
 from projectflow.exceptions import ProjectCreationError
 
 MAIN_PROJECT_RE = re.compile(r"^(\d{4})-(\d+)$")
+# Colonnes A:E = saisie ProjectFlow. Colonnes F:L = donnees comptables intouchables.
+REPERTOIRE_TABLE_WIDTH = 12
 
 
 class WorkbookGateway(Protocol):
@@ -35,27 +38,15 @@ class WorkbookGateway(Protocol):
     ) -> None:
         """Update a worksheet range."""
 
-    async def insert_range(
+    async def insert_blank_row(
         self,
         worksheet_name: str,
-        address: str,
+        row_index: int,
         *,
-        shift: str = "Down",
         copy_format_from_row_index: int | None = None,
+        format_width: int = REPERTOIRE_TABLE_WIDTH,
     ) -> None:
-        """Insert a worksheet range and shift existing cells."""
-
-    async def list_tables(self, worksheet_name: str) -> list[dict[str, Any]]:
-        """Return structured tables for a worksheet."""
-
-    async def add_table_row(
-        self,
-        table_id_or_name: str,
-        values: list[Any],
-        *,
-        index: int | None = None,
-    ) -> None:
-        """Append one row to a structured table."""
+        """Insert one blank worksheet row and shift every column down."""
 
     def session(self) -> AbstractAsyncContextManager[None]:
         """Open a workbook session for a related batch of calls."""
@@ -106,9 +97,13 @@ class RepertoireService:
                 message = f"Projet introuvable dans le repertoire: {project.number}"
                 raise ProjectCreationError(message)
 
-            row = _ensure_width(rows[row_index], width=5)
+            row = _ensure_width(rows[row_index], width=PROJECT_WRITABLE_WIDTH)
             assert_description_empty(row, force_overwrite=force_overwrite)
-            updated_row = _apply_project_to_row(row[:5], project, created_on=self._today())
+            updated_row = _apply_project_to_row(
+                row[:PROJECT_WRITABLE_WIDTH],
+                project,
+                created_on=self._today(),
+            )
             await self._workbook.update_range_values(
                 worksheet_name,
                 _row_address(row_index, width=len(updated_row)),
@@ -122,10 +117,13 @@ class RepertoireService:
         rows: list[list[Any]],
         worksheet_name: str,
     ) -> None:
-        tables = await self._workbook.list_tables(worksheet_name)
         existing_index = find_project_row(rows, project.number)
         if existing_index is not None:
-            updated_row = _project_values(project, width=6, created_on=self._today())
+            updated_row = _project_values(
+                project,
+                width=PROJECT_WRITABLE_WIDTH,
+                created_on=self._today(),
+            )
             await self._workbook.update_range_values(
                 worksheet_name,
                 _row_address(existing_index, width=len(updated_row)),
@@ -136,30 +134,20 @@ class RepertoireService:
         insert_index, blank_row = prepare_subproject_row(rows, project.number)
         updated_row = _project_values(
             project,
-            width=max(len(blank_row), 6),
+            width=len(blank_row),
             created_on=self._today(),
         )
         format_source_index = _first_available_main_project_row_index(rows)
 
-        if tables:
-            table_id = _table_identifier(tables[0])
-            await self._workbook.add_table_row(
-                table_id,
-                updated_row,
-                index=max(insert_index - 1, 0),
-            )
-            return
-
-        insert_address = _row_address(insert_index, width=len(updated_row))
-        await self._workbook.insert_range(
+        await self._workbook.insert_blank_row(
             worksheet_name,
-            insert_address,
-            shift="Down",
+            insert_index,
             copy_format_from_row_index=format_source_index,
+            format_width=REPERTOIRE_TABLE_WIDTH,
         )
         await self._workbook.update_range_values(
             worksheet_name,
-            insert_address,
+            _row_address(insert_index, width=len(updated_row)),
             [updated_row],
         )
 
@@ -169,7 +157,7 @@ class RepertoireService:
 
 
 def _apply_project_to_row(row: list[Any], project: ProjectInput, *, created_on: date) -> list[Any]:
-    updated = _ensure_width(list(row), width=5)
+    updated = _ensure_width(list(row), width=PROJECT_WRITABLE_WIDTH)
     updated[0] = str(project.number)
     updated[1] = created_on
     _write_if_non_empty(updated, 2, project.societe)
@@ -179,7 +167,7 @@ def _apply_project_to_row(row: list[Any], project: ProjectInput, *, created_on: 
 
 
 def _project_values(project: ProjectInput, *, width: int, created_on: date) -> list[Any]:
-    updated: list[Any] = [""] * max(width, 5)
+    updated: list[Any] = [""] * max(width, PROJECT_WRITABLE_WIDTH)
     updated[0] = str(project.number)
     updated[1] = created_on
     updated[2] = project.societe.strip()
@@ -217,13 +205,6 @@ def _cell_as_text(row: list[Any], column: int) -> str:
         return ""
     value = row[column]
     return "" if value is None else str(value).strip()
-
-
-def _table_identifier(table: dict[str, Any]) -> str:
-    raw_id = table.get("id") or table.get("name")
-    if not isinstance(raw_id, str) or raw_id == "":
-        raise ProjectCreationError("Tableau structure sans identifiant.")
-    return raw_id
 
 
 def _first_available_main_project_row_index(rows: list[list[Any]]) -> int | None:

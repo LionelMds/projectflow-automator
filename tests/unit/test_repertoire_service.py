@@ -19,14 +19,10 @@ class FakeWorkbook:
     def __init__(
         self,
         rows: list[list[Any]],
-        *,
-        tables: list[dict[str, Any]] | None = None,
     ) -> None:
         self.rows = rows
-        self.tables = tables or []
         self.updated_ranges: list[tuple[str, str, list[list[Any]]]] = []
-        self.inserted_ranges: list[tuple[str, str, str, int | None]] = []
-        self.table_rows: list[tuple[str, list[Any]]] = []
+        self.inserted_rows: list[tuple[str, int, int | None, int]] = []
         self.session_count = 0
 
     @asynccontextmanager
@@ -48,32 +44,20 @@ class FakeWorkbook:
     ) -> None:
         self.updated_ranges.append((worksheet_name, address, values))
 
-    async def insert_range(
+    async def insert_blank_row(
         self,
         worksheet_name: str,
-        address: str,
+        row_index: int,
         *,
-        shift: str = "Down",
         copy_format_from_row_index: int | None = None,
+        format_width: int = 12,
     ) -> None:
-        self.inserted_ranges.append((
+        self.inserted_rows.append((
             worksheet_name,
-            address,
-            shift,
+            row_index,
             copy_format_from_row_index,
+            format_width,
         ))
-
-    async def list_tables(self, worksheet_name: str) -> list[dict[str, Any]]:
-        return self.tables
-
-    async def add_table_row(
-        self,
-        table_id_or_name: str,
-        values: list[Any],
-        *,
-        index: int | None = None,
-    ) -> None:
-        self.table_rows.append((table_id_or_name, [index, *values]))
 
 
 @pytest.mark.asyncio
@@ -133,26 +117,7 @@ async def test_upsert_project_rejects_filled_client_columns_without_force() -> N
 
 
 @pytest.mark.asyncio
-async def test_upsert_subproject_appends_to_structured_table_when_present() -> None:
-    workbook = FakeWorkbook(
-        [["2026-4995", "Balz", "", "", "Escalier", "LM"]],
-        tables=[{"id": "table-1"}],
-    )
-    project = ProjectInput(number=parse_project_number("2026-4995-2"), designation="Variante")
-
-    await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)
-
-    assert workbook.table_rows[0][0] == "table-1"
-    assert workbook.table_rows[0][1][0] == 0
-    assert workbook.table_rows[0][1][1] == "2026-4995-2"
-    assert workbook.table_rows[0][1][2] == TODAY
-    assert workbook.table_rows[0][1][3] == ""
-    assert workbook.table_rows[0][1][5] == "Variante"
-    assert workbook.table_rows[0][1][6] == ""
-
-
-@pytest.mark.asyncio
-async def test_upsert_subproject_inserts_range_before_writing_without_table() -> None:
+async def test_upsert_subproject_inserts_blank_row_before_writing_only_a_to_e() -> None:
     workbook = FakeWorkbook([
         ["2026-4995", "Balz", "", "", "Escalier", "LM"],
         ["2026-5000", "", "", "", "", ""],
@@ -161,14 +126,14 @@ async def test_upsert_subproject_inserts_range_before_writing_without_table() ->
 
     await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)
 
-    assert workbook.inserted_ranges == [("2026", "A2:F2", "Down", 1)]
+    assert workbook.inserted_rows == [("2026", 1, 1, 12)]
     assert workbook.updated_ranges == [
-        ("2026", "A2:F2", [["2026-4995-2", TODAY, "", "", "Variante", ""]]),
+        ("2026", "A2:E2", [["2026-4995-2", TODAY, "", "", "Variante"]]),
     ]
 
 
 @pytest.mark.asyncio
-async def test_upsert_subproject_does_not_replace_unrelated_sixth_column() -> None:
+async def test_upsert_subproject_does_not_write_unrelated_sixth_column() -> None:
     workbook = FakeWorkbook([["2026-4995", "Balz", "", "", "Escalier", "Code interne"]])
     project = ProjectInput(
         number=parse_project_number("2026-4995-2"),
@@ -179,7 +144,7 @@ async def test_upsert_subproject_does_not_replace_unrelated_sixth_column() -> No
     await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)
 
     assert workbook.updated_ranges == [
-        ("2026", "A2:F2", [["2026-4995-2", TODAY, "", "", "Variante", ""]]),
+        ("2026", "A2:E2", [["2026-4995-2", TODAY, "", "", "Variante"]]),
     ]
 
 
@@ -194,7 +159,7 @@ async def test_upsert_existing_subproject_updates_existing_row_without_inserting
 
     await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)
 
-    assert workbook.inserted_ranges == []
+    assert workbook.inserted_rows == []
     assert workbook.updated_ranges == [
-        ("2026", "A2:F2", [["2026-4995-2", TODAY, "", "", "Variante", ""]]),
+        ("2026", "A2:E2", [["2026-4995-2", TODAY, "", "", "Variante"]]),
     ]

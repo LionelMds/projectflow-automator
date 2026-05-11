@@ -7,6 +7,7 @@ from projectflow.exceptions import ProjectCreationError
 
 PROJECT_NUMBER_COLUMN = 0
 PROJECT_INFO_COLUMNS = (1, 2, 3, 4)
+PROJECT_WRITABLE_WIDTH = 5
 
 
 def find_project_row(rows: list[list[Any]], number: ProjectNumber) -> int | None:
@@ -52,8 +53,7 @@ def prepare_subproject_row(
             continue
         break
 
-    width = max(len(rows[parent_index]), 5)
-    new_row = [""] * width
+    new_row = [""] * PROJECT_WRITABLE_WIDTH
     new_row[PROJECT_NUMBER_COLUMN] = str(subproject_number)
     return insert_after + 1, new_row
 

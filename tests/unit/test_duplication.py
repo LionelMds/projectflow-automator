@@ -20,9 +20,9 @@ def test_duplicate_subproject_row_inserts_after_contiguous_group() -> None:
     assert prepared == ["2026-4995-2", "", "", "", ""]
 
 
-def test_prepare_subproject_row_preserves_width_without_copying_values() -> None:
+def test_prepare_subproject_row_never_extends_to_accounting_columns() -> None:
     rows = [
-        ["2026-4995", "Balz", "Lionel", "Zurich", "Main", "Code"],
+        ["2026-4995", "Date", "Balz", "Lionel", "Main", "F", "G", "H", "I", "J", "K", "L"],
         ["2026-5000", "", "", "", "", ""],
     ]
 
@@ -31,7 +31,7 @@ def test_prepare_subproject_row_preserves_width_without_copying_values() -> None
         parse_project_number("2026-4995-2"),
     )
 
-    assert prepared == ["2026-4995-2", "", "", "", "", ""]
+    assert prepared == ["2026-4995-2", "", "", "", ""]
 
 
 def test_duplicate_subproject_row_rejects_missing_parent() -> None:
