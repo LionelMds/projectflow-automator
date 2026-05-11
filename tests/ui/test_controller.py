@@ -11,7 +11,7 @@ from projectflow.config import AppConfig
 from projectflow.core.fiche_service import FicheService
 from projectflow.core.models import ProjectCreationResult, ProjectInput
 from projectflow.core.numero import parse_project_number
-from projectflow.core.repertoire_service import NextAvailableProject
+from projectflow.core.repertoire_service import NextAvailableProject, RepertoireSyncResult
 from projectflow.ui.controller import ProjectFlowController, _update_prompt_text
 from projectflow.ui.main_window import MainWindow
 
@@ -46,9 +46,26 @@ class FakeProjectService:
 
 
 class FakeRepertoireService:
+    def __init__(self) -> None:
+        self.sync_result = RepertoireSyncResult(
+            total=0,
+            applied=0,
+            already_verified=0,
+            failed=0,
+        )
+        self.minimum_age_seconds = 0.0
+
     async def next_available(self, *, year: int) -> NextAvailableProject:
         assert year == 2026
         return NextAvailableProject(number=parse_project_number("2026-4995"), row_index=1)
+
+    async def sync_pending(
+        self,
+        *,
+        minimum_age_seconds: float = 0.0,
+    ) -> RepertoireSyncResult:
+        self.minimum_age_seconds = minimum_age_seconds
+        return self.sync_result
 
 
 class FakeServices:
@@ -300,3 +317,48 @@ def test_update_prompt_includes_release_notes() -> None:
 
     assert "ProjectFlow 0.1.8" in message
     assert "Corrige le repertoire chantier" in message
+
+
+@pytest.mark.asyncio
+async def test_controller_sync_repertoire_pending_logs_result(qtbot: Any, tmp_path: Path) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    services.repertoire_service.sync_result = RepertoireSyncResult(
+        total=2,
+        applied=1,
+        already_verified=1,
+        failed=0,
+    )
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    await controller.sync_repertoire_pending()
+
+    assert "1 appliquee(s)" in window.creation_tab.logs.toPlainText()
+
+
+@pytest.mark.asyncio
+async def test_controller_auto_sync_uses_transaction_grace_period(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    services.repertoire_service.sync_result = RepertoireSyncResult(
+        total=1,
+        applied=0,
+        already_verified=0,
+        failed=0,
+        deferred=1,
+    )
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    await controller.sync_repertoire_pending(automatic=True)
+
+    assert services.repertoire_service.minimum_age_seconds == 120.0
+    assert "Synchronisation repertoire" not in window.creation_tab.logs.toPlainText()

@@ -64,6 +64,7 @@ def run(argv: Sequence[str]) -> int:
     )
     window.show()
     logger.info("app.started")
+    controller.start_auto_sync()
     if not demo_mode:
         QTimer.singleShot(
             0,

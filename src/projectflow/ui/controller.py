@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from projectflow import __version__
@@ -16,7 +17,11 @@ from projectflow.core.fiche_service import FicheService, standard_fiche_path
 from projectflow.core.models import ProjectCreationResult, ProjectInput
 from projectflow.core.numero import format_project_number, parse_project_number, project_folder_name
 from projectflow.core.project_service import ProjectService
-from projectflow.core.repertoire_service import RepertoireService
+from projectflow.core.repertoire_service import (
+    PENDING_TRANSACTION_SAFETY_WINDOW_SECONDS,
+    RepertoireService,
+    RepertoireSyncResult,
+)
 from projectflow.exceptions import ProjectFlowError
 from projectflow.platform.filemanager import open_file_default_app, open_path
 from projectflow.services import ServiceContainer
@@ -30,6 +35,11 @@ from projectflow.updates import (
     prepare_install_plan,
     select_platform_asset,
 )
+
+AUTO_SYNC_INITIAL_DELAY_MS = 5_000
+AUTO_SYNC_RETRY_DELAY_MS = 30_000
+AUTO_SYNC_IDLE_DELAY_MS = 5 * 60_000
+AUTO_SYNC_POST_WRITE_DELAY_MS = 30_000
 
 
 class ServiceProvider(Protocol):
@@ -56,6 +66,13 @@ class ProjectFlowController:
         self._config = config
         self._services = services or ServiceContainer(config)
         self._save_config = save_config
+        self._auto_sync_enabled = False
+        self._auto_sync_in_progress = False
+        self._auto_sync_timer = QTimer(window)
+        self._auto_sync_timer.setSingleShot(True)
+        self._auto_sync_timer.timeout.connect(
+            lambda: asyncio.create_task(self.sync_repertoire_pending(automatic=True)),
+        )
         self._connect()
 
     def _connect(self) -> None:
@@ -65,10 +82,21 @@ class ProjectFlowController:
         tab.load_requested.connect(self.load_project)
         tab.open_fiche_requested.connect(self.open_fiche)
         tab.next_available_requested.connect(lambda: asyncio.create_task(self.next_available()))
+        tab.sync_repertoire_requested.connect(
+            lambda: asyncio.create_task(self.sync_repertoire_pending()),
+        )
         self._window.settings_requested.connect(self.open_settings)
         self._window.update_check_requested.connect(
             lambda: asyncio.create_task(self.check_updates()),
         )
+
+    def start_auto_sync(self) -> None:
+        self._auto_sync_enabled = True
+        self._schedule_auto_sync(AUTO_SYNC_INITIAL_DELAY_MS)
+
+    def stop_auto_sync(self) -> None:
+        self._auto_sync_enabled = False
+        self._auto_sync_timer.stop()
 
     async def create_project(self) -> None:
         try:
@@ -87,6 +115,7 @@ class ProjectFlowController:
             )
         except (ProjectFlowError, ValueError) as exc:
             self._error(str(exc))
+            self._schedule_auto_sync(AUTO_SYNC_RETRY_DELAY_MS)
             return
         self._save_config_if_available()
         if result.project_dir_created:
@@ -96,6 +125,7 @@ class ProjectFlowController:
         if not result.project_dir_created and not existing_update:
             self._log("+ Informations existantes conservees")
         self._log_creation_integrations(result)
+        self._schedule_auto_sync(AUTO_SYNC_POST_WRITE_DELAY_MS)
         self._open_project_folder(result)
         self._show_creation_confirmation(result)
 
@@ -105,9 +135,11 @@ class ProjectFlowController:
             result = await self._services.project().update_project(project)
         except (ProjectFlowError, ValueError) as exc:
             self._error(str(exc))
+            self._schedule_auto_sync(AUTO_SYNC_RETRY_DELAY_MS)
             return
         self._save_config_if_available()
         self._log(f"+ Projet mis a jour: {result.fiche_path or result.project_dir}")
+        self._schedule_auto_sync(AUTO_SYNC_POST_WRITE_DELAY_MS)
 
     async def next_available(self) -> None:
         try:
@@ -124,6 +156,48 @@ class ProjectFlowController:
             project_id=result.number.project_id,
         )
         self._log(f"+ Numero disponible: {result.number}")
+
+    async def sync_repertoire_pending(self, *, automatic: bool = False) -> None:
+        if self._auto_sync_in_progress:
+            return
+        self._auto_sync_in_progress = True
+        try:
+            result = await self._services.repertoire().sync_pending(
+                minimum_age_seconds=(
+                    PENDING_TRANSACTION_SAFETY_WINDOW_SECONDS if automatic else 0.0
+                ),
+            )
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            if automatic:
+                self._log(
+                    "-> Repertoire indisponible, nouvelle tentative automatique planifiee",
+                )
+                self._schedule_auto_sync(AUTO_SYNC_RETRY_DELAY_MS)
+            else:
+                self._error(str(exc))
+                self._schedule_auto_sync(AUTO_SYNC_RETRY_DELAY_MS)
+            self._auto_sync_in_progress = False
+            return
+        self._auto_sync_in_progress = False
+
+        if not automatic or _sync_result_should_be_logged(result):
+            self._log(_sync_result_message(result))
+        if result.failed:
+            if automatic:
+                self._log(
+                    "-> Certaines ecritures restent en attente; ProjectFlow reessaiera.",
+                )
+            else:
+                self._error(
+                    "Certaines ecritures du repertoire chantier restent en attente. "
+                    "Fermez le fichier Excel si necessaire puis relancez la synchronisation.",
+                )
+            self._schedule_auto_sync(AUTO_SYNC_RETRY_DELAY_MS)
+            return
+        if result.deferred:
+            self._schedule_auto_sync(AUTO_SYNC_RETRY_DELAY_MS)
+            return
+        self._schedule_auto_sync(AUTO_SYNC_IDLE_DELAY_MS)
 
     def load_project(self) -> None:
         try:
@@ -354,6 +428,15 @@ class ProjectFlowController:
         self._window.creation_tab.append_log(f"! {message}")
         QMessageBox.critical(self._window, "ProjectFlow", message)
 
+    def _schedule_auto_sync(self, delay_ms: int) -> None:
+        if not self._auto_sync_enabled:
+            return
+        if self._auto_sync_timer.isActive():
+            remaining = self._auto_sync_timer.remainingTime()
+            if remaining >= 0 and remaining <= delay_ms:
+                return
+        self._auto_sync_timer.start(delay_ms)
+
 
 def _non_empty_changed(current: str, existing: str) -> bool:
     normalized_current = current.strip()
@@ -377,3 +460,19 @@ def _truncate_release_notes(notes: str, *, limit: int = 1200) -> str:
     if len(notes) <= limit:
         return notes
     return f"{notes[:limit].rstrip()}\n..."
+
+
+def _sync_result_message(result: RepertoireSyncResult) -> str:
+    if result.total == 0:
+        return "+ Aucune ecriture repertoire en attente"
+    return (
+        "+ Synchronisation repertoire: "
+        f"{result.applied} appliquee(s), "
+        f"{result.already_verified} deja correcte(s), "
+        f"{result.deferred} gardee(s) en attente, "
+        f"{result.failed} en echec"
+    )
+
+
+def _sync_result_should_be_logged(result: RepertoireSyncResult) -> bool:
+    return result.applied > 0 or result.already_verified > 0 or result.failed > 0

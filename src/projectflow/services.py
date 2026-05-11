@@ -7,6 +7,7 @@ from projectflow.config import AppConfig
 from projectflow.core.fiche_service import FicheService
 from projectflow.core.local_repertoire import LocalWorkbookGateway
 from projectflow.core.project_service import ProjectService
+from projectflow.core.repertoire_queue import RepertoireTransactionStore
 from projectflow.core.repertoire_service import RepertoireService
 from projectflow.exceptions import ConfigError
 from projectflow.outlook.local import create_local_outlook_client
@@ -28,7 +29,10 @@ class ServiceContainer:
         workbook_path = Path(repertoire.display_path).expanduser()
         if not workbook_path.exists():
             raise ConfigError("Repertoire chantier local non configure.")
-        return RepertoireService(LocalWorkbookGateway(workbook_path))
+        return RepertoireService(
+            LocalWorkbookGateway(workbook_path),
+            transaction_store=RepertoireTransactionStore.for_workbook(workbook_path),
+        )
 
     def project(self) -> ProjectService:
         return ProjectService(

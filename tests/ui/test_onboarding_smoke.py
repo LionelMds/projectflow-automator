@@ -43,6 +43,7 @@ def test_creation_tab_uses_expanding_field_widths(qtbot) -> None:  # type: ignor
     assert tab.minimumWidth() >= 760
     assert tab.project_id_edit.minimumWidth() > tab.year_combo.minimumWidth()
     assert tab.designation_edit.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert tab.sync_repertoire_button.text() == "Synchroniser repertoire"
 
 
 def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # type: ignore[no-untyped-def]
