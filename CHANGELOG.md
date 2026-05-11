@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.14
+
+- Desactive la synchronisation automatique du repertoire chantier par defaut pour eviter les ouvertures Excel, retries et fusions OneDrive en arriere-plan.
+- Ne rejoue plus les ecritures en attente au demarrage de l'application.
+- Ne rejoue plus les ecritures en attente avant une nouvelle creation de projet.
+- Conserve le bouton manuel `Synchroniser repertoire`, mais aucune synchronisation cachee n'est lancee sans action explicite.
+- Ajoute l'option de diagnostic `PROJECTFLOW_AUTO_SYNC=1` pour reactiver l'ancien comportement uniquement en test.
+
 ## 0.1.13
 
 - Corrige les conflits de fusion OneDrive du repertoire chantier en pilotant Excel localement sur Windows pour les fichiers OneDrive.
