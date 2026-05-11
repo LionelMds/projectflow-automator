@@ -255,8 +255,9 @@ async def test_local_repertoire_sync_pending_replays_verified_transaction(
 
     assert result.total == 1
     assert result.applied == 1
+    assert result.deferred == 1
     assert result.failed == 0
-    assert store.list_pending() == []
+    assert len(store.list_pending()) == 1
     workbook = load_workbook(path)
     worksheet = workbook["2026"]
     assert worksheet["A2"].value == "2026-4995"
@@ -265,6 +266,11 @@ async def test_local_repertoire_sync_pending_replays_verified_transaction(
     assert worksheet["D2"].value == "Lionel"
     assert worksheet["E2"].value == "Escalier"
     workbook.close()
+
+    cleanup_result = await service.sync_pending(minimum_age_seconds=0.0)
+
+    assert cleanup_result.already_verified == 1
+    assert store.list_pending() == []
 
 
 @pytest.mark.asyncio
@@ -292,4 +298,10 @@ async def test_local_repertoire_keeps_verified_transaction_until_later_sync(
 
     assert result.total == 1
     assert result.already_verified == 1
+    assert result.deferred == 1
+    assert len(store.list_pending()) == 1
+
+    cleanup_result = await service.sync_pending(minimum_age_seconds=0.0)
+
+    assert cleanup_result.already_verified == 1
     assert store.list_pending() == []

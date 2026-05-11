@@ -163,9 +163,7 @@ class ProjectFlowController:
         self._auto_sync_in_progress = True
         try:
             result = await self._services.repertoire().sync_pending(
-                minimum_age_seconds=(
-                    PENDING_TRANSACTION_SAFETY_WINDOW_SECONDS if automatic else 0.0
-                ),
+                minimum_age_seconds=PENDING_TRANSACTION_SAFETY_WINDOW_SECONDS,
             )
         except (ProjectFlowError, ValueError, OSError) as exc:
             if automatic:
@@ -469,7 +467,7 @@ def _sync_result_message(result: RepertoireSyncResult) -> str:
         "+ Synchronisation repertoire: "
         f"{result.applied} appliquee(s), "
         f"{result.already_verified} deja correcte(s), "
-        f"{result.deferred} gardee(s) en attente, "
+        f"{result.deferred} en surveillance OneDrive, "
         f"{result.failed} en echec"
     )
 

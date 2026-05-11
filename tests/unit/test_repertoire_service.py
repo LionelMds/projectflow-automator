@@ -246,5 +246,5 @@ async def test_sync_pending_defers_recent_verified_transactions(tmp_path: Any) -
     result = await service.sync_pending(minimum_age_seconds=3600.0)
 
     assert result.deferred == 1
-    assert result.already_verified == 0
+    assert result.already_verified == 1
     assert len(store.list_pending()) == 1

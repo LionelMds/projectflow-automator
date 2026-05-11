@@ -11,7 +11,11 @@ from projectflow.config import AppConfig
 from projectflow.core.fiche_service import FicheService
 from projectflow.core.models import ProjectCreationResult, ProjectInput
 from projectflow.core.numero import parse_project_number
-from projectflow.core.repertoire_service import NextAvailableProject, RepertoireSyncResult
+from projectflow.core.repertoire_service import (
+    PENDING_TRANSACTION_SAFETY_WINDOW_SECONDS,
+    NextAvailableProject,
+    RepertoireSyncResult,
+)
 from projectflow.ui.controller import ProjectFlowController, _update_prompt_text
 from projectflow.ui.main_window import MainWindow
 
@@ -360,5 +364,8 @@ async def test_controller_auto_sync_uses_transaction_grace_period(
 
     await controller.sync_repertoire_pending(automatic=True)
 
-    assert services.repertoire_service.minimum_age_seconds == 120.0
+    assert (
+        services.repertoire_service.minimum_age_seconds
+        == PENDING_TRANSACTION_SAFETY_WINDOW_SECONDS
+    )
     assert "Synchronisation repertoire" not in window.creation_tab.logs.toPlainText()

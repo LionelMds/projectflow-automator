@@ -22,7 +22,7 @@ from projectflow.exceptions import ProjectCreationError
 MAIN_PROJECT_RE = re.compile(r"^(\d{4})-(\d+)$")
 # Colonnes A:E = saisie ProjectFlow. Colonnes F:L = donnees comptables intouchables.
 REPERTOIRE_TABLE_WIDTH = 12
-PENDING_TRANSACTION_SAFETY_WINDOW_SECONDS = 120.0
+PENDING_TRANSACTION_SAFETY_WINDOW_SECONDS = 600.0
 
 
 class WorkbookGateway(Protocol):
@@ -131,6 +131,9 @@ class RepertoireService:
                         except ProjectCreationError:
                             self._transaction_store.delete(transaction)
                             raise
+                        transaction = self._transaction_store.clear_verification(
+                            transaction,
+                        )
                     try:
                         is_verified = await self.verify_project(
                             project,
@@ -144,6 +147,7 @@ class RepertoireService:
                             "L'ecriture du repertoire chantier n'a pas pu etre confirmee. "
                             "Elle est conservee en attente de synchronisation.",
                         )
+                    self._transaction_store.mark_verified(transaction, reset=True)
             except OSError as exc:
                 raise ProjectCreationError(
                     "Le repertoire chantier n'est pas disponible pour l'instant. "
@@ -160,7 +164,7 @@ class RepertoireService:
     async def sync_pending(
         self,
         *,
-        minimum_age_seconds: float = 0.0,
+        minimum_age_seconds: float = PENDING_TRANSACTION_SAFETY_WINDOW_SECONDS,
     ) -> RepertoireSyncResult:
         if self._transaction_store is None:
             return RepertoireSyncResult(total=0, applied=0, already_verified=0, failed=0)
@@ -172,35 +176,40 @@ class RepertoireService:
         deferred = 0
         with self._transaction_store.lock():
             for transaction in transactions:
-                is_mature = transaction.age_seconds() >= minimum_age_seconds
                 try:
                     if await self.verify_project(
                         transaction.project,
                         created_on=transaction.repertoire_date,
                     ):
-                        if is_mature:
-                            self._transaction_store.delete(transaction)
-                            already_verified += 1
+                        verified_transaction = self._transaction_store.mark_verified(transaction)
+                        already_verified += 1
+                        if verified_transaction.stable_seconds() >= minimum_age_seconds:
+                            self._transaction_store.delete(verified_transaction)
                         else:
                             deferred += 1
                         continue
+                    pending_transaction = self._transaction_store.clear_verification(transaction)
                     await self._upsert_project(
-                        transaction.project,
-                        force_overwrite=transaction.force_overwrite,
-                        created_on=transaction.repertoire_date,
+                        pending_transaction.project,
+                        force_overwrite=pending_transaction.force_overwrite,
+                        created_on=pending_transaction.repertoire_date,
                     )
                     if not await self.verify_project(
-                        transaction.project,
-                        created_on=transaction.repertoire_date,
+                        pending_transaction.project,
+                        created_on=pending_transaction.repertoire_date,
                     ):
                         failed += 1
                         continue
                 except (ProjectCreationError, OSError):
                     failed += 1
                     continue
-                if is_mature:
-                    self._transaction_store.delete(transaction)
-                    applied += 1
+                verified_transaction = self._transaction_store.mark_verified(
+                    pending_transaction,
+                    reset=True,
+                )
+                applied += 1
+                if verified_transaction.stable_seconds() >= minimum_age_seconds:
+                    self._transaction_store.delete(verified_transaction)
                 else:
                     deferred += 1
         return RepertoireSyncResult(

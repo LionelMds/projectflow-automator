@@ -20,6 +20,7 @@ from projectflow.exceptions import ProjectCreationError
 class PendingRepertoireTransaction:
     id: str
     created_at: str
+    verified_since: str | None
     project: ProjectInput
     force_overwrite: bool
     repertoire_date: date
@@ -34,6 +35,18 @@ class PendingRepertoireTransaction:
         if created.tzinfo is None:
             created = created.replace(tzinfo=UTC)
         return max(0.0, (reference - created).total_seconds())
+
+    def stable_seconds(self, *, now: datetime | None = None) -> float:
+        if self.verified_since is None:
+            return 0.0
+        reference = now or datetime.now(tz=UTC)
+        try:
+            verified = datetime.fromisoformat(self.verified_since)
+        except ValueError:
+            return 0.0
+        if verified.tzinfo is None:
+            verified = verified.replace(tzinfo=UTC)
+        return max(0.0, (reference - verified).total_seconds())
 
 
 class RepertoireTransactionStore:
@@ -57,6 +70,7 @@ class RepertoireTransactionStore:
         transaction = PendingRepertoireTransaction(
             id=transaction_id,
             created_at=datetime.now(tz=UTC).isoformat(),
+            verified_since=None,
             project=project,
             force_overwrite=force_overwrite,
             repertoire_date=repertoire_date,
@@ -72,6 +86,44 @@ class RepertoireTransactionStore:
 
     def delete(self, transaction: PendingRepertoireTransaction) -> None:
         transaction.path.unlink(missing_ok=True)
+
+    def mark_verified(
+        self,
+        transaction: PendingRepertoireTransaction,
+        *,
+        reset: bool = False,
+    ) -> PendingRepertoireTransaction:
+        if transaction.verified_since is not None and not reset:
+            return transaction
+        updated = PendingRepertoireTransaction(
+            id=transaction.id,
+            created_at=transaction.created_at,
+            verified_since=datetime.now(tz=UTC).isoformat(),
+            project=transaction.project,
+            force_overwrite=transaction.force_overwrite,
+            repertoire_date=transaction.repertoire_date,
+            path=transaction.path,
+        )
+        _write_json_atomic(updated.path, _transaction_to_json(updated))
+        return updated
+
+    def clear_verification(
+        self,
+        transaction: PendingRepertoireTransaction,
+    ) -> PendingRepertoireTransaction:
+        if transaction.verified_since is None:
+            return transaction
+        updated = PendingRepertoireTransaction(
+            id=transaction.id,
+            created_at=transaction.created_at,
+            verified_since=None,
+            project=transaction.project,
+            force_overwrite=transaction.force_overwrite,
+            repertoire_date=transaction.repertoire_date,
+            path=transaction.path,
+        )
+        _write_json_atomic(updated.path, _transaction_to_json(updated))
+        return updated
 
     @contextmanager
     def lock(self, *, timeout_seconds: float = 15.0) -> Iterator[None]:
@@ -110,6 +162,7 @@ def _transaction_to_json(transaction: PendingRepertoireTransaction) -> dict[str,
         "version": 1,
         "id": transaction.id,
         "created_at": transaction.created_at,
+        "verified_since": transaction.verified_since,
         "force_overwrite": transaction.force_overwrite,
         "repertoire_date": transaction.repertoire_date.isoformat(),
         "project": {
@@ -138,6 +191,7 @@ def _transaction_from_json(path: Path) -> PendingRepertoireTransaction:
         return PendingRepertoireTransaction(
             id=str(payload["id"]),
             created_at=str(payload["created_at"]),
+            verified_since=_optional_string(payload.get("verified_since")),
             project=project,
             force_overwrite=bool(payload.get("force_overwrite", False)),
             repertoire_date=date.fromisoformat(str(payload["repertoire_date"])),
@@ -158,6 +212,13 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 def _safe_filename(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value)
+
+
+def _optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _is_stale_lock(path: Path, *, stale_after_seconds: float = 300.0) -> bool:
