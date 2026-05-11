@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.13
+
+- Corrige les conflits de fusion OneDrive du repertoire chantier en pilotant Excel localement sur Windows pour les fichiers OneDrive.
+- Evite les copies non fusionnees creees lorsque le fichier partage etait modifie directement par `openpyxl`.
+- Conserve `openpyxl` pour les fichiers locaux hors OneDrive et le mode test.
+- Ajoute des tests pour le choix automatique du moteur Excel/OneDrive.
+
 ## 0.1.12
 
 - Renforce la synchronisation du repertoire chantier face aux fusions OneDrive qui peuvent effacer une ecriture juste apres son application.

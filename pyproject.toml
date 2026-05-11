@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "projectflow-automator"
-version = "0.1.12"
+version = "0.1.13"
 description = "Application desktop cross-platform pour automatiser la creation des projets Balz Metal Sa."
 readme = "README.md"
 requires-python = ">=3.11"
