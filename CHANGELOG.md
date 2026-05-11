@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.12
+
+- Renforce la synchronisation du repertoire chantier face aux fusions OneDrive qui peuvent effacer une ecriture juste apres son application.
+- Conserve chaque ecriture en surveillance pendant 10 minutes avant de la considerer definitivement synchronisee.
+- Rejoue automatiquement une ecriture si Excel/OneDrive la fait disparaitre pendant une fusion.
+- Clarifie le journal de synchronisation avec l'etat `en surveillance OneDrive`.
+
 ## 0.1.11
 
 - Ajoute une file locale d'ecritures du repertoire chantier pour conserver les modifications si OneDrive ou Excel est temporairement indisponible.
