@@ -83,6 +83,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"src/projectflow/core/excel_com_repertoire.py" = ["ANN401"]
 "src/projectflow/outlook/windows.py" = ["ANN401"]
 "tests/**/*.py" = [
   "ANN001",
