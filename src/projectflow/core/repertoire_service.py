@@ -100,12 +100,9 @@ class RepertoireService:
         *,
         force_overwrite: bool = False,
         created_on: date | None = None,
-        ) -> None:
+    ) -> None:
         repertoire_date = created_on or self._today()
         if self._transaction_store is not None:
-            await self.sync_pending(
-                minimum_age_seconds=PENDING_TRANSACTION_SAFETY_WINDOW_SECONDS,
-            )
             transaction = self._transaction_store.create(
                 project,
                 force_overwrite=force_overwrite,

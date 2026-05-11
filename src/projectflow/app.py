@@ -64,7 +64,8 @@ def run(argv: Sequence[str]) -> int:
     )
     window.show()
     logger.info("app.started")
-    controller.start_auto_sync()
+    if _auto_sync_enabled():
+        controller.start_auto_sync()
     if not demo_mode:
         QTimer.singleShot(
             0,
@@ -101,6 +102,14 @@ def _smoke_exit_delay_ms(logger: structlog.stdlib.BoundLogger) -> int | None:
 
 def _demo_mode_enabled(argv: Sequence[str]) -> bool:
     return "--demo" in argv or os.environ.get("PROJECTFLOW_DEMO_MODE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _auto_sync_enabled() -> bool:
+    return os.environ.get("PROJECTFLOW_AUTO_SYNC", "").strip().lower() in {
         "1",
         "true",
         "yes",
