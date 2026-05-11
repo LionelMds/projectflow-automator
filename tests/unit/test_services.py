@@ -13,7 +13,7 @@ def _create_repertoire(path: Path) -> None:
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "2026"
-    worksheet.append(["Numero", "Societe", "Contact", "Localisation", "Description", "Gere par"])
+    worksheet.append(["Numero", "Date", "Societe", "Contact", "Description", "Gere par"])
     worksheet.append(["2026-4995", "", "", "", "", ""])
     workbook.save(path)
     workbook.close()

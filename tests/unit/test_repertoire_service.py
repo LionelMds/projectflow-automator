@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Any
 
 import pytest
@@ -10,6 +11,8 @@ from projectflow.core.models import ProjectInput
 from projectflow.core.numero import parse_project_number
 from projectflow.core.repertoire_service import RepertoireService
 from projectflow.exceptions import ProjectCreationError
+
+TODAY = date(2026, 5, 11)
 
 
 class FakeWorkbook:
@@ -104,10 +107,10 @@ async def test_upsert_project_updates_existing_empty_row() -> None:
         gere_par="LM",
     )
 
-    await RepertoireService(workbook).upsert_project(project)
+    await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)
 
     assert workbook.updated_ranges == [
-        ("2026", "A1:E1", [["2026-4995", "Balz", "Lionel", "Zurich", "Escalier"]]),
+        ("2026", "A1:E1", [["2026-4995", TODAY, "Balz", "Lionel", "Escalier"]]),
     ]
 
 
@@ -137,12 +140,13 @@ async def test_upsert_subproject_appends_to_structured_table_when_present() -> N
     )
     project = ProjectInput(number=parse_project_number("2026-4995-2"), designation="Variante")
 
-    await RepertoireService(workbook).upsert_project(project)
+    await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)
 
     assert workbook.table_rows[0][0] == "table-1"
     assert workbook.table_rows[0][1][0] == 0
     assert workbook.table_rows[0][1][1] == "2026-4995-2"
-    assert workbook.table_rows[0][1][2] == ""
+    assert workbook.table_rows[0][1][2] == TODAY
+    assert workbook.table_rows[0][1][3] == ""
     assert workbook.table_rows[0][1][5] == "Variante"
     assert workbook.table_rows[0][1][6] == ""
 
@@ -155,11 +159,11 @@ async def test_upsert_subproject_inserts_range_before_writing_without_table() ->
     ])
     project = ProjectInput(number=parse_project_number("2026-4995-2"), designation="Variante")
 
-    await RepertoireService(workbook).upsert_project(project)
+    await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)
 
     assert workbook.inserted_ranges == [("2026", "A2:F2", "Down", 1)]
     assert workbook.updated_ranges == [
-        ("2026", "A2:F2", [["2026-4995-2", "", "", "", "Variante", ""]]),
+        ("2026", "A2:F2", [["2026-4995-2", TODAY, "", "", "Variante", ""]]),
     ]
 
 
@@ -172,10 +176,10 @@ async def test_upsert_subproject_does_not_replace_unrelated_sixth_column() -> No
         gere_par="LM",
     )
 
-    await RepertoireService(workbook).upsert_project(project)
+    await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)
 
     assert workbook.updated_ranges == [
-        ("2026", "A2:F2", [["2026-4995-2", "", "", "", "Variante", ""]]),
+        ("2026", "A2:F2", [["2026-4995-2", TODAY, "", "", "Variante", ""]]),
     ]
 
 
@@ -188,9 +192,9 @@ async def test_upsert_existing_subproject_updates_existing_row_without_inserting
     ])
     project = ProjectInput(number=parse_project_number("2026-4995-2"), designation="Variante")
 
-    await RepertoireService(workbook).upsert_project(project)
+    await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)
 
     assert workbook.inserted_ranges == []
     assert workbook.updated_ranges == [
-        ("2026", "A2:F2", [["2026-4995-2", "", "", "", "Variante", ""]]),
+        ("2026", "A2:F2", [["2026-4995-2", TODAY, "", "", "Variante", ""]]),
     ]

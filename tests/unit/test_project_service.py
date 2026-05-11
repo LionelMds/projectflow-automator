@@ -13,6 +13,7 @@ from projectflow.core.project_service import (
     ProjectService,
     copy_reference_tree,
     outlook_folder_paths,
+    outlook_project_folder_name,
     render_outlook_folder_name,
 )
 from projectflow.exceptions import ConfigError
@@ -77,8 +78,18 @@ def test_outlook_folder_templates_render_project_placeholders() -> None:
         ),
     ]
 
-    assert render_outlook_folder_name("[YYYY]-[XXXX]", project) == "2026-4995"
-    assert outlook_folder_paths(project, arborescence) == [["Clients", "2026", "2026-4995 - 4995"]]
+    assert outlook_project_folder_name(project) == "2026-4995 (Escalier)"
+    assert render_outlook_folder_name("[PROJECT_FOLDER]", project) == "2026-4995 (Escalier)"
+    assert render_outlook_folder_name("[YYYY]-[XXXX]", project) == "2026-4995 (Escalier)"
+    assert outlook_folder_paths(project, arborescence) == [
+        ["Clients", "2026", "2026-4995 (Escalier)"],
+    ]
+
+
+def test_outlook_project_folder_name_falls_back_to_number_without_designation() -> None:
+    project = ProjectInput(number=parse_project_number("2026-4995"), designation="")
+
+    assert outlook_project_folder_name(project) == "2026-4995"
 
 
 @pytest.mark.asyncio
@@ -113,7 +124,7 @@ async def test_create_project_creates_folder_copies_reference_and_calls_integrat
     assert (project_dir / "2026-4995 - Fiche dossier clients.xlsx").exists()
     assert repertoire.calls == [(project, False)]
     assert outlook.validated is True
-    assert outlook.paths == [["2026", "2026-4995"]]
+    assert outlook.paths == [["2026", "2026-4995 (Escalier)"]]
     assert pinned == [project_dir]
 
 
@@ -150,7 +161,7 @@ async def test_recreate_existing_project_reapplies_integrations_without_updating
     assert result.fiche_path == str(fiche_path)
     assert not (project_dir / "modele fiche.xlsx").exists()
     assert repertoire.calls == []
-    assert outlook.paths == [["2026", "2026-4995"]]
+    assert outlook.paths == [["2026", "2026-4995 (Nouveau texte)"]]
     assert pinned == [project_dir]
 
 

@@ -101,9 +101,9 @@ def _ensure_repertoire(repertoire_path: Path) -> None:
             worksheet = workbook.create_sheet(worksheet_name)
             worksheet.append([
                 "Numero",
+                "Date",
                 "Societe",
                 "Contact",
-                "Localisation",
                 "Description",
                 "Gere par",
             ])

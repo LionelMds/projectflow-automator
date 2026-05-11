@@ -33,6 +33,7 @@ async def test_update_checker_returns_newer_release() -> None:
             json={
                 "tag_name": "v0.2.0",
                 "html_url": "https://github.example/release",
+                "body": "- Correction du repertoire chantier",
                 "assets": [
                     {
                         "name": "ProjectFlowAutomator.exe",
@@ -53,6 +54,7 @@ async def test_update_checker_returns_newer_release() -> None:
 
     assert update is not None
     assert update.latest_version == "0.2.0"
+    assert update.release_notes == "- Correction du repertoire chantier"
     assert update.assets[0].name == "ProjectFlowAutomator.exe"
 
 

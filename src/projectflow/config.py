@@ -74,7 +74,7 @@ class OutlookConfig(BaseModel):
             OutlookFolderConfig(
                 name="[YYYY]",
                 children=[
-                    OutlookFolderConfig(name="[YYYY]-[XXXX]"),
+                    OutlookFolderConfig(name="[PROJECT_FOLDER]"),
                 ],
             )
         ],

@@ -30,6 +30,7 @@ class UpdateInfo:
     latest_version: str
     release_url: str
     assets: tuple[ReleaseAsset, ...]
+    release_notes: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,11 +189,13 @@ def _update_from_payload(payload: object, *, current_version: str) -> UpdateInfo
     release_assets = tuple(
         _asset_from_payload(asset) for asset in assets if isinstance(asset, dict)
     )
+    body = payload.get("body")
     return UpdateInfo(
         current_version=current_version,
         latest_version=latest_version,
         release_url=html_url,
         assets=release_assets,
+        release_notes=body.strip() if isinstance(body, str) else "",
     )
 
 

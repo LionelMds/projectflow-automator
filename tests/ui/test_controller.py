@@ -12,7 +12,7 @@ from projectflow.core.fiche_service import FicheService
 from projectflow.core.models import ProjectCreationResult, ProjectInput
 from projectflow.core.numero import parse_project_number
 from projectflow.core.repertoire_service import NextAvailableProject
-from projectflow.ui.controller import ProjectFlowController
+from projectflow.ui.controller import ProjectFlowController, _update_prompt_text
 from projectflow.ui.main_window import MainWindow
 
 
@@ -293,3 +293,10 @@ def test_controller_open_fiche_uses_default_app(
     controller.open_fiche()
 
     assert opened == [project_dir / "2026-4995 - Fiche dossier clients.xlsx"]
+
+
+def test_update_prompt_includes_release_notes() -> None:
+    message = _update_prompt_text("0.1.8", "- Corrige le repertoire chantier")
+
+    assert "ProjectFlow 0.1.8" in message
+    assert "Corrige le repertoire chantier" in message

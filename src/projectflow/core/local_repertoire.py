@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from copy import copy
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
@@ -79,10 +80,13 @@ class LocalWorkbookGateway:
         min_col, min_row, _max_col, _max_row = _range_boundaries(address)
         for row_offset, row_values in enumerate(values):
             for column_offset, value in enumerate(row_values):
-                worksheet.cell(
+                cell = worksheet.cell(
                     row=min_row + row_offset,
                     column=min_col + column_offset,
-                ).value = value
+                )
+                cell.value = value
+                if isinstance(value, date):
+                    cell.number_format = "DD.MM.YYYY"
 
     async def insert_range(
         self,

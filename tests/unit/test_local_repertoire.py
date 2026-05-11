@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -11,12 +12,14 @@ from projectflow.core.models import ProjectInput
 from projectflow.core.numero import parse_project_number
 from projectflow.core.repertoire_service import RepertoireService
 
+TODAY = date(2026, 5, 11)
+
 
 def _create_repertoire(path: Path) -> None:
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "2026"
-    worksheet.append(["Numero", "Societe", "Contact", "Localisation", "Description", "Gere par"])
+    worksheet.append(["Numero", "Date", "Societe", "Contact", "Description", "Gere par"])
     worksheet.append(["2026-4995", "", "", "", "", ""])
     worksheet.append(["2026-5000", "", "", "", "", ""])
     workbook.save(path)
@@ -27,8 +30,8 @@ def _create_styled_repertoire(path: Path) -> None:
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "2026"
-    worksheet.append(["Numero", "Societe", "Contact", "Localisation", "Description", "Gere par"])
-    worksheet.append(["2026-4995", "Balz", "Lionel", "Zurich", "Escalier", "Code"])
+    worksheet.append(["Numero", "Date", "Societe", "Contact", "Description", "Gere par"])
+    worksheet.append(["2026-4995", TODAY, "Balz", "Lionel", "Escalier", "Code"])
     worksheet.append(["2026-5000", "", "", "", "", ""])
     fill = PatternFill(fill_type="solid", fgColor="FFF2CC")
     for column_index in range(1, 7):
@@ -42,7 +45,7 @@ def _create_styled_repertoire(path: Path) -> None:
 async def test_local_repertoire_updates_main_project(tmp_path: Path) -> None:
     path = tmp_path / "repertoire.xlsx"
     _create_repertoire(path)
-    service = RepertoireService(LocalWorkbookGateway(path))
+    service = RepertoireService(LocalWorkbookGateway(path), today=lambda: TODAY)
     project = ProjectInput(
         number=parse_project_number("2026-4995"),
         designation="Escalier",
@@ -57,7 +60,10 @@ async def test_local_repertoire_updates_main_project(tmp_path: Path) -> None:
     workbook = load_workbook(path)
     worksheet = workbook["2026"]
     assert worksheet["A2"].value == "2026-4995"
-    assert worksheet["B2"].value == "Balz"
+    assert worksheet["B2"].value.date() == TODAY
+    assert worksheet["B2"].number_format == "DD.MM.YYYY"
+    assert worksheet["C2"].value == "Balz"
+    assert worksheet["D2"].value == "Lionel"
     assert worksheet["E2"].value == "Escalier"
     workbook.close()
 
@@ -68,7 +74,7 @@ async def test_local_repertoire_inserts_subproject_without_overwriting_next_row(
 ) -> None:
     path = tmp_path / "repertoire.xlsx"
     _create_repertoire(path)
-    service = RepertoireService(LocalWorkbookGateway(path))
+    service = RepertoireService(LocalWorkbookGateway(path), today=lambda: TODAY)
     parent = ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier")
     subproject = ProjectInput(number=parse_project_number("2026-4995-2"), designation="Variante")
 
@@ -89,7 +95,7 @@ async def test_local_repertoire_inserts_subproject_with_blank_values_and_availab
 ) -> None:
     path = tmp_path / "repertoire.xlsx"
     _create_styled_repertoire(path)
-    service = RepertoireService(LocalWorkbookGateway(path))
+    service = RepertoireService(LocalWorkbookGateway(path), today=lambda: TODAY)
     subproject = ProjectInput(
         number=parse_project_number("2026-4995-2"),
         designation="Variante",
@@ -101,9 +107,10 @@ async def test_local_repertoire_inserts_subproject_with_blank_values_and_availab
     workbook = load_workbook(path)
     worksheet = workbook["2026"]
     assert worksheet["A3"].value == "2026-4995-2"
-    assert worksheet["B3"].value is None
-    assert worksheet["C3"].value == "Contact saisi"
-    assert worksheet["D3"].value is None
+    assert worksheet["B3"].value.date() == TODAY
+    assert worksheet["B3"].number_format == "DD.MM.YYYY"
+    assert worksheet["C3"].value is None
+    assert worksheet["D3"].value == "Contact saisi"
     assert worksheet["E3"].value == "Variante"
     assert worksheet["F3"].value is None
     assert worksheet["A4"].value == "2026-5000"

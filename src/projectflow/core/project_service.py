@@ -184,9 +184,35 @@ def _collect_outlook_folder_paths(
 
 
 def render_outlook_folder_name(template: str, project: ProjectInput) -> str:
-    return (
+    if "[PROJECT_FOLDER]" in template:
+        return _normalize_outlook_folder_name(
+            template.replace("[PROJECT_FOLDER]", outlook_project_folder_name(project)),
+        )
+    if "[DESIGNATION]" not in template and _is_project_number_template(template):
+        return outlook_project_folder_name(project)
+    return _normalize_outlook_folder_name(
         template.replace("[YYYY]", str(project.number.year))
         .replace("[XXXX]", project.number.project_id)
         .replace("[NUMERO]", str(project.number))
         .replace("[PROJECT]", str(project.number))
+        .replace("[DESIGNATION]", project.designation.strip()),
     )
+
+
+def outlook_project_folder_name(project: ProjectInput) -> str:
+    designation = _normalize_outlook_folder_name(project.designation)
+    if not designation:
+        return str(project.number)
+    return f"{project.number} ({designation})"
+
+
+def _is_project_number_template(template: str) -> bool:
+    return (
+        "[NUMERO]" in template
+        or "[PROJECT]" in template
+        or ("[YYYY]" in template and "[XXXX]" in template)
+    )
+
+
+def _normalize_outlook_folder_name(value: str) -> str:
+    return " ".join(value.split())

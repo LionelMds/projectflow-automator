@@ -195,8 +195,7 @@ class ProjectFlowController:
         answer = QMessageBox.question(
             self._window,
             "Mise a jour disponible",
-            f"ProjectFlow {update.latest_version} est disponible. "
-            "Telecharger et installer maintenant ?",
+            _update_prompt_text(update.latest_version, update.release_notes),
         )
         if answer != QMessageBox.StandardButton.Yes:
             self._log(f"! Mise a jour disponible: {update.latest_version} - {update.release_url}")
@@ -361,3 +360,20 @@ def _non_empty_changed(current: str, existing: str) -> bool:
     if not normalized_current:
         return False
     return normalized_current != existing.strip()
+
+
+def _update_prompt_text(version: str, release_notes: str) -> str:
+    notes = release_notes.strip()
+    if notes:
+        return (
+            f"ProjectFlow {version} est disponible.\n\n"
+            f"Changements:\n{_truncate_release_notes(notes)}\n\n"
+            "Telecharger et installer maintenant ?"
+        )
+    return f"ProjectFlow {version} est disponible. Telecharger et installer maintenant ?"
+
+
+def _truncate_release_notes(notes: str, *, limit: int = 1200) -> str:
+    if len(notes) <= limit:
+        return notes
+    return f"{notes[:limit].rstrip()}\n..."

@@ -47,7 +47,7 @@ async def test_demo_service_can_create_project_end_to_end(tmp_path: Path) -> Non
     workbook = load_workbook(services.workbook_path)
     worksheet = workbook["2026"]
     assert worksheet["A2"].value == "2026-4995"
-    assert worksheet["B2"].value == "Balz"
+    assert worksheet["C2"].value == "Balz"
     assert worksheet["E2"].value == "Escalier demo"
     workbook.close()
 
@@ -68,4 +68,4 @@ async def test_demo_service_uses_local_outlook_when_enabled(
     )
 
     assert outlook.validated is True
-    assert outlook.paths == [["2026", "2026-4995"]]
+    assert outlook.paths == [["2026", "2026-4995 (Escalier demo)"]]

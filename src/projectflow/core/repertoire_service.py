@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Protocol
 
 from projectflow.core.duplication import (
@@ -67,8 +68,9 @@ class NextAvailableProject:
 
 
 class RepertoireService:
-    def __init__(self, workbook: WorkbookGateway) -> None:
+    def __init__(self, workbook: WorkbookGateway, today: Callable[[], date] = date.today) -> None:
         self._workbook = workbook
+        self._today = today
 
     async def next_available(self, *, year: int) -> NextAvailableProject | None:
         async with self._workbook.session():
@@ -106,7 +108,7 @@ class RepertoireService:
 
             row = _ensure_width(rows[row_index], width=5)
             assert_description_empty(row, force_overwrite=force_overwrite)
-            updated_row = _apply_project_to_row(row[:5], project)
+            updated_row = _apply_project_to_row(row[:5], project, created_on=self._today())
             await self._workbook.update_range_values(
                 worksheet_name,
                 _row_address(row_index, width=len(updated_row)),
@@ -123,7 +125,7 @@ class RepertoireService:
         tables = await self._workbook.list_tables(worksheet_name)
         existing_index = find_project_row(rows, project.number)
         if existing_index is not None:
-            updated_row = _project_values(project, width=6)
+            updated_row = _project_values(project, width=6, created_on=self._today())
             await self._workbook.update_range_values(
                 worksheet_name,
                 _row_address(existing_index, width=len(updated_row)),
@@ -132,7 +134,11 @@ class RepertoireService:
             return
 
         insert_index, blank_row = prepare_subproject_row(rows, project.number)
-        updated_row = _project_values(project, width=max(len(blank_row), 6))
+        updated_row = _project_values(
+            project,
+            width=max(len(blank_row), 6),
+            created_on=self._today(),
+        )
         format_source_index = _first_available_main_project_row_index(rows)
 
         if tables:
@@ -162,22 +168,22 @@ class RepertoireService:
             raise ProjectCreationError(f"Onglet introuvable dans le repertoire: {worksheet_name}")
 
 
-def _apply_project_to_row(row: list[Any], project: ProjectInput) -> list[Any]:
+def _apply_project_to_row(row: list[Any], project: ProjectInput, *, created_on: date) -> list[Any]:
     updated = _ensure_width(list(row), width=5)
     updated[0] = str(project.number)
-    _write_if_non_empty(updated, 1, project.societe)
-    _write_if_non_empty(updated, 2, project.contact)
-    _write_if_non_empty(updated, 3, project.localisation)
+    updated[1] = created_on
+    _write_if_non_empty(updated, 2, project.societe)
+    _write_if_non_empty(updated, 3, project.contact)
     _write_if_non_empty(updated, 4, project.designation)
     return updated
 
 
-def _project_values(project: ProjectInput, *, width: int) -> list[Any]:
-    updated = [""] * max(width, 5)
+def _project_values(project: ProjectInput, *, width: int, created_on: date) -> list[Any]:
+    updated: list[Any] = [""] * max(width, 5)
     updated[0] = str(project.number)
-    updated[1] = project.societe.strip()
-    updated[2] = project.contact.strip()
-    updated[3] = project.localisation.strip()
+    updated[1] = created_on
+    updated[2] = project.societe.strip()
+    updated[3] = project.contact.strip()
     updated[4] = project.designation.strip()
     return updated
 
