@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.11
+
+- Ajoute une file locale d'ecritures du repertoire chantier pour conserver les modifications si OneDrive ou Excel est temporairement indisponible.
+- Synchronise automatiquement les ecritures en attente au demarrage, apres creation ou mise a jour de projet, puis en arriere-plan.
+- Ajoute un bouton `Synchroniser repertoire` pour relancer manuellement la synchronisation si necessaire.
+- Verifie les ecritures du repertoire apres sauvegarde et conserve une fenetre de securite avant de supprimer les transactions locales.
+- Ameliore le mode demo pour tester le meme mecanisme de synchronisation locale.
+
 ## 0.1.10
 
 - Corrige l'installation automatique des mises a jour Windows apres confirmation utilisateur.
