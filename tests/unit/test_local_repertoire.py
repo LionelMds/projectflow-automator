@@ -11,7 +11,6 @@ from openpyxl.worksheet.table import Table
 from projectflow.core.local_repertoire import LocalWorkbookGateway
 from projectflow.core.models import ProjectInput
 from projectflow.core.numero import parse_project_number
-from projectflow.core.repertoire_queue import RepertoireTransactionStore
 from projectflow.core.repertoire_service import RepertoireService
 
 TODAY = date(2026, 5, 11)
@@ -229,79 +228,3 @@ async def test_local_repertoire_inserts_subproject_without_copying_accounting_ta
     ]
     assert worksheet.tables["Repertoire"].ref == "A1:L4"
     workbook.close()
-
-
-@pytest.mark.asyncio
-async def test_local_repertoire_sync_pending_replays_verified_transaction(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "repertoire.xlsx"
-    _create_repertoire(path)
-    store = RepertoireTransactionStore(tmp_path / "pending")
-    project = ProjectInput(
-        number=parse_project_number("2026-4995"),
-        designation="Escalier",
-        societe="Balz",
-        contact="Lionel",
-    )
-    store.create(project, force_overwrite=False, repertoire_date=TODAY)
-    service = RepertoireService(
-        LocalWorkbookGateway(path),
-        today=lambda: TODAY,
-        transaction_store=store,
-    )
-
-    result = await service.sync_pending()
-
-    assert result.total == 1
-    assert result.applied == 1
-    assert result.deferred == 1
-    assert result.failed == 0
-    assert len(store.list_pending()) == 1
-    workbook = load_workbook(path)
-    worksheet = workbook["2026"]
-    assert worksheet["A2"].value == "2026-4995"
-    assert worksheet["B2"].value.date() == TODAY
-    assert worksheet["C2"].value == "Balz"
-    assert worksheet["D2"].value == "Lionel"
-    assert worksheet["E2"].value == "Escalier"
-    workbook.close()
-
-    cleanup_result = await service.sync_pending(minimum_age_seconds=0.0)
-
-    assert cleanup_result.already_verified == 1
-    assert store.list_pending() == []
-
-
-@pytest.mark.asyncio
-async def test_local_repertoire_keeps_verified_transaction_until_later_sync(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "repertoire.xlsx"
-    _create_repertoire(path)
-    store = RepertoireTransactionStore(tmp_path / "pending")
-    service = RepertoireService(
-        LocalWorkbookGateway(path),
-        today=lambda: TODAY,
-        transaction_store=store,
-    )
-    project = ProjectInput(
-        number=parse_project_number("2026-4995"),
-        designation="Escalier",
-    )
-
-    await service.upsert_project(project)
-
-    assert len(store.list_pending()) == 1
-
-    result = await service.sync_pending()
-
-    assert result.total == 1
-    assert result.already_verified == 1
-    assert result.deferred == 1
-    assert len(store.list_pending()) == 1
-
-    cleanup_result = await service.sync_pending(minimum_age_seconds=0.0)
-
-    assert cleanup_result.already_verified == 1
-    assert store.list_pending() == []

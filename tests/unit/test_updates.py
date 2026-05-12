@@ -178,15 +178,10 @@ def test_prepare_windows_install_plan_writes_script(tmp_path: Path) -> None:
     )
 
     assert plan.should_quit_app is True
-    assert plan.command[0] == "powershell.exe"
-    assert "-WindowStyle" in plan.command
+    assert plan.command[0] == "powershell"
     script_path = tmp_path / "install_projectflow_update.ps1"
     assert script_path.exists()
-    script = script_path.read_text(encoding="utf-8")
-    assert "install_projectflow_update.log" in script
-    assert "Copy attempt" in script
-    assert "Start-Process -FilePath $Target" in script
-    assert "Relaunch-Elevated" in script
+    assert "Copy-Item" in script_path.read_text(encoding="utf-8")
 
 
 def test_prepare_macos_install_plan_opens_dmg(tmp_path: Path) -> None:

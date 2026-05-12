@@ -139,12 +139,10 @@ def prepare_install_plan(
         script_path = _write_windows_install_script(script_dir or updates_dir())
         return InstallPlan(
             command=(
-                "powershell.exe",
+                "powershell",
                 "-NoProfile",
                 "-ExecutionPolicy",
                 "Bypass",
-                "-WindowStyle",
-                "Hidden",
                 "-File",
                 str(script_path),
                 "-Source",
@@ -165,14 +163,10 @@ def prepare_install_plan(
 
 def launch_install_plan(plan: InstallPlan) -> None:
     if system().lower() == "windows":
-        creationflags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "DETACHED_PROCESS", 0)
         subprocess.Popen(
             plan.command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            creationflags=creationflags,
+            start_new_session=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         return
     subprocess.Popen(plan.command, start_new_session=True)
@@ -244,121 +238,11 @@ def _write_windows_install_script(directory: Path) -> Path:
         """param(
   [Parameter(Mandatory=$true)][string]$Source,
   [Parameter(Mandatory=$true)][string]$Target,
-  [Parameter(Mandatory=$true)][int]$Pid,
-  [switch]$Elevated
+  [Parameter(Mandatory=$true)][int]$Pid
 )
-$ErrorActionPreference = "Stop"
-$LogPath = Join-Path `
-  -Path (Split-Path -Parent $PSCommandPath) `
-  -ChildPath "install_projectflow_update.log"
-
-function Write-InstallLog([string]$Message) {
-  $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-  Add-Content -LiteralPath $LogPath -Value "[$timestamp] $Message" -Encoding UTF8
-}
-
-function Show-InstallError([string]$Message) {
-  try {
-    Add-Type -AssemblyName PresentationFramework
-    [System.Windows.MessageBox]::Show(
-      "$Message`n`nJournal: $LogPath",
-      "ProjectFlow - Mise a jour",
-      "OK",
-      "Error"
-    ) | Out-Null
-  } catch {
-    Write-InstallLog "MessageBox unavailable: $($_.Exception.Message)"
-  }
-}
-
-function Quote-Argument([string]$Value) {
-  return '"' + $Value.Replace('"', '\"') + '"'
-}
-
-function Relaunch-Elevated {
-  if ($Elevated) {
-    return $false
-  }
-  Write-InstallLog "Permission issue detected, requesting elevation."
-  $arguments = @(
-    "-NoProfile",
-    "-ExecutionPolicy", "Bypass",
-    "-WindowStyle", "Hidden",
-    "-File", (Quote-Argument $PSCommandPath),
-    "-Source", (Quote-Argument $Source),
-    "-Target", (Quote-Argument $Target),
-    "-Pid", "$Pid",
-    "-Elevated"
-  )
-  Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $arguments
-  return $true
-}
-
-try {
-  Write-InstallLog "Starting ProjectFlow update."
-  Write-InstallLog "Source: $Source"
-  Write-InstallLog "Target: $Target"
-
-  if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
-    throw "Fichier de mise a jour introuvable: $Source"
-  }
-
-  $targetDirectory = Split-Path -Parent $Target
-  if (-not (Test-Path -LiteralPath $targetDirectory -PathType Container)) {
-    New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
-  }
-
-  if ($Pid -gt 0) {
-    try {
-      Write-InstallLog "Waiting for process $Pid to exit."
-      Wait-Process -Id $Pid -Timeout 90 -ErrorAction Stop
-    } catch {
-      Write-InstallLog "Wait-Process warning: $($_.Exception.Message)"
-    }
-  }
-
-  Start-Sleep -Milliseconds 750
-  $sourceLength = (Get-Item -LiteralPath $Source).Length
-  $lastError = ""
-
-  for ($attempt = 1; $attempt -le 30; $attempt++) {
-    try {
-      Write-InstallLog "Copy attempt $attempt."
-      if (Test-Path -LiteralPath $Target -PathType Leaf) {
-        Copy-Item `
-          -LiteralPath $Target `
-          -Destination "$Target.bak" `
-          -Force `
-          -ErrorAction SilentlyContinue
-      }
-      Copy-Item -LiteralPath $Source -Destination $Target -Force -ErrorAction Stop
-      Unblock-File -LiteralPath $Target -ErrorAction SilentlyContinue
-      $targetLength = (Get-Item -LiteralPath $Target).Length
-      if ($targetLength -ne $sourceLength) {
-        throw "Taille invalide apres copie: source=$sourceLength target=$targetLength"
-      }
-      Write-InstallLog "Copy succeeded."
-      Start-Process -FilePath $Target -WorkingDirectory $targetDirectory
-      Write-InstallLog "Updated application started."
-      exit 0
-    } catch {
-      $lastError = $_.Exception.Message
-      Write-InstallLog "Copy attempt $attempt failed: $lastError"
-      if ($lastError -match "Access|Unauthorized|denied|refus") {
-        if (Relaunch-Elevated) {
-          exit 0
-        }
-      }
-      Start-Sleep -Seconds 1
-    }
-  }
-
-  throw "Installation impossible apres plusieurs tentatives: $lastError"
-} catch {
-  Write-InstallLog "FAILED: $($_.Exception.Message)"
-  Show-InstallError "La mise a jour ProjectFlow n'a pas pu etre installee."
-  exit 1
-}
+if ($Pid -gt 0) { Wait-Process -Id $Pid -ErrorAction SilentlyContinue }
+Copy-Item -LiteralPath $Source -Destination $Target -Force
+Start-Process -FilePath $Target
 """,
         encoding="utf-8",
     )

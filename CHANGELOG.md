@@ -1,41 +1,12 @@
 # Changelog
 
-## 0.1.14
+## 0.1.15
 
-- Desactive la synchronisation automatique du repertoire chantier par defaut pour eviter les ouvertures Excel, retries et fusions OneDrive en arriere-plan.
-- Ne rejoue plus les ecritures en attente au demarrage de l'application.
-- Ne rejoue plus les ecritures en attente avant une nouvelle creation de projet.
-- Conserve le bouton manuel `Synchroniser repertoire`, mais aucune synchronisation cachee n'est lancee sans action explicite.
-- Ajoute l'option de diagnostic `PROJECTFLOW_AUTO_SYNC=1` pour reactiver l'ancien comportement uniquement en test.
-
-## 0.1.13
-
-- Corrige les conflits de fusion OneDrive du repertoire chantier en pilotant Excel localement sur Windows pour les fichiers OneDrive.
-- Evite les copies non fusionnees creees lorsque le fichier partage etait modifie directement par `openpyxl`.
-- Conserve `openpyxl` pour les fichiers locaux hors OneDrive et le mode test.
-- Ajoute des tests pour le choix automatique du moteur Excel/OneDrive.
-
-## 0.1.12
-
-- Renforce la synchronisation du repertoire chantier face aux fusions OneDrive qui peuvent effacer une ecriture juste apres son application.
-- Conserve chaque ecriture en surveillance pendant 10 minutes avant de la considerer definitivement synchronisee.
-- Rejoue automatiquement une ecriture si Excel/OneDrive la fait disparaitre pendant une fusion.
-- Clarifie le journal de synchronisation avec l'etat `en surveillance OneDrive`.
-
-## 0.1.11
-
-- Ajoute une file locale d'ecritures du repertoire chantier pour conserver les modifications si OneDrive ou Excel est temporairement indisponible.
-- Synchronise automatiquement les ecritures en attente au demarrage, apres creation ou mise a jour de projet, puis en arriere-plan.
-- Ajoute un bouton `Synchroniser repertoire` pour relancer manuellement la synchronisation si necessaire.
-- Verifie les ecritures du repertoire apres sauvegarde et conserve une fenetre de securite avant de supprimer les transactions locales.
-- Ameliore le mode demo pour tester le meme mecanisme de synchronisation locale.
-
-## 0.1.10
-
-- Corrige l'installation automatique des mises a jour Windows apres confirmation utilisateur.
-- Ajoute un installateur Windows detache avec journal, retries de copie, verification de taille et relance de l'application mise a jour.
-- Affiche un message d'erreur avec chemin du journal si la copie Windows echoue au lieu d'echouer silencieusement.
-- Conserve les corrections critiques de `0.1.9` protegeant les colonnes comptables `F:L` du repertoire chantier.
+- Version de secours: retour au comportement applicatif de `0.1.9`.
+- Retire les changements experimentaux de synchronisation automatique du repertoire chantier.
+- Retire le moteur Excel COM ajoute apres `0.1.9`.
+- Retire les modifications de mise a jour introduites apres `0.1.9`.
+- Conserve les protections critiques de `0.1.9` sur les colonnes comptables `F:L`.
 
 ## 0.1.9
 

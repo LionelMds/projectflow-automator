@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "projectflow-automator"
-version = "0.1.14"
+version = "0.1.15"
 description = "Application desktop cross-platform pour automatiser la creation des projets Balz Metal Sa."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -83,9 +83,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/projectflow/core/excel_com_repertoire.py" = ["ANN401"]
 "src/projectflow/outlook/windows.py" = ["ANN401"]
-"tests/unit/test_excel_com_repertoire.py" = ["N802", "N803", "SLF001"]
 "tests/**/*.py" = [
   "ANN001",
   "ANN401",

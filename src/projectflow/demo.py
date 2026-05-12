@@ -12,7 +12,6 @@ from projectflow.config import AppConfig, RepertoireChantierConfig, UserConfig
 from projectflow.core.fiche_service import FICHE_SUFFIX, FicheService
 from projectflow.core.local_repertoire import LocalWorkbookGateway
 from projectflow.core.project_service import ProjectService
-from projectflow.core.repertoire_queue import RepertoireTransactionStore
 from projectflow.core.repertoire_service import RepertoireService
 from projectflow.outlook.local import create_local_outlook_client
 from projectflow.platform.paths import data_dir
@@ -30,10 +29,7 @@ class DemoServiceContainer:
         return self.fiche_service
 
     def repertoire(self) -> RepertoireService:
-        return RepertoireService(
-            LocalWorkbookGateway(self.workbook_path),
-            transaction_store=RepertoireTransactionStore.for_workbook(self.workbook_path),
-        )
+        return RepertoireService(LocalWorkbookGateway(self.workbook_path))
 
     def project(self) -> ProjectService:
         return ProjectService(
