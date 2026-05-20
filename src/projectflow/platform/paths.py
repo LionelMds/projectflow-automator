@@ -36,6 +36,17 @@ def expand_user_path(value: str | Path) -> Path:
     return Path(value).expanduser()
 
 
+def native_path_text(value: str | Path | None) -> str:
+    if value is None:
+        return ""
+    raw_value = str(value).strip()
+    if not raw_value:
+        return ""
+    if "://" in raw_value:
+        return raw_value
+    return str(Path(raw_value).expanduser())
+
+
 def detect_onedrive_balz_root() -> Path | None:
     candidates = [
         Path.home() / "OneDrive - Balz Metal Sa",

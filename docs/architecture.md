@@ -8,7 +8,8 @@ flowchart LR
   Service --> FS["Systeme fichiers"]
   Service --> Fiche["FicheService openpyxl"]
   Service --> Repertoire["RepertoireService"]
-  Repertoire --> Excel["Excel local openpyxl"]
+  Repertoire --> LocalExcel["Excel local openpyxl hors OneDrive"]
+  Repertoire --> GraphExcel["Graph Excel cloud pour OneDrive"]
   Service -. optionnel .-> Outlook["Connecteur Outlook local"]
   Outlook --> WinOutlook["Profil Outlook classique Windows"]
 ```
@@ -37,7 +38,7 @@ sequenceDiagram
   participant FS as Systeme fichiers
   participant Fiche as FicheService
   participant Rep as RepertoireService
-  participant Excel as Excel local
+  participant Excel as Excel cloud/local
   participant Outlook as Outlook local
 
   UI->>Service: create_project(ProjectInput)
@@ -45,7 +46,7 @@ sequenceDiagram
   Service->>FS: Copie reference sans ecraser
   Service->>Fiche: Remplit fiche dossier
   Service->>Rep: upsert_project
-  Rep->>Excel: Lit/ecrit le fichier local
+  Rep->>Excel: Lit/ecrit via Graph si OneDrive, sinon fichier local
   Service->>Outlook: Cree l'arborescence si activee
 ```
 
@@ -56,11 +57,11 @@ sequenceDiagram
   participant Service as ProjectService
   participant Fiche as FicheService
   participant Rep as RepertoireService
-  participant Excel as Excel local
+  participant Excel as Excel cloud/local
 
   Service->>Fiche: Duplique/remplit fiche sous-projet
   Service->>Rep: upsert_project sous-projet
   Rep->>Excel: Lit le repertoire
-  Rep->>Rep: Duplique ligne parent apres groupe consecutif
-  Rep->>Excel: Insere/met a jour la ligne localement
+  Rep->>Rep: Calcule la position apres le groupe consecutif
+  Rep->>Excel: Insere une ligne vide puis ecrit seulement A:E
 ```

@@ -27,6 +27,7 @@ jobs:
         shell: python
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
+          PROJECTFLOW_MICROSOFT_CLIENT_ID: ${{ secrets.PROJECTFLOW_MICROSOFT_CLIENT_ID }}
         run: |
           import json
           import os
@@ -40,6 +41,10 @@ jobs:
                   {
                       "github_owner": owner,
                       "github_repo": repo,
+                      "microsoft_client_id": os.environ.get(
+                          "PROJECTFLOW_MICROSOFT_CLIENT_ID",
+                          "",
+                      ),
                   },
                   indent=2,
               ),
@@ -73,6 +78,7 @@ jobs:
         shell: python
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
+          PROJECTFLOW_MICROSOFT_CLIENT_ID: ${{ secrets.PROJECTFLOW_MICROSOFT_CLIENT_ID }}
         run: |
           import json
           import os
@@ -86,6 +92,10 @@ jobs:
                   {
                       "github_owner": owner,
                       "github_repo": repo,
+                      "microsoft_client_id": os.environ.get(
+                          "PROJECTFLOW_MICROSOFT_CLIENT_ID",
+                          "",
+                      ),
                   },
                   indent=2,
               ),

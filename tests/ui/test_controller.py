@@ -295,6 +295,54 @@ def test_controller_open_fiche_uses_default_app(
     assert opened == [project_dir / "2026-4995 - Fiche dossier clients.xlsx"]
 
 
+def test_controller_open_repertoire_uses_default_app(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    repertoire_path = tmp_path / "repertoire.xlsx"
+    workbook = Workbook()
+    workbook.save(repertoire_path)
+    config.paths.repertoire_chantier.display_path = str(repertoire_path)
+    opened: list[Path] = []
+    monkeypatch.setattr(
+        "projectflow.ui.controller.open_file_default_app",
+        lambda path: opened.append(path) is None or True,
+    )
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.open_repertoire()
+
+    assert opened == [repertoire_path]
+    assert "Repertoire ouvert" in window.creation_tab.logs.toPlainText()
+
+
+def test_controller_open_repertoire_reports_missing_path(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QMessageBox.critical",
+        lambda *_args, **_kwargs: None,
+    )
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.open_repertoire()
+
+    assert "Repertoire chantier non configure" in window.creation_tab.logs.toPlainText()
+
+
 def test_update_prompt_includes_release_notes() -> None:
     message = _update_prompt_text("0.1.8", "- Corrige le repertoire chantier")
 

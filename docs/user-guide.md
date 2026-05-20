@@ -9,6 +9,10 @@
    - repertoire chantier Excel.
 3. Valider l'assistant.
 
+Si le repertoire chantier est dans OneDrive, ProjectFlow se connecte directement au fichier
+cloud lors de la premiere lecture ou ecriture. Le navigateur Microsoft peut s'ouvrir une seule
+fois pour confirmer le compte. Ensuite la connexion est reutilisee automatiquement.
+
 ## Configurer Outlook local
 
 Dans `Parametres`, section `Outlook` :
@@ -32,7 +36,9 @@ Windows sans automation locale n'est pas supporte pour cette fonction.
 4. Cliquer sur `Creer`.
 
 ProjectFlow cree le dossier projet, copie le dossier de reference sans ecraser, remplit la
-fiche client, inscrit la date de creation en `B9`, et met a jour le repertoire chantier local.
+fiche client, inscrit la date de creation en `B9`, et met a jour le repertoire chantier. Si ce
+repertoire est dans OneDrive, l'ecriture se fait directement dans le classeur cloud partage et
+non dans la copie locale synchronisee.
 Apres une creation reussie, ProjectFlow ouvre le dossier projet et affiche une confirmation.
 
 Si le dossier projet existe deja, `Creer` peut etre relance pour reappliquer Outlook et

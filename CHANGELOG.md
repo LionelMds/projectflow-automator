@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.16
+
+- Ajoute l'ecriture cloud directe du repertoire chantier OneDrive via Microsoft Graph Excel.
+- Ajoute un bouton `Ouvrir repertoire` dans la barre d'actions.
+- Demande `Files.ReadWrite.All` pour acceder aux repertoires synchronises via raccourcis ou bibliotheques partagees.
+- Refuse l'ecriture locale dans un fichier OneDrive synchronise quand le connecteur cloud n'est pas embarque.
+- Ajoute une connexion Microsoft silencieuse apres le premier login, avec cache token local.
+- Conserve la logique de securite: ProjectFlow n'ecrit que `A:E` et nettoie la ligne inseree `A:L` avant un sous-projet.
+- Corrige l'insertion des sous-projets dans les tableaux Excel structures via l'API `tables/.../rows/add`.
+
 ## 0.1.15
 
 - Version de secours: retour au comportement applicatif de `0.1.9`.

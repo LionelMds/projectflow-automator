@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from projectflow.config import AppConfig
 from projectflow.exceptions import ProjectFlowError
 from projectflow.outlook.local import detect_local_outlook_accounts, validate_local_outlook_account
+from projectflow.platform.paths import native_path_text
 
 
 class SettingsDialog(QDialog):
@@ -37,9 +38,11 @@ class SettingsDialog(QDialog):
     def apply_to_config(self, config: AppConfig) -> None:
         config.paths.racine_projets = _optional_path(self.racine_edit.text())
         config.paths.dossier_reference = _optional_path(self.reference_edit.text())
-        config.paths.repertoire_chantier.display_path = self.repertoire_path_edit.text().strip()
-        config.paths.repertoire_chantier.drive_id = ""
-        config.paths.repertoire_chantier.item_id = ""
+        repertoire_path = native_path_text(self.repertoire_path_edit.text())
+        if repertoire_path != config.paths.repertoire_chantier.display_path:
+            config.paths.repertoire_chantier.drive_id = ""
+            config.paths.repertoire_chantier.item_id = ""
+        config.paths.repertoire_chantier.display_path = repertoire_path
 
         config.outlook.enabled = self.outlook_enabled_checkbox.isChecked()
         config.outlook.mailbox_email = self.outlook_account_combo.currentText().strip()
@@ -72,9 +75,11 @@ class SettingsDialog(QDialog):
     def _paths_group(self, config: AppConfig) -> QGroupBox:
         group = QGroupBox("Chemins")
         layout = QFormLayout(group)
-        self.racine_edit = QLineEdit(str(config.paths.racine_projets or ""))
-        self.reference_edit = QLineEdit(str(config.paths.dossier_reference or ""))
-        self.repertoire_path_edit = QLineEdit(config.paths.repertoire_chantier.display_path)
+        self.racine_edit = QLineEdit(native_path_text(config.paths.racine_projets))
+        self.reference_edit = QLineEdit(native_path_text(config.paths.dossier_reference))
+        self.repertoire_path_edit = QLineEdit(
+            native_path_text(config.paths.repertoire_chantier.display_path),
+        )
         layout.addRow("Racine projets", _browse_row(self.racine_edit, directory=True))
         layout.addRow("Dossier de reference", _browse_row(self.reference_edit, directory=True))
         layout.addRow(
@@ -182,7 +187,7 @@ def _browse_row(edit: QLineEdit, *, directory: bool) -> QWidget:
                 filter="Excel (*.xlsx)",
             )
         if selected:
-            edit.setText(selected)
+            edit.setText(native_path_text(selected))
 
     button.clicked.connect(browse)
     layout.addWidget(edit)

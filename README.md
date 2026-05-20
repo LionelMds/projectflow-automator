@@ -2,10 +2,9 @@
 
 Application desktop pour automatiser la creation de projets Balz Metal Sa.
 
-ProjectFlow fonctionne maintenant en local : dossiers projet, fiche Excel, repertoire chantier
-Excel synchronise sur le poste, et Outlook local en option. Aucun identifiant d'application,
-aucune connexion cloud et aucune configuration de portail admin ne sont necessaires pour
-utiliser le flux principal.
+ProjectFlow fonctionne principalement en local : dossiers projet, fiche Excel et Outlook local
+en option. Le repertoire chantier, s'il est place dans OneDrive, est ecrit directement dans le
+classeur cloud pour eviter les copies non fusionnees creees par la synchronisation locale.
 
 ## Developpement
 
@@ -78,6 +77,8 @@ Il permet de tester `Suivant disponible`, `Creer`, `Charger`, `Ouvrir fiche`,
 
 - `PROJECTFLOW_APP_SETTINGS` : chemin vers un `app_settings.json` local pour tester la
   verification de mise a jour sans modifier le code source.
+- `PROJECTFLOW_MICROSOFT_CLIENT_ID` : Client ID Microsoft embarque dans les releases pour
+  activer l'ecriture cloud directe du repertoire chantier OneDrive.
 - `PROJECTFLOW_SMOKE_EXIT_MS` : ferme automatiquement l'app apres le delai indique, pour
   tests smoke.
 - `PROJECTFLOW_DEMO_MODE` : lance l'app avec un repertoire Excel local de demonstration.
@@ -95,11 +96,14 @@ Format :
 ```json
 {
   "github_owner": "balz-metal",
-  "github_repo": "projectflow-automator"
+  "github_repo": "projectflow-automator",
+  "microsoft_client_id": "client-id-public-de-l-app"
 }
 ```
 
 Ces champs activent la verification de mise a jour via GitHub Releases.
+Le champ `microsoft_client_id` active l'ecriture cloud du repertoire chantier OneDrive. Il est
+public par nature pour une application desktop et ne doit jamais etre accompagne d'un secret.
 
 ## Mises a jour
 
@@ -148,7 +152,10 @@ Le MVP couvre :
 - copie non destructive du dossier de reference,
 - fiche dossier locale via `openpyxl`,
 - date de creation inscrite dans `B9` de la fiche,
-- repertoire chantier via fichier Excel local synchronise sur le poste,
+- repertoire chantier via fichier Excel local hors OneDrive, ou via Microsoft Graph Excel si le
+  fichier est dans OneDrive,
+- blocage de l'ecriture locale dans un fichier OneDrive synchronise pour eviter les copies non
+  fusionnees,
 - conservation de la colonne F du repertoire, le champ `Gere par` restant limite a la fiche,
 - bouton `Suivant disponible` base sur une ligne projet principal dont B, C, D et E sont vides,
 - `Charger`, `Ouvrir fiche`, `Mettre a jour`,

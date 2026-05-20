@@ -29,6 +29,8 @@ def test_windows_pyinstaller_command_uses_onefile(tmp_path: Path) -> None:
     assert "--windowed" in command
     assert "--workpath" in command
     assert "--specpath" in command
+    assert "msal" in command
+    assert "keyring.backends.Windows" in command
     assert "win32com.client" in command
     assert "pythoncom" in command
     assert "pywintypes" in command
@@ -43,6 +45,8 @@ def test_macos_pyinstaller_command_uses_app_bundle(tmp_path: Path) -> None:
     assert "--onedir" in command
     assert "ProjectFlow Automator" in command
     assert "ch.balzmetal.projectflow" in command
+    assert "msal" in command
+    assert "keyring.backends.macOS" in command
 
 
 def test_pyinstaller_command_accepts_upx_dir(tmp_path: Path) -> None:

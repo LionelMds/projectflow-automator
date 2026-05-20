@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QDialog
 
 from projectflow.config import AppConfig
 from projectflow.outlook.models import OutlookAccount
+from projectflow.platform.paths import native_path_text
 from projectflow.ui.dialogs.settings import SettingsDialog
 
 
@@ -26,7 +27,7 @@ def test_settings_dialog_applies_values(qtbot, tmp_path: Path) -> None:  # type:
 
     assert config.paths.racine_projets == tmp_path / "clients"
     assert config.paths.dossier_reference == tmp_path / "reference"
-    assert config.paths.repertoire_chantier.display_path == "Entreprise/Rep.xlsx"
+    assert config.paths.repertoire_chantier.display_path == native_path_text("Entreprise/Rep.xlsx")
     assert config.paths.repertoire_chantier.drive_id == ""
     assert config.paths.repertoire_chantier.item_id == ""
     assert config.outlook.enabled is True

@@ -12,6 +12,7 @@ from projectflow.exceptions import ConfigError
 
 APP_SETTINGS_ENV = "PROJECTFLOW_APP_SETTINGS"
 APP_SETTINGS_RESOURCE = "app_settings.json"
+MICROSOFT_CLIENT_ID_ENV = "PROJECTFLOW_MICROSOFT_CLIENT_ID"
 
 
 class ApplicationSettings(BaseModel):
@@ -19,13 +20,20 @@ class ApplicationSettings(BaseModel):
 
     github_owner: str = ""
     github_repo: str = ""
+    microsoft_client_id: str = ""
 
     @classmethod
     def load(cls, path: Path | None = None) -> Self:
         explicit_path = path or _settings_path_from_env()
+        settings: Self
         if explicit_path is not None:
-            return cls._load_path(explicit_path)
-        return cls._load_resource()
+            settings = cls._load_path(explicit_path)
+        else:
+            settings = cls._load_resource()
+        client_id = os.environ.get(MICROSOFT_CLIENT_ID_ENV, "").strip()
+        if client_id:
+            return settings.model_copy(update={"microsoft_client_id": client_id})
+        return settings
 
     @classmethod
     def _load_path(cls, path: Path) -> Self:

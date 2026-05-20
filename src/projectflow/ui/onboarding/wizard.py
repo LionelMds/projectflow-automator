@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from projectflow.config import AppConfig
-from projectflow.platform.paths import detect_onedrive_balz_root
+from projectflow.platform.paths import detect_onedrive_balz_root, native_path_text
 
 
 class OnboardingWizard(QWizard):
@@ -57,9 +57,15 @@ class PathsPage(QWizardPage):
         )
 
         layout = QFormLayout(self)
-        self.racine_edit = QLineEdit(str(config.paths.racine_projets or default_clients))
-        self.reference_edit = QLineEdit(str(config.paths.dossier_reference or default_reference))
-        self.repertoire_edit = QLineEdit(config.paths.repertoire_chantier.display_path)
+        self.racine_edit = QLineEdit(
+            native_path_text(config.paths.racine_projets or default_clients),
+        )
+        self.reference_edit = QLineEdit(
+            native_path_text(config.paths.dossier_reference or default_reference),
+        )
+        self.repertoire_edit = QLineEdit(
+            native_path_text(config.paths.repertoire_chantier.display_path),
+        )
         layout.addRow("Racine projets", _browse_row(self.racine_edit, directory=True))
         layout.addRow("Dossier de reference", _browse_row(self.reference_edit, directory=True))
         layout.addRow("Repertoire chantier", _browse_row(self.repertoire_edit, directory=False))
@@ -67,7 +73,9 @@ class PathsPage(QWizardPage):
     def apply_to_config(self) -> None:
         self._config.paths.racine_projets = Path(self.racine_edit.text()).expanduser()
         self._config.paths.dossier_reference = Path(self.reference_edit.text()).expanduser()
-        self._config.paths.repertoire_chantier.display_path = self.repertoire_edit.text().strip()
+        self._config.paths.repertoire_chantier.display_path = native_path_text(
+            self.repertoire_edit.text(),
+        )
         self._config.paths.repertoire_chantier.drive_id = ""
         self._config.paths.repertoire_chantier.item_id = ""
 
@@ -88,7 +96,7 @@ def _browse_row(edit: QLineEdit, *, directory: bool) -> QWidget:
                 filter="Excel (*.xlsx)",
             )
         if selected:
-            edit.setText(selected)
+            edit.setText(native_path_text(selected))
 
     button.clicked.connect(browse)
     layout.addWidget(edit)

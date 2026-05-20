@@ -7,6 +7,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QWidget
 
 from projectflow.config import AppConfig
+from projectflow.platform.paths import native_path_text
 from projectflow.ui.creation_tab import CreationTab
 
 
@@ -53,6 +54,11 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.creation_tab.open_fiche_requested.emit)
         self.addAction(open_action)
 
+        open_repertoire_action = QAction(self)
+        open_repertoire_action.setShortcut(QKeySequence("Ctrl+R"))
+        open_repertoire_action.triggered.connect(self.creation_tab.open_repertoire_requested.emit)
+        self.addAction(open_repertoire_action)
+
         load_action = QAction(self)
         load_action.setShortcut(QKeySequence("Ctrl+L"))
         load_action.triggered.connect(self.creation_tab.load_requested.emit)
@@ -69,10 +75,14 @@ class MainWindow(QMainWindow):
 
     def apply_config_labels(self) -> None:
         paths = self._config.paths
-        self.creation_tab.racine_label.setText(str(paths.racine_projets or "Non configure"))
-        self.creation_tab.reference_label.setText(str(paths.dossier_reference or "Non configure"))
+        self.creation_tab.racine_label.setText(
+            native_path_text(paths.racine_projets) or "Non configure",
+        )
+        self.creation_tab.reference_label.setText(
+            native_path_text(paths.dossier_reference) or "Non configure",
+        )
         self.creation_tab.repertoire_label.setText(
-            paths.repertoire_chantier.display_path or "Non configure",
+            native_path_text(paths.repertoire_chantier.display_path) or "Non configure",
         )
 
     def _confirm_update(self) -> None:

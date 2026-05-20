@@ -64,6 +64,7 @@ class ProjectFlowController:
         self._window.update_confirmed.connect(lambda: asyncio.create_task(self.update_project()))
         tab.load_requested.connect(self.load_project)
         tab.open_fiche_requested.connect(self.open_fiche)
+        tab.open_repertoire_requested.connect(self.open_repertoire)
         tab.next_available_requested.connect(lambda: asyncio.create_task(self.next_available()))
         self._window.settings_requested.connect(self.open_settings)
         self._window.update_check_requested.connect(
@@ -123,6 +124,7 @@ class ProjectFlowController:
             year=str(result.number.year),
             project_id=result.number.project_id,
         )
+        self._save_config_if_available()
         self._log(f"+ Numero disponible: {result.number}")
 
     def load_project(self) -> None:
@@ -160,11 +162,32 @@ class ProjectFlowController:
             return
         self._log(f"+ Fiche ouverte: {fiche_path.name}")
 
+    def open_repertoire(self) -> None:
+        display_path = self._config.paths.repertoire_chantier.display_path.strip()
+        if not display_path:
+            self._error("Repertoire chantier non configure.")
+            return
+        repertoire_path = Path(display_path).expanduser()
+        if not repertoire_path.exists():
+            self._error(f"Repertoire chantier introuvable: {repertoire_path}")
+            return
+        try:
+            opened = open_file_default_app(repertoire_path)
+        except (ProjectFlowError, OSError) as exc:
+            self._error(str(exc))
+            return
+        if not opened:
+            self._error("Impossible d'ouvrir le repertoire avec l'application par defaut.")
+            return
+        self._log(f"+ Repertoire ouvert: {repertoire_path.name}")
+
     def open_settings(self) -> None:
         dialog = SettingsDialog(self._config, parent=self._window)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         dialog.apply_to_config(self._config)
+        if isinstance(self._services, ServiceContainer):
+            self._services.reset_repertoire()
         self._window.apply_config_labels()
         self._save_config_if_available()
         self._log("+ Parametres enregistres")
