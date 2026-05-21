@@ -43,7 +43,7 @@ def test_config_is_onboarded_with_local_repertoire_path(tmp_path: Path) -> None:
     assert config.is_onboarded is True
 
 
-def test_migrate_config_drops_removed_cloud_keys(tmp_path: Path) -> None:
+def test_migrate_config_drops_removed_cloud_keys_and_keeps_planner(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text(
         "{"
@@ -62,3 +62,5 @@ def test_migrate_config_drops_removed_cloud_keys(tmp_path: Path) -> None:
     config = AppConfig.load(path)
 
     assert config.paths.repertoire_chantier.display_path == "rep.xlsx"
+    assert config.planner.enabled is True
+    assert config.planner.plan_id == "plan"

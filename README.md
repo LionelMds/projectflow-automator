@@ -116,6 +116,9 @@ Le champ `microsoft_client_id` active l'ecriture cloud du repertoire chantier On
 public par nature pour une application desktop, dispose d'une valeur embarquee par defaut, et ne
 doit jamais etre accompagne d'un secret.
 
+Les permissions Microsoft deleguees attendues sont `Files.ReadWrite.All`, `Tasks.ReadWrite` et
+`User.Read`.
+
 ## Mises a jour
 
 Au demarrage, l'application interroge `releases/latest` du depot GitHub configure. Si une
@@ -177,6 +180,7 @@ Le MVP couvre :
 - date de creation inscrite dans `B9` de la fiche,
 - repertoire chantier via fichier Excel local hors OneDrive, ou via Microsoft Graph Excel si le
   fichier est dans OneDrive,
+- tache Microsoft Planner optionnelle via Graph, sans doublon par numero de projet,
 - blocage de l'ecriture locale dans un fichier OneDrive synchronise pour eviter les copies non
   fusionnees,
 - conservation de la colonne F du repertoire, le champ `Gere par` restant limite a la fiche,
@@ -185,6 +189,7 @@ Le MVP couvre :
 - relance de `Creer` sur projet existant pour reappliquer Outlook/epingle sans ecraser,
 - icone de zone de notification Windows / barre des menus macOS avec mini-formulaire de creation,
 - Outlook local Windows via le profil Outlook classique, desactive par defaut,
+- Planner configurable par plan/bucket, desactive par defaut,
 - assistant de premiere configuration base uniquement sur les chemins.
 
 Outlook local utilise le profil Outlook classique du poste Windows : `Parametres` -> `Outlook`

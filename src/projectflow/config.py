@@ -93,6 +93,25 @@ class OutlookConfig(BaseModel):
         return self.base_folder.strip() or "root"
 
 
+class PlannerConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    plan_id: str = ""
+    plan_name: str = ""
+    bucket_id: str = ""
+    bucket_name: str = ""
+    due_days: int = Field(default=7, ge=0, le=365)
+
+    @property
+    def target_plan_id(self) -> str:
+        return self.plan_id.strip()
+
+    @property
+    def target_bucket_id(self) -> str:
+        return self.bucket_id.strip()
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -100,6 +119,7 @@ class AppConfig(BaseModel):
     user: UserConfig = Field(default_factory=UserConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     outlook: OutlookConfig = Field(default_factory=OutlookConfig)
+    planner: PlannerConfig = Field(default_factory=PlannerConfig)
 
     @property
     def is_onboarded(self) -> bool:
@@ -135,6 +155,6 @@ def migrate_config(data: dict[str, Any]) -> dict[str, Any]:
     version = data.get("version", 1)
     if version != 1:
         raise ConfigError(f"Version de configuration non supportee: {version}")
-    for key in ("micro" "soft" "_client_id", "plan" "ner"):
+    for key in ("micro" "soft" "_client_id",):
         data.pop(key, None)
     return data

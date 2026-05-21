@@ -1,8 +1,8 @@
 # Deploiement interne
 
-ProjectFlow reste local pour les dossiers projet, les fiches et Outlook. Seul le repertoire
-chantier OneDrive utilise une connexion Microsoft afin d'ecrire directement dans le classeur
-cloud partage, sans passer par une copie locale synchronisee.
+ProjectFlow reste local pour les dossiers projet, les fiches et Outlook. Le repertoire chantier
+OneDrive et l'integration Planner utilisent une connexion Microsoft afin d'ecrire directement dans
+les services cloud concernes, sans passer par une copie locale synchronisee.
 
 ## A preparer
 
@@ -12,6 +12,7 @@ cloud partage, sans passer par une copie locale synchronisee.
   utilisateurs concernes.
 - Outlook classique installe et configure uniquement si la creation de dossiers Outlook doit
   etre activee.
+- Un plan Microsoft Planner accessible aux utilisateurs si la creation de taches doit etre activee.
 - Une App Registration Microsoft publique avec le redirect URI desktop `http://localhost`.
 - Le Client ID public est embarque dans ProjectFlow. Le secret GitHub
   `PROJECTFLOW_MICROSOFT_CLIENT_ID` reste disponible uniquement pour remplacer cette valeur lors
@@ -24,6 +25,8 @@ L'application desktop n'utilise pas de secret client. Le Client ID est embarque 
 Permissions deleguees minimales :
 
 - `Files.ReadWrite.All`
+- `Tasks.ReadWrite`
+- `User.Read`
 
 ProjectFlow ne demande pas explicitement les scopes reserves (`offline_access`, `profile`,
 `openid`) : MSAL/Microsoft les gere automatiquement quand ils sont necessaires.
@@ -45,6 +48,10 @@ Au premier lancement, chaque utilisateur choisit ses chemins locaux dans l'assis
 repertoire chantier pointe vers OneDrive, ProjectFlow ouvrira le navigateur Microsoft a la
 premiere utilisation du repertoire, puis reutilisera le cache token local.
 
+Si Planner est active, le meme compte Microsoft est utilise pour lister les plans accessibles,
+lister les buckets du plan choisi, creer ou mettre a jour la tache projet, et l'assigner a
+l'utilisateur connecte.
+
 ## Mises a jour
 
 Les mises a jour in-app utilisent les artefacts GitHub Releases :
@@ -63,3 +70,13 @@ La creation Outlook est optionnelle et desactivee par defaut. L'utilisateur peut
 tester l'acces.
 
 Le nouvel Outlook Windows sans automation locale n'est pas supporte pour cette fonction.
+
+## Microsoft Planner
+
+La creation Planner est optionnelle et desactivee par defaut. L'utilisateur peut l'activer dans
+`Parametres` -> `Microsoft Planner`, lancer `Detecter`, choisir le plan, charger les colonnes,
+puis tester l'acces.
+
+ProjectFlow cree une seule tache par numero de projet principal. Si une tache dont le titre
+commence deja par le numero existe dans le plan, ProjectFlow la met a jour au lieu d'en creer une
+nouvelle : titre, colonne cible et assignation a l'utilisateur connecte.

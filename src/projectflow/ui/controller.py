@@ -243,6 +243,7 @@ class ProjectFlowController:
         dialog.apply_to_config(self._config)
         if isinstance(self._services, ServiceContainer):
             self._services.reset_repertoire()
+            self._services.reset_planner()
         self._window.apply_config_labels()
         self._save_config_if_available()
         self._log("+ Parametres enregistres")
@@ -251,6 +252,12 @@ class ProjectFlowController:
             self._log(f"+ Outlook active: {target}")
         else:
             self._log("-> Outlook desactive")
+        if self._config.planner.enabled:
+            plan = self._config.planner.plan_name or self._config.planner.plan_id
+            bucket = self._config.planner.bucket_name or self._config.planner.bucket_id
+            self._log(f"+ Planner active: {plan} / {bucket}")
+        else:
+            self._log("-> Planner desactive")
 
     async def check_updates(self, *, show_no_update: bool = True) -> None:
         try:
@@ -403,6 +410,12 @@ class ProjectFlowController:
             self._log("! Outlook active mais aucun dossier Outlook cree")
         else:
             self._log("-> Outlook desactive")
+        if self._config.planner.enabled and result.planner_task_created:
+            self._log("+ Tache Planner creee")
+        elif self._config.planner.enabled and result.planner_task_updated:
+            self._log("+ Tache Planner mise a jour")
+        elif self._config.planner.enabled and result.planner_task_id:
+            self._log("+ Tache Planner deja existante")
 
     def _open_project_folder(self, result: ProjectCreationResult) -> None:
         try:

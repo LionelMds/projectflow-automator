@@ -8,11 +8,13 @@ from projectflow.auth.msal_client import MsalAccessTokenProvider
 from projectflow.config import AppConfig
 from projectflow.core.fiche_service import FicheService
 from projectflow.core.local_repertoire import LocalWorkbookGateway
+from projectflow.core.models import ProjectInput
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireService
 from projectflow.exceptions import ConfigError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.excel import GraphExcelWorkbookGateway
+from projectflow.graph.planner import GraphPlannerClient, PlannerTaskResult
 from projectflow.outlook.local import create_local_outlook_client
 from projectflow.platform.filemanager import pin_to_filemanager_favorites
 
@@ -23,6 +25,7 @@ class ServiceContainer:
     application_settings: ApplicationSettings | None = None
     fiche_service: FicheService | None = None
     repertoire_service: RepertoireService | None = None
+    planner_service: ConfiguredPlannerGateway | None = None
 
     def fiche(self) -> FicheService:
         if self.fiche_service is None:
@@ -65,11 +68,34 @@ class ServiceContainer:
             fiche_service=self.fiche(),
             repertoire_service=self.repertoire(),
             outlook=create_local_outlook_client(self.config.outlook),
+            planner=self.planner(),
             pin_path=pin_to_filemanager_favorites,
         )
 
+    def planner(self) -> ConfiguredPlannerGateway | None:
+        if not self.config.planner.enabled:
+            return None
+        if self.planner_service is not None:
+            return self.planner_service
+        settings = self.application_settings or ApplicationSettings.load()
+        if not settings.microsoft_client_id.strip():
+            raise ConfigError(
+                "Planner actif mais cette version de ProjectFlow n'embarque pas encore "
+                "le connecteur Microsoft.",
+            )
+        token_provider = MsalAccessTokenProvider(client_id=settings.microsoft_client_id)
+        graph = GraphClient(token_provider=token_provider)
+        self.planner_service = ConfiguredPlannerGateway(
+            client=GraphPlannerClient(graph=graph),
+            config=self.config,
+        )
+        return self.planner_service
+
     def reset_repertoire(self) -> None:
         self.repertoire_service = None
+
+    def reset_planner(self) -> None:
+        self.planner_service = None
 
     async def close(self) -> None:
         return
@@ -77,3 +103,12 @@ class ServiceContainer:
 
 def _is_onedrive_path(path: Path) -> bool:
     return any("onedrive" in part.casefold() for part in path.parts)
+
+
+@dataclass(slots=True)
+class ConfiguredPlannerGateway:
+    client: GraphPlannerClient
+    config: AppConfig
+
+    async def ensure_project_task(self, project: ProjectInput) -> PlannerTaskResult:
+        return await self.client.ensure_project_task(project, self.config.planner)

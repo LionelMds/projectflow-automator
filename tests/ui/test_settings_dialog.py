@@ -22,6 +22,12 @@ def test_settings_dialog_applies_values(qtbot, tmp_path: Path) -> None:  # type:
     dialog.outlook_base_folder_combo.setCurrentIndex(
         dialog.outlook_base_folder_combo.findData("inbox"),
     )
+    dialog.planner_enabled_checkbox.setChecked(True)
+    dialog.planner_plan_combo.addItem("Plan projets", "plan-id")
+    dialog.planner_plan_combo.setCurrentIndex(0)
+    dialog.planner_bucket_combo.addItem("A faire", "bucket-id")
+    dialog.planner_bucket_combo.setCurrentIndex(0)
+    dialog.planner_due_days_spin.setValue(5)
 
     dialog.apply_to_config(config)
 
@@ -34,6 +40,12 @@ def test_settings_dialog_applies_values(qtbot, tmp_path: Path) -> None:  # type:
     assert config.outlook.mailbox_email == "projets@balzmetal.ch"
     assert config.outlook.mailbox_store_id == ""
     assert config.outlook.base_folder == "inbox"
+    assert config.planner.enabled is True
+    assert config.planner.plan_id == "plan-id"
+    assert config.planner.plan_name == "Plan projets"
+    assert config.planner.bucket_id == "bucket-id"
+    assert config.planner.bucket_name == "A faire"
+    assert config.planner.due_days == 5
 
 
 def test_settings_dialog_detects_outlook_accounts(qtbot, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -109,3 +121,25 @@ def test_settings_dialog_refuses_enabled_outlook_without_account(
 
     assert dialog.result() != QDialog.DialogCode.Accepted
     assert warnings == ["Selectionnez un compte Outlook ou desactivez la creation Outlook."]
+
+
+def test_settings_dialog_refuses_enabled_planner_without_bucket(
+    qtbot,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    config = AppConfig()
+    dialog = SettingsDialog(config)
+    qtbot.addWidget(dialog)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QMessageBox.warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+    dialog.planner_enabled_checkbox.setChecked(True)
+    dialog.planner_plan_combo.addItem("Plan projets", "plan-id")
+    dialog.planner_plan_combo.setCurrentIndex(0)
+
+    dialog.accept()
+
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert warnings == ["Selectionnez une colonne Planner ou desactivez la creation Planner."]

@@ -102,3 +102,17 @@ def test_service_container_uses_cloud_repertoire_with_embedded_client_id() -> No
     service = ServiceContainer(config).repertoire()
 
     assert service is not None
+
+
+def test_service_container_returns_planner_when_enabled() -> None:
+    config = AppConfig()
+    config.planner.enabled = True
+    config.planner.plan_id = "plan-id"
+    config.planner.bucket_id = "bucket-id"
+
+    service = ServiceContainer(
+        config,
+        application_settings=ApplicationSettings(microsoft_client_id="client-id"),
+    ).planner()
+
+    assert service is not None

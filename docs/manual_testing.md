@@ -30,6 +30,12 @@
 - `Nouveau projet rapide` contient `Suivant disponible`, une fleche vers la fenetre complete, et
   declenche la creation normale.
 - Outlook local peut etre active, teste, puis utiliser `Racine du compte` ou `Boite de reception`.
+- Planner peut etre active, detecter les plans, detecter les colonnes du plan choisi et tester
+  l'acces.
+- Creer un projet principal avec Planner actif cree une tache assignee a l'utilisateur connecte.
+- Relancer `Creer` sur le meme projet avec Planner actif ne cree pas de doublon : la tache
+  existante est reassignee/deplacee si necessaire.
+- Un sous-projet ne cree pas de tache Planner.
 - `py -m projectflow.build --target windows` produit `dist/ProjectFlowAutomator.exe`.
 - La release GitHub produit `ProjectFlowAutomatorSetup.exe` et son `.sha256`.
 - Sur Windows, `Rechercher une mise a jour` telecharge l'installateur, verifie le SHA256 et

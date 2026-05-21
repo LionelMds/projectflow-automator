@@ -124,8 +124,9 @@ def _graph_error_message(response: httpx.Response) -> str:
     if response.status_code == HTTP_FORBIDDEN:
         return (
             "Microsoft Graph a refuse l'operation (403): acces refuse. "
-            "Verifiez que ProjectFlow dispose de l'autorisation Files.ReadWrite.All "
-            "et que l'utilisateur connecte a acces au fichier."
+            "Verifiez que ProjectFlow dispose des autorisations Microsoft necessaires "
+            "(Files.ReadWrite.All, Tasks.ReadWrite, User.Read selon la fonction) et que "
+            "l'utilisateur connecte a acces a la ressource."
         )
     try:
         payload = response.json()

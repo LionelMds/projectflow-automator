@@ -25,3 +25,6 @@ class ProjectCreationResult:
     project_dir: str
     fiche_path: str | None
     outlook_folder_created: bool = False
+    planner_task_id: str | None = None
+    planner_task_created: bool = False
+    planner_task_updated: bool = False

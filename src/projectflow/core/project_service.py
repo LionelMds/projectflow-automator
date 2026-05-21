@@ -21,6 +21,11 @@ class OutlookGateway(Protocol):
         """Ensure the nested Outlook folder path exists."""
 
 
+class PlannerGateway(Protocol):
+    async def ensure_project_task(self, project: ProjectInput) -> object:
+        """Ensure the Planner task for this project exists."""
+
+
 PinPathCallable = Callable[[Path], None]
 
 
@@ -32,12 +37,14 @@ class ProjectService:
         fiche_service: FicheService,
         repertoire_service: RepertoireService,
         outlook: OutlookGateway | None = None,
+        planner: PlannerGateway | None = None,
         pin_path: PinPathCallable | None = None,
     ) -> None:
         self._config = config
         self._fiche_service = fiche_service
         self._repertoire_service = repertoire_service
         self._outlook = outlook
+        self._planner = planner
         self._pin_path = pin_path
 
     async def create_project(
@@ -52,6 +59,7 @@ class ProjectService:
 
         root = self._required_path(self._config.paths.racine_projets, "racine projets")
         outlook = await self._validated_outlook()
+        planner = self._validated_planner()
         project_dir = root / str(project.number.year) / project_folder_name(project.number)
         project_dir_created = not project_dir.exists()
         project_dir.mkdir(parents=True, exist_ok=True)
@@ -80,6 +88,15 @@ class ProjectService:
                 await outlook.ensure_folder_path(folder_path)
             outlook_created = bool(folder_paths)
 
+        planner_task_id: str | None = None
+        planner_created = False
+        planner_updated = False
+        if planner is not None:
+            planner_result = await planner.ensure_project_task(project)
+            planner_task_id = getattr(planner_result, "task_id", None)
+            planner_created = bool(getattr(planner_result, "created", False))
+            planner_updated = bool(getattr(planner_result, "updated", False))
+
         if self._pin_path is not None:
             self._pin_path(project_dir)
 
@@ -88,6 +105,9 @@ class ProjectService:
             project_dir=str(project_dir),
             fiche_path=str(fiche_path) if fiche_path is not None else None,
             outlook_folder_created=outlook_created,
+            planner_task_id=planner_task_id,
+            planner_task_created=planner_created,
+            planner_task_updated=planner_updated,
         )
 
     async def create_subproject(self, project: ProjectInput) -> ProjectCreationResult:
@@ -140,6 +160,16 @@ class ProjectService:
             )
         await self._outlook.validate_target()
         return self._outlook
+
+    def _validated_planner(self) -> PlannerGateway | None:
+        if not self._config.planner.enabled:
+            return None
+        if self._planner is None:
+            raise ConfigError(
+                "Creation Planner activee mais aucun connecteur Microsoft Planner "
+                "n'est configure.",
+            )
+        return self._planner
 
 
 def copy_reference_tree(reference_dir: Path, project_dir: Path) -> None:

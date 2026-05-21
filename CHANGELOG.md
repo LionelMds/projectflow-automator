@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+## 0.1.22
+
+- Ajoute l'integration Microsoft Planner optionnelle.
+- Permet de detecter les plans et les colonnes Planner dans les parametres.
+- Cree ou met a jour une tache Planner par projet principal, sans doublon, assignee a l'utilisateur connecte.
+
 ## 0.1.21
 
 - Empeche l'ouverture de plusieurs mini-formulaires rapides depuis l'icone ProjectFlow.

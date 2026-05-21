@@ -12,6 +12,8 @@ flowchart LR
   Repertoire --> GraphExcel["Graph Excel cloud pour OneDrive"]
   Service -. optionnel .-> Outlook["Connecteur Outlook local"]
   Outlook --> WinOutlook["Profil Outlook classique Windows"]
+  Service -. optionnel .-> Planner["Graph Planner"]
+  Planner --> M365["Microsoft Planner"]
 ```
 
 ## Premier lancement
@@ -40,6 +42,7 @@ sequenceDiagram
   participant Rep as RepertoireService
   participant Excel as Excel cloud/local
   participant Outlook as Outlook local
+  participant Planner as Graph Planner
 
   UI->>Service: create_project(ProjectInput)
   Service->>FS: Cree annee/projet si absent
@@ -48,6 +51,7 @@ sequenceDiagram
   Service->>Rep: upsert_project
   Rep->>Excel: Lit/ecrit via Graph si OneDrive, sinon fichier local
   Service->>Outlook: Cree l'arborescence si activee
+  Service->>Planner: Cree ou met a jour la tache si active
 ```
 
 ## Sous-projet
