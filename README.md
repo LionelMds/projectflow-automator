@@ -116,8 +116,9 @@ Le champ `microsoft_client_id` active l'ecriture cloud du repertoire chantier On
 public par nature pour une application desktop, dispose d'une valeur embarquee par defaut, et ne
 doit jamais etre accompagne d'un secret.
 
-Les permissions Microsoft deleguees attendues sont `Files.ReadWrite.All`, `Tasks.ReadWrite` et
-`User.Read`.
+La permission Microsoft deleguee attendue pour le repertoire chantier est `Files.ReadWrite.All`.
+Planner reste optionnel et demande separement `Tasks.ReadWrite` et `User.Read` uniquement quand
+la fonction Planner est utilisee.
 
 ## Mises a jour
 
@@ -189,9 +190,11 @@ Le MVP couvre :
 - relance de `Creer` sur projet existant pour reappliquer Outlook/epingle sans ecraser,
 - icone de zone de notification Windows / barre des menus macOS avec mini-formulaire de creation,
 - Outlook local Windows via le profil Outlook classique, desactive par defaut,
+- Mail macOS via l'application native Mail, desactive par defaut,
 - Planner configurable par plan/bucket, desactive par defaut,
 - assistant de premiere configuration base uniquement sur les chemins.
 
 Outlook local utilise le profil Outlook classique du poste Windows : `Parametres` -> `Outlook`
--> `Detecter`, puis selection du compte ou magasin cible. macOS reste a valider separement,
-car Outlook Mac ne fournit pas le meme modele d'automation locale.
+-> `Detecter`, puis selection du compte ou magasin cible. Sur macOS, ProjectFlow utilise
+l'application native Mail : `Parametres` -> `Mail macOS` -> `Detecter`, puis selection du compte
+Mail cible.

@@ -130,6 +130,7 @@ jobs:
         if: ${{ env.APPLE_DEVELOPER_ID != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PWD != '' }}
         run: |
           codesign --deep --force --options runtime \
+            --entitlements "installer/macos/entitlements.plist" \
             --sign "$APPLE_DEVELOPER_ID" \
             "dist/ProjectFlow Automator.app"
       - name: Zip app for notarization

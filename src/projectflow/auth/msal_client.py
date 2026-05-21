@@ -10,7 +10,8 @@ from projectflow.auth.token_storage import TokenCacheStorage
 from projectflow.exceptions import AuthError
 
 AUTHORITY = "https://login.microsoftonline.com/common"
-GRAPH_SCOPES = ("Files.ReadWrite.All", "Tasks.ReadWrite", "User.Read")
+GRAPH_SCOPES = ("Files.ReadWrite.All",)
+PLANNER_GRAPH_SCOPES = ("Tasks.ReadWrite", "User.Read")
 CLIENT_ID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",

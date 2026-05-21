@@ -5,6 +5,7 @@ from typing import Protocol
 
 from projectflow.config import OutlookConfig
 from projectflow.exceptions import ConfigError
+from projectflow.outlook.macos_mail import MacNativeMailClient
 from projectflow.outlook.models import OutlookAccount
 from projectflow.outlook.windows import WindowsLocalOutlookClient
 
@@ -30,9 +31,10 @@ def create_local_outlook_client(config: OutlookConfig) -> LocalOutlookGateway | 
             base_folder=config.target_base_folder,
         )
     if platform_name == "darwin":
-        raise ConfigError(
-            "Outlook local macOS n'est pas encore disponible. "
-            "Desactivez Outlook ou utilisez un poste Windows Outlook classique.",
+        return MacNativeMailClient(
+            target_store_id=config.target_store_id,
+            target_mailbox=config.target_mailbox,
+            base_folder=config.target_base_folder,
         )
     raise ConfigError("Outlook local n'est disponible que sur Windows et macOS.")
 
@@ -42,9 +44,7 @@ def detect_local_outlook_accounts() -> list[OutlookAccount]:
     if platform_name.startswith("win"):
         return WindowsLocalOutlookClient().list_accounts_sync()
     if platform_name == "darwin":
-        raise ConfigError(
-            "Detection Outlook macOS pas encore disponible dans ProjectFlow.",
-        )
+        return MacNativeMailClient().list_accounts_sync()
     raise ConfigError("Detection Outlook disponible uniquement sur Windows et macOS.")
 
 
@@ -58,9 +58,12 @@ def validate_local_outlook_account(*, store_id: str, mailbox: str, base_folder: 
         ).validate_target_sync()
         return
     if platform_name == "darwin":
-        raise ConfigError(
-            "Validation Outlook macOS pas encore disponible dans ProjectFlow.",
-        )
+        MacNativeMailClient(
+            target_store_id=store_id,
+            target_mailbox=mailbox,
+            base_folder=base_folder,
+        ).validate_target_sync()
+        return
     raise ConfigError("Validation Outlook disponible uniquement sur Windows et macOS.")
 
 

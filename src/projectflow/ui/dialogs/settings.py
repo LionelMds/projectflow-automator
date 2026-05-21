@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from projectflow.application_settings import ApplicationSettings
-from projectflow.auth.msal_client import MsalAccessTokenProvider
+from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.config import AppConfig
 from projectflow.exceptions import ProjectFlowError
 from projectflow.graph.client import GraphClient
@@ -180,13 +181,13 @@ class SettingsDialog(QDialog):
         return widget
 
     def _outlook_group(self, config: AppConfig) -> QGroupBox:
-        group = QGroupBox("Outlook")
+        group = QGroupBox(_mail_group_title())
         layout = QFormLayout(group)
-        self.outlook_enabled_checkbox = QCheckBox("Creer les dossiers Outlook")
+        self.outlook_enabled_checkbox = QCheckBox(_mail_checkbox_text())
         self.outlook_enabled_checkbox.setChecked(config.outlook.enabled)
         self.outlook_account_combo = QComboBox()
         self.outlook_account_combo.setEditable(True)
-        self.outlook_account_combo.setPlaceholderText("compte Outlook local")
+        self.outlook_account_combo.setPlaceholderText(_mail_account_placeholder())
         if config.outlook.mailbox_email or config.outlook.mailbox_store_id:
             label = config.outlook.mailbox_email or "Compte Outlook configure"
             self.outlook_account_combo.addItem(label, config.outlook.mailbox_store_id)
@@ -368,7 +369,26 @@ def _selected_combo_id(combo: QComboBox) -> str:
     return combo.currentText().strip()
 
 
+def _mail_group_title() -> str:
+    return "Mail macOS" if sys.platform == "darwin" else "Outlook"
+
+
+def _mail_checkbox_text() -> str:
+    if sys.platform == "darwin":
+        return "Creer les dossiers Mail"
+    return "Creer les dossiers Outlook"
+
+
+def _mail_account_placeholder() -> str:
+    if sys.platform == "darwin":
+        return "compte Mail local"
+    return "compte Outlook local"
+
+
 def _planner_client() -> GraphPlannerClient:
     settings = ApplicationSettings.load()
-    token_provider = MsalAccessTokenProvider(client_id=settings.microsoft_client_id)
+    token_provider = MsalAccessTokenProvider(
+        client_id=settings.microsoft_client_id,
+        scopes=PLANNER_GRAPH_SCOPES,
+    )
     return GraphPlannerClient(graph=GraphClient(token_provider=token_provider))

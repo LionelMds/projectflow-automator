@@ -74,6 +74,9 @@ Dans `Parametres`, section `Outlook` :
 Sous Windows, ProjectFlow utilise Outlook classique installe localement. Le nouvel Outlook
 Windows sans automation locale n'est pas supporte pour cette fonction.
 
+Sous macOS, la meme section devient `Mail macOS` et pilote l'application native Mail. Au premier
+test ou a la premiere creation, macOS peut demander l'autorisation de controler Mail.
+
 ## Configurer Microsoft Planner
 
 Dans `Parametres`, section `Microsoft Planner` :

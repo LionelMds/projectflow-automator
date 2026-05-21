@@ -3,13 +3,15 @@ from __future__ import annotations
 import pytest
 
 from projectflow.auth import msal_client
-from projectflow.auth.msal_client import GRAPH_SCOPES, MsalAccessTokenProvider
+from projectflow.auth.msal_client import GRAPH_SCOPES, PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.exceptions import AuthError
 
 
 def test_graph_scopes_do_not_include_msal_reserved_scopes() -> None:
     assert set(GRAPH_SCOPES).isdisjoint({"offline_access", "profile", "openid"})
-    assert GRAPH_SCOPES == ("Files.ReadWrite.All", "Tasks.ReadWrite", "User.Read")
+    assert set(PLANNER_GRAPH_SCOPES).isdisjoint({"offline_access", "profile", "openid"})
+    assert GRAPH_SCOPES == ("Files.ReadWrite.All",)
+    assert PLANNER_GRAPH_SCOPES == ("Tasks.ReadWrite", "User.Read")
 
 
 def test_msal_provider_rejects_placeholder_client_id() -> None:
@@ -38,7 +40,7 @@ def test_msal_provider_reuses_in_memory_token_and_saves_cache(
     assert fake_module.app.interactive_calls == 1
     assert storage.saved == ["serialized-cache"]
     assert fake_module.app.interactive_scopes == [
-        ["Files.ReadWrite.All", "Tasks.ReadWrite", "User.Read"],
+        ["Files.ReadWrite.All"],
     ]
 
 
@@ -54,7 +56,7 @@ def test_msal_provider_passes_list_scopes_to_silent_flow(
 
     assert provider._access_token_sync() == "silent-token"  # noqa: SLF001
     assert fake_module.app.silent_scopes == [
-        ["Files.ReadWrite.All", "Tasks.ReadWrite", "User.Read"],
+        ["Files.ReadWrite.All"],
     ]
 
 

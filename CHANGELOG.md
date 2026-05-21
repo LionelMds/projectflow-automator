@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.23
+
+- Decouple les droits Microsoft du repertoire OneDrive et de Planner pour ne plus bloquer le
+  repertoire tant que Planner n'est pas autorise.
+- Ajoute un connecteur macOS pour creer l'arborescence dans l'application native Mail.
+- Ajoute l'entitlement macOS Apple Events necessaire au pilotage de Mail dans l'app signee.
+
 ## 0.1.22
 
 - Ajoute l'integration Microsoft Planner optionnelle.

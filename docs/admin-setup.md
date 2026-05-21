@@ -22,9 +22,12 @@ les services cloud concernes, sans passer par une copie locale synchronisee.
 
 L'application desktop n'utilise pas de secret client. Le Client ID est embarque dans ProjectFlow.
 
-Permissions deleguees minimales :
+Permission deleguee minimale pour le repertoire chantier OneDrive :
 
 - `Files.ReadWrite.All`
+
+Permissions deleguees optionnelles pour Microsoft Planner :
+
 - `Tasks.ReadWrite`
 - `User.Read`
 
@@ -48,9 +51,8 @@ Au premier lancement, chaque utilisateur choisit ses chemins locaux dans l'assis
 repertoire chantier pointe vers OneDrive, ProjectFlow ouvrira le navigateur Microsoft a la
 premiere utilisation du repertoire, puis reutilisera le cache token local.
 
-Si Planner est active, le meme compte Microsoft est utilise pour lister les plans accessibles,
-lister les buckets du plan choisi, creer ou mettre a jour la tache projet, et l'assigner a
-l'utilisateur connecte.
+Si Planner est active, ProjectFlow demande les droits Planner separement du repertoire chantier.
+Sans ces droits, le repertoire OneDrive continue de fonctionner.
 
 ## Mises a jour
 
@@ -70,6 +72,12 @@ La creation Outlook est optionnelle et desactivee par defaut. L'utilisateur peut
 tester l'acces.
 
 Le nouvel Outlook Windows sans automation locale n'est pas supporte pour cette fonction.
+
+## Mail macOS
+
+Sur macOS, ProjectFlow utilise l'application native Mail pour creer les boites aux lettres projet.
+La premiere utilisation peut afficher une demande macOS autorisant ProjectFlow a controler Mail.
+Cette autorisation est locale au poste et ne passe pas par Microsoft Graph.
 
 ## Microsoft Planner
 

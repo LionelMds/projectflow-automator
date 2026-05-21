@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from projectflow.application_settings import ApplicationSettings
-from projectflow.auth.msal_client import MsalAccessTokenProvider
+from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.config import AppConfig
 from projectflow.core.fiche_service import FicheService
 from projectflow.core.local_repertoire import LocalWorkbookGateway
@@ -83,7 +83,10 @@ class ServiceContainer:
                 "Planner actif mais cette version de ProjectFlow n'embarque pas encore "
                 "le connecteur Microsoft.",
             )
-        token_provider = MsalAccessTokenProvider(client_id=settings.microsoft_client_id)
+        token_provider = MsalAccessTokenProvider(
+            client_id=settings.microsoft_client_id,
+            scopes=PLANNER_GRAPH_SCOPES,
+        )
         graph = GraphClient(token_provider=token_provider)
         self.planner_service = ConfiguredPlannerGateway(
             client=GraphPlannerClient(graph=graph),

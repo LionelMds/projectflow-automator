@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pytest
 
 from projectflow.config import OutlookConfig
 from projectflow.exceptions import ConfigError
 from projectflow.outlook.local import create_local_outlook_client
+from projectflow.outlook.macos_mail import ENSURE_MAILBOX_SCRIPT, MacNativeMailClient
 from projectflow.outlook.windows import WindowsLocalOutlookClient
 
 
@@ -168,3 +171,68 @@ def test_local_outlook_requires_selected_account_when_enabled() -> None:
 
     with pytest.raises(ConfigError, match="Selectionnez un compte Outlook"):
         create_local_outlook_client(config)
+
+
+def test_macos_mail_lists_accounts_and_local_mailbox() -> None:
+    client = MacNativeMailClient(
+        script_runner=lambda _script, _args: (
+            "Balz Metal\tBalz Metal\tlionel@balzmetal.ch\n"
+            "on-my-mac\tSur mon Mac\t"
+        ),
+    )
+
+    accounts = client.list_accounts_sync()
+
+    assert accounts[0].id == "Balz Metal"
+    assert accounts[0].label == "Balz Metal (lionel@balzmetal.ch)"
+    assert accounts[1].id == "on-my-mac"
+
+
+@pytest.mark.asyncio
+async def test_macos_mail_creates_nested_mailbox_on_selected_account() -> None:
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_runner(script: str, args: Sequence[str]) -> str:
+        calls.append((script, list(args)))
+        if script == ENSURE_MAILBOX_SCRIPT:
+            return ""
+        return "Balz Metal\tBalz Metal\tlionel@balzmetal.ch"
+
+    client = MacNativeMailClient(
+        target_store_id="Balz Metal",
+        script_runner=fake_runner,
+    )
+
+    await client.ensure_folder_path(["2026", "2026-4995 / Escalier"])
+
+    assert calls[-1] == (ENSURE_MAILBOX_SCRIPT, ["Balz Metal", "2026/2026-4995 - Escalier"])
+
+
+@pytest.mark.asyncio
+async def test_macos_mail_can_create_under_inbox() -> None:
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_runner(script: str, args: Sequence[str]) -> str:
+        calls.append((script, list(args)))
+        if script == ENSURE_MAILBOX_SCRIPT:
+            return ""
+        return "Balz Metal\tBalz Metal\tlionel@balzmetal.ch"
+
+    client = MacNativeMailClient(
+        target_store_id="Balz Metal",
+        base_folder="inbox",
+        script_runner=fake_runner,
+    )
+
+    await client.ensure_folder_path(["2026", "2026-4995"])
+
+    assert calls[-1] == (ENSURE_MAILBOX_SCRIPT, ["Balz Metal", "INBOX/2026/2026-4995"])
+
+
+def test_local_outlook_uses_macos_mail_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("projectflow.outlook.local._platform_name", lambda: "darwin")
+    config = OutlookConfig(enabled=True, mailbox_store_id="Balz Metal")
+
+    client = create_local_outlook_client(config)
+
+    assert isinstance(client, MacNativeMailClient)

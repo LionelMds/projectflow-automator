@@ -12,6 +12,7 @@ flowchart LR
   Repertoire --> GraphExcel["Graph Excel cloud pour OneDrive"]
   Service -. optionnel .-> Outlook["Connecteur Outlook local"]
   Outlook --> WinOutlook["Profil Outlook classique Windows"]
+  Outlook --> MacMail["Mail natif macOS via Apple Events"]
   Service -. optionnel .-> Planner["Graph Planner"]
   Planner --> M365["Microsoft Planner"]
 ```

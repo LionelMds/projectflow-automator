@@ -30,6 +30,8 @@
 - `Nouveau projet rapide` contient `Suivant disponible`, une fleche vers la fenetre complete, et
   declenche la creation normale.
 - Outlook local peut etre active, teste, puis utiliser `Racine du compte` ou `Boite de reception`.
+- Sur macOS, Mail peut etre active, detecter les comptes Mail, puis creer l'arborescence projet.
+- Sur macOS signe, la premiere creation affiche la demande d'autorisation Apple Events pour Mail.
 - Planner peut etre active, detecter les plans, detecter les colonnes du plan choisi et tester
   l'acces.
 - Creer un projet principal avec Planner actif cree une tache assignee a l'utilisateur connecte.
