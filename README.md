@@ -41,6 +41,9 @@ arriere-plan depuis cette icone. Un clic simple sur l'icone ouvre le mini-formul
 permet aussi d'afficher ProjectFlow, d'ouvrir le repertoire, de chercher une mise a jour ou de
 quitter vraiment l'application.
 
+ProjectFlow fonctionne en instance unique : relancer l'application quand elle est deja ouverte
+ramene simplement la fenetre existante au premier plan.
+
 Smoke test non bloquant :
 
 ```powershell

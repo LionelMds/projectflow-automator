@@ -74,6 +74,13 @@ class QuickCreateDialog(QDialog):
         self.project_id_edit.setText(project_id)
         self.subproject_edit.setText(subproject_id)
 
+    def show_and_raise(self) -> None:
+        self.show()
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def _build_ui(self) -> None:
         self.resize(460, 280)
         layout = QVBoxLayout(self)

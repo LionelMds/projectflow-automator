@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.21
+
+- Empeche l'ouverture de plusieurs mini-formulaires rapides depuis l'icone ProjectFlow.
+- Empeche le lancement simultane de plusieurs instances de ProjectFlow.
+- La deuxieme ouverture de l'application renvoie vers la fenetre deja ouverte.
+
 ## 0.1.20
 
 - Ouvre le mini-formulaire rapide au clic simple sur l'icone ProjectFlow.

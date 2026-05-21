@@ -59,6 +59,7 @@ class ProjectFlowController:
         self._services = services or ServiceContainer(config)
         self._save_config = save_config
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._quick_dialog: QuickCreateDialog | None = None
         self._connect()
 
     def _connect(self) -> None:
@@ -78,13 +79,22 @@ class ProjectFlowController:
         self._window.show_and_raise()
 
     def show_quick_create(self) -> None:
+        if self._quick_dialog is not None:
+            self._quick_dialog.show_and_raise()
+            return
         dialog = QuickCreateDialog(parent=self._window)
+        self._quick_dialog = dialog
         dialog.set_data(self._window.creation_tab.data())
         dialog.classic_requested.connect(lambda: self._show_classic_from_quick(dialog))
         dialog.next_available_requested.connect(
             lambda: self._schedule_task(self._quick_next_available(dialog)),
         )
-        if dialog.exec() != dialog.DialogCode.Accepted:
+        try:
+            result = dialog.exec()
+        finally:
+            if self._quick_dialog is dialog:
+                self._quick_dialog = None
+        if result != dialog.DialogCode.Accepted:
             return
         self._window.creation_tab.set_form_data(dialog.data())
         self._window.show_and_raise()

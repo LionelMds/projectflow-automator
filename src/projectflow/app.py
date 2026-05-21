@@ -15,6 +15,7 @@ from qasync import QEventLoop
 from projectflow.config import AppConfig
 from projectflow.demo import build_demo_environment
 from projectflow.logging import configure_logging, get_logger
+from projectflow.platform.single_instance import SingleInstanceGuard
 from projectflow.services import ServiceContainer
 from projectflow.ui.controller import ProjectFlowController, ServiceProvider
 from projectflow.ui.main_window import MainWindow
@@ -33,6 +34,12 @@ def run(argv: Sequence[str]) -> int:
     app_icon = _application_icon()
     if app_icon is not None:
         app.setWindowIcon(app_icon)
+
+    single_instance = SingleInstanceGuard(parent=app)
+    if not single_instance.listen():
+        logger.info("app.single_instance.forwarded")
+        return 0
+    app.aboutToQuit.connect(single_instance.release)
 
     event_loop = QEventLoop(app)
     asyncio.set_event_loop(event_loop)
@@ -72,6 +79,7 @@ def run(argv: Sequence[str]) -> int:
     tray = _configure_tray(app, window, controller, app_icon)
     if tray is not None:
         logger.info("app.tray.enabled")
+    single_instance.activation_requested.connect(lambda _command: controller.show_window())
     window.show()
     logger.info("app.started")
     if not demo_mode:

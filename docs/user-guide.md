@@ -48,6 +48,9 @@ Depuis cette icone, le menu permet de :
 Fermer la fenetre principale masque ProjectFlow au lieu de quitter l'application. Pour quitter
 completement, utiliser `Quitter ProjectFlow` dans le menu de l'icone.
 
+Si ProjectFlow est deja lance, cliquer de nouveau sur l'application n'ouvre pas une deuxieme
+instance : la fenetre existante revient au premier plan.
+
 Un clic simple sur l'icone ouvre directement le mini-formulaire rapide. La petite fleche dans ce
 formulaire recopie les champs saisis vers la fenetre principale et ouvre le mode complet.
 

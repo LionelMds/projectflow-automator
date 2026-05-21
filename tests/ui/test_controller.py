@@ -185,6 +185,35 @@ async def test_controller_quick_next_available_prefills_dialog(
     assert window.creation_tab.project_id_edit.text() == "4995"
 
 
+def test_controller_reuses_existing_quick_dialog(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    dialog = QuickCreateDialog(parent=window)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    controller._quick_dialog = dialog  # noqa: SLF001
+    created: list[bool] = []
+
+    def fail_if_created(*_args: object, **_kwargs: object) -> QuickCreateDialog:
+        created.append(True)
+        return QuickCreateDialog(parent=window)
+
+    monkeypatch.setattr("projectflow.ui.controller.QuickCreateDialog", fail_if_created)
+
+    controller.show_quick_create()
+
+    assert created == []
+    assert controller._quick_dialog is dialog  # noqa: SLF001
+
+
 def test_controller_load_project_reads_existing_fiche(qtbot: Any, tmp_path: Path) -> None:
     window, config, services = _window(qtbot, tmp_path)
     project_dir = config.paths.racine_projets / "2026" / "2026-4995"

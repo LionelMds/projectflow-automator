@@ -24,6 +24,9 @@
 - Fermer la fenetre principale masque l'application ; `Quitter ProjectFlow` dans le menu de
   l'icone ferme vraiment le processus.
 - Un clic simple sur l'icone ouvre le mini-formulaire rapide.
+- Un second clic sur l'icone ne cree pas un deuxieme mini-formulaire.
+- Relancer ProjectFlow pendant qu'il tourne deja ramene la fenetre existante au premier plan et ne
+  cree pas une deuxieme icone.
 - `Nouveau projet rapide` contient `Suivant disponible`, une fleche vers la fenetre complete, et
   declenche la creation normale.
 - Outlook local peut etre active, teste, puis utiliser `Racine du compte` ou `Boite de reception`.
