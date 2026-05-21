@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QWidget
 
 from projectflow.config import AppConfig
@@ -15,10 +15,13 @@ class MainWindow(QMainWindow):
     update_confirmed = Signal()
     update_check_requested = Signal()
     settings_requested = Signal()
+    hidden_to_background = Signal()
 
     def __init__(self, config: AppConfig) -> None:
         super().__init__()
         self._config = config
+        self._background_mode_enabled = False
+        self._quit_requested = False
         self.setWindowTitle("ProjectFlow Automator - Balz Metal Sa")
         self.resize(1120, 760)
         self.setMinimumSize(900, 680)
@@ -84,6 +87,28 @@ class MainWindow(QMainWindow):
         self.creation_tab.repertoire_label.setText(
             native_path_text(paths.repertoire_chantier.display_path) or "Non configure",
         )
+
+    def set_background_mode_enabled(self, *, enabled: bool) -> None:
+        self._background_mode_enabled = enabled
+
+    def show_and_raise(self) -> None:
+        self.show()
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def request_quit(self) -> None:
+        self._quit_requested = True
+        self.close()
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if self._background_mode_enabled and not self._quit_requested:
+            event.ignore()
+            self.hide()
+            self.hidden_to_background.emit()
+            return
+        super().closeEvent(event)
 
     def _confirm_update(self) -> None:
         answer = QMessageBox.question(

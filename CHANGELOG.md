@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.19
+
+- Ajoute une icone de zone de notification Windows / barre des menus macOS.
+- Ajoute un mini-formulaire `Nouveau projet rapide` accessible depuis cette icone.
+- Garde ProjectFlow actif en arriere-plan quand la fenetre principale est fermee.
+
 ## 0.1.18
 
 - Ajoute un vrai installateur Windows par utilisateur avec Inno Setup.

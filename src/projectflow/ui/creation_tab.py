@@ -66,6 +66,18 @@ class CreationTab(QWidget):
         self.project_id_edit.setText(project_id)
         self.subproject_edit.setText(subproject_id)
 
+    def set_form_data(self, data: CreationFormData) -> None:
+        self.set_project_identity(
+            year=data.year,
+            project_id=data.project_id,
+            subproject_id=data.subproject_id,
+        )
+        self.designation_edit.setText(data.designation)
+        self.societe_edit.setText(data.societe)
+        self.contact_edit.setText(data.contact)
+        self.localisation_edit.setText(data.localisation)
+        self.gere_par_edit.setText(data.gere_par)
+
     def append_log(self, message: str) -> None:
         self.logs.append(message)
 

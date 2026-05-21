@@ -34,6 +34,12 @@ La premiere ouverture affiche un assistant simple pour choisir :
 - le dossier de reference,
 - le repertoire chantier Excel.
 
+Quand la zone de notification Windows ou la barre des menus macOS est disponible, ProjectFlow y
+place une icone permanente. Fermer la fenetre masque l'application, mais elle reste disponible en
+arriere-plan depuis cette icone. Le menu de l'icone permet d'afficher ProjectFlow, d'ouvrir un
+mini-formulaire `Nouveau projet rapide`, d'ouvrir le repertoire, de chercher une mise a jour ou de
+quitter vraiment l'application.
+
 Smoke test non bloquant :
 
 ```powershell
@@ -173,6 +179,7 @@ Le MVP couvre :
 - bouton `Suivant disponible` base sur une ligne projet principal dont B, C, D et E sont vides,
 - `Charger`, `Ouvrir fiche`, `Mettre a jour`,
 - relance de `Creer` sur projet existant pour reappliquer Outlook/epingle sans ecraser,
+- icone de zone de notification Windows / barre des menus macOS avec mini-formulaire de creation,
 - Outlook local Windows via le profil Outlook classique, desactive par defaut,
 - assistant de premiere configuration base uniquement sur les chemins.
 

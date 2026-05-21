@@ -19,6 +19,7 @@ from projectflow.services import ServiceContainer
 from projectflow.ui.controller import ProjectFlowController, ServiceProvider
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.onboarding.wizard import OnboardingWizard
+from projectflow.ui.tray import ProjectFlowTray
 
 
 def run(argv: Sequence[str]) -> int:
@@ -29,7 +30,9 @@ def run(argv: Sequence[str]) -> int:
     app = QApplication(qt_argv)
     app.setApplicationName("ProjectFlow Automator")
     app.setOrganizationName("Balz Metal Sa")
-    _apply_application_icon(app)
+    app_icon = _application_icon()
+    if app_icon is not None:
+        app.setWindowIcon(app_icon)
 
     event_loop = QEventLoop(app)
     asyncio.set_event_loop(event_loop)
@@ -66,6 +69,9 @@ def run(argv: Sequence[str]) -> int:
         services=services,
         save_config=save_config,
     )
+    tray = _configure_tray(app, window, controller, app_icon)
+    if tray is not None:
+        logger.info("app.tray.enabled")
     window.show()
     logger.info("app.started")
     if not demo_mode:
@@ -78,6 +84,40 @@ def run(argv: Sequence[str]) -> int:
     with event_loop:
         result = event_loop.run_forever()
         return result if isinstance(result, int) else 0
+
+
+def _configure_tray(
+    app: QApplication,
+    window: MainWindow,
+    controller: ProjectFlowController,
+    icon: QIcon | None,
+) -> ProjectFlowTray | None:
+    if icon is None:
+        return None
+    tray = ProjectFlowTray(icon=icon, parent=app)
+    if not tray.is_available:
+        return None
+
+    app.setQuitOnLastWindowClosed(False)
+    window.set_background_mode_enabled(enabled=True)
+    tray.show_requested.connect(controller.show_window)
+    tray.quick_create_requested.connect(controller.show_quick_create)
+    tray.open_repertoire_requested.connect(controller.open_repertoire)
+    tray.update_check_requested.connect(lambda: asyncio.create_task(controller.check_updates()))
+    tray.quit_requested.connect(lambda: _quit_from_tray(app, window))
+    window.hidden_to_background.connect(
+        lambda: tray.show_message(
+            "ProjectFlow reste actif",
+            "Utilisez l'icone ProjectFlow pour rouvrir l'application.",
+        ),
+    )
+    tray.show()
+    return tray
+
+
+def _quit_from_tray(app: QApplication, window: MainWindow) -> None:
+    window.request_quit()
+    app.quit()
 
 
 def _schedule_smoke_exit(
@@ -110,13 +150,14 @@ def _demo_mode_enabled(argv: Sequence[str]) -> bool:
     }
 
 
-def _apply_application_icon(app: QApplication) -> None:
+def _application_icon() -> QIcon | None:
     icon_path = _application_icon_path()
     if icon_path is None:
-        return
+        return None
     icon = QIcon(str(icon_path))
     if not icon.isNull():
-        app.setWindowIcon(icon)
+        return icon
+    return None
 
 
 def _application_icon_path() -> Path | None:

@@ -20,6 +20,10 @@
   elle n'herite d'aucune cellule du projet parent, seulement du format d'une ligne disponible.
 - `Mettre a jour` demande une confirmation et ne cree aucune integration externe.
 - `Ouvrir fiche` ouvre Excel via l'application par defaut.
+- L'icone ProjectFlow apparait dans la zone de notification Windows ou la barre des menus macOS.
+- Fermer la fenetre principale masque l'application ; `Quitter ProjectFlow` dans le menu de
+  l'icone ferme vraiment le processus.
+- `Nouveau projet rapide` depuis l'icone ouvre un mini-formulaire et declenche la creation normale.
 - Outlook local peut etre active, teste, puis utiliser `Racine du compte` ou `Boite de reception`.
 - `py -m projectflow.build --target windows` produit `dist/ProjectFlowAutomator.exe`.
 - La release GitHub produit `ProjectFlowAutomatorSetup.exe` et son `.sha256`.

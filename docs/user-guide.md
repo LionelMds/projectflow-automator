@@ -32,6 +32,26 @@ Si une mise a jour est disponible :
 
 Si la verification SHA256 echoue, ProjectFlow annule la mise a jour.
 
+## Utilisation en arriere-plan
+
+ProjectFlow reste disponible dans la zone de notification Windows ou dans la barre des menus
+macOS quand le systeme le permet.
+
+Depuis cette icone, le menu permet de :
+
+- afficher la fenetre principale,
+- ouvrir le mini-formulaire `Nouveau projet rapide`,
+- ouvrir le repertoire chantier,
+- rechercher une mise a jour,
+- quitter ProjectFlow.
+
+Fermer la fenetre principale masque ProjectFlow au lieu de quitter l'application. Pour quitter
+completement, utiliser `Quitter ProjectFlow` dans le menu de l'icone.
+
+Le mini-formulaire rapide contient les champs essentiels du projet. Au clic sur `Creer`,
+ProjectFlow recopie ces informations dans la fenetre principale et lance la creation normale, avec
+les memes controles, confirmations et integrations que le formulaire complet.
+
 ## Configurer Outlook local
 
 Dans `Parametres`, section `Outlook` :

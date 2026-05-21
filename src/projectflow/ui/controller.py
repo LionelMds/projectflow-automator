@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -21,6 +21,7 @@ from projectflow.exceptions import ProjectFlowError
 from projectflow.platform.filemanager import open_file_default_app, open_path
 from projectflow.services import ServiceContainer
 from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
+from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow
 from projectflow.updates import (
@@ -57,6 +58,7 @@ class ProjectFlowController:
         self._config = config
         self._services = services or ServiceContainer(config)
         self._save_config = save_config
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._connect()
 
     def _connect(self) -> None:
@@ -71,6 +73,18 @@ class ProjectFlowController:
         self._window.update_check_requested.connect(
             lambda: asyncio.create_task(self.check_updates()),
         )
+
+    def show_window(self) -> None:
+        self._window.show_and_raise()
+
+    def show_quick_create(self) -> None:
+        dialog = QuickCreateDialog(parent=self._window)
+        dialog.set_data(self._window.creation_tab.data())
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        self._window.creation_tab.set_form_data(dialog.data())
+        self._window.show_and_raise()
+        self._schedule_task(self.create_project())
 
     async def create_project(self) -> None:
         try:
@@ -374,6 +388,11 @@ class ProjectFlowController:
     def _save_config_if_available(self) -> None:
         if self._save_config is not None:
             self._save_config()
+
+    def _schedule_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        task = asyncio.create_task(coroutine)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     def _error(self, message: str) -> None:
         self._window.creation_tab.append_log(f"! {message}")
