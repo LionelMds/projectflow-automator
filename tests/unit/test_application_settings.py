@@ -6,6 +6,7 @@ import pytest
 
 from projectflow.application_settings import (
     APP_SETTINGS_ENV,
+    DEFAULT_MICROSOFT_CLIENT_ID,
     MICROSOFT_CLIENT_ID_ENV,
     ApplicationSettings,
 )
@@ -16,7 +17,7 @@ def test_application_settings_loads_missing_path_as_defaults(tmp_path: Path) -> 
     settings = ApplicationSettings.load(tmp_path / "missing.json")
 
     assert settings.github_owner == ""
-    assert settings.microsoft_client_id == ""
+    assert settings.microsoft_client_id == DEFAULT_MICROSOFT_CLIENT_ID
 
 
 def test_application_settings_loads_json_file(tmp_path: Path) -> None:
@@ -56,6 +57,16 @@ def test_application_settings_path_can_come_from_env(
     settings = ApplicationSettings.load()
 
     assert settings.github_owner == "from-file"
+    assert settings.microsoft_client_id == DEFAULT_MICROSOFT_CLIENT_ID
+
+
+def test_application_settings_blank_client_id_uses_embedded_default(tmp_path: Path) -> None:
+    path = tmp_path / "app_settings.json"
+    path.write_text('{"microsoft_client_id": ""}', encoding="utf-8")
+
+    settings = ApplicationSettings.load(path)
+
+    assert settings.microsoft_client_id == DEFAULT_MICROSOFT_CLIENT_ID
 
 
 def test_application_settings_client_id_can_come_from_env(

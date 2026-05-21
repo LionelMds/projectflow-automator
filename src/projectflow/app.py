@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Sequence
+from importlib import resources
+from pathlib import Path
 
 import structlog
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
@@ -26,6 +29,7 @@ def run(argv: Sequence[str]) -> int:
     app = QApplication(qt_argv)
     app.setApplicationName("ProjectFlow Automator")
     app.setOrganizationName("Balz Metal Sa")
+    _apply_application_icon(app)
 
     event_loop = QEventLoop(app)
     asyncio.set_event_loop(event_loop)
@@ -104,3 +108,22 @@ def _demo_mode_enabled(argv: Sequence[str]) -> bool:
         "true",
         "yes",
     }
+
+
+def _apply_application_icon(app: QApplication) -> None:
+    icon_path = _application_icon_path()
+    if icon_path is None:
+        return
+    icon = QIcon(str(icon_path))
+    if not icon.isNull():
+        app.setWindowIcon(icon)
+
+
+def _application_icon_path() -> Path | None:
+    try:
+        icon = resources.files("projectflow.ui.resources").joinpath("icon.png")
+    except ModuleNotFoundError:
+        return None
+    if not icon.is_file():
+        return None
+    return Path(str(icon))

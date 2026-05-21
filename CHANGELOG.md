@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.17
+
+- Embarque le Client ID Microsoft public par defaut pour eviter une release macOS sans connecteur Graph.
+- Ameliore l'affichage macOS des chemins longs avec une troncature au milieu et le chemin complet en infobulle.
+- Stabilise la hauteur des sections du formulaire pour eviter les grands espaces verticaux sur macOS.
+- Remplace les icones Windows, macOS et Qt par le nouveau logo ProjectFlow.
+
 ## 0.1.16
 
 - Ajoute l'ecriture cloud directe du repertoire chantier OneDrive via Microsoft Graph Excel.

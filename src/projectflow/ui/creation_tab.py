@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -87,11 +88,12 @@ class CreationTab(QWidget):
         root_layout.setSpacing(14)
 
         self.config_frame = QFrame()
+        _configure_frame(self.config_frame)
         config_layout = QFormLayout(self.config_frame)
         _configure_form_layout(config_layout)
-        self.racine_label = QLabel("Non configure")
-        self.reference_label = QLabel("Non configure")
-        self.repertoire_label = QLabel("Non configure")
+        self.racine_label = ElidedPathLabel("Non configure")
+        self.reference_label = ElidedPathLabel("Non configure")
+        self.repertoire_label = ElidedPathLabel("Non configure")
         for label in [self.racine_label, self.reference_label, self.repertoire_label]:
             _configure_value_label(label)
         settings_button = QPushButton("Parametres")
@@ -104,6 +106,7 @@ class CreationTab(QWidget):
         root_layout.addWidget(self.config_frame)
 
         identity_frame = QFrame()
+        _configure_frame(identity_frame)
         identity_layout = QFormLayout(identity_frame)
         _configure_form_layout(identity_layout)
         row = QHBoxLayout()
@@ -131,6 +134,7 @@ class CreationTab(QWidget):
         root_layout.addWidget(identity_frame)
 
         client_frame = QFrame()
+        _configure_frame(client_frame)
         client_layout = QFormLayout(client_frame)
         _configure_form_layout(client_layout)
         self.societe_edit = QLineEdit()
@@ -150,6 +154,7 @@ class CreationTab(QWidget):
         client_layout.addRow("Localisation", self.localisation_edit)
         client_layout.addRow("Gere par", self.gere_par_edit)
         root_layout.addWidget(client_frame)
+        root_layout.addStretch(1)
 
         self.logs = QTextEdit()
         self.logs.setReadOnly(True)
@@ -180,17 +185,48 @@ class CreationTab(QWidget):
         root_layout.addLayout(actions)
 
 
+class ElidedPathLabel(QLabel):
+    def __init__(self, text: str = "") -> None:
+        super().__init__()
+        self._full_text = ""
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._full_text = text
+        self.setToolTip(text)
+        self._refresh_elided_text()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        self._refresh_elided_text()
+        super().resizeEvent(event)
+
+    def _refresh_elided_text(self) -> None:
+        width = max(40, self.width() - 4)
+        text = self.fontMetrics().elidedText(
+            self._full_text,
+            Qt.TextElideMode.ElideMiddle,
+            width,
+        )
+        super().setText(text)
+
+
+def _configure_frame(frame: QFrame) -> None:
+    frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+
+
 def _configure_form_layout(layout: QFormLayout) -> None:
     layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
     layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+    layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
     layout.setHorizontalSpacing(14)
     layout.setVerticalSpacing(10)
 
 
 def _configure_value_label(label: QLabel) -> None:
-    label.setWordWrap(True)
+    label.setWordWrap(False)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    label.setMinimumWidth(320)
+    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
 
 def _configure_text_control(widget: QWidget, *, min_chars: int) -> None:

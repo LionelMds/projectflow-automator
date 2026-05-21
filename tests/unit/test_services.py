@@ -7,7 +7,6 @@ from openpyxl import Workbook
 
 from projectflow.application_settings import ApplicationSettings
 from projectflow.config import AppConfig, RepertoireChantierConfig
-from projectflow.exceptions import ConfigError
 from projectflow.services import ServiceContainer
 
 
@@ -62,7 +61,7 @@ def test_service_container_can_reset_repertoire_service(tmp_path: Path) -> None:
     assert container.repertoire() is not first
 
 
-def test_service_container_rejects_local_onedrive_repertoire_without_cloud_connector(
+def test_service_container_uses_cloud_repertoire_for_local_onedrive_by_default(
     tmp_path: Path,
 ) -> None:
     repertoire_path = tmp_path / "OneDrive - Balz Metal Sa" / "repertoire.xlsx"
@@ -71,8 +70,9 @@ def test_service_container_rejects_local_onedrive_repertoire_without_cloud_conne
     config = AppConfig()
     config.paths.repertoire_chantier.display_path = str(repertoire_path)
 
-    with pytest.raises(ConfigError, match="connecteur Microsoft"):
-        ServiceContainer(config).repertoire()
+    service = ServiceContainer(config).repertoire()
+
+    assert service is not None
 
 
 def test_service_container_uses_cloud_repertoire_when_client_id_is_embedded(
@@ -91,7 +91,7 @@ def test_service_container_uses_cloud_repertoire_when_client_id_is_embedded(
     assert service is not None
 
 
-def test_service_container_rejects_cloud_repertoire_without_client_id() -> None:
+def test_service_container_uses_cloud_repertoire_with_embedded_client_id() -> None:
     config = AppConfig()
     config.paths.repertoire_chantier = RepertoireChantierConfig(
         drive_id="drive",
@@ -99,5 +99,6 @@ def test_service_container_rejects_cloud_repertoire_without_client_id() -> None:
         display_path="",
     )
 
-    with pytest.raises(ConfigError, match="connecteur Microsoft"):
-        ServiceContainer(config).repertoire()
+    service = ServiceContainer(config).repertoire()
+
+    assert service is not None

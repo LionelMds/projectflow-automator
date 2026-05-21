@@ -12,9 +12,10 @@ cloud partage, sans passer par une copie locale synchronisee.
   utilisateurs concernes.
 - Outlook classique installe et configure uniquement si la creation de dossiers Outlook doit
   etre activee.
-- Une App Registration Microsoft publique avec le redirect URI desktop `http://localhost` et le
-  Client ID renseigne dans le secret GitHub `PROJECTFLOW_MICROSOFT_CLIENT_ID` avant de creer une
-  release.
+- Une App Registration Microsoft publique avec le redirect URI desktop `http://localhost`.
+- Le Client ID public est embarque dans ProjectFlow. Le secret GitHub
+  `PROJECTFLOW_MICROSOFT_CLIENT_ID` reste disponible uniquement pour remplacer cette valeur lors
+  d'une release.
 
 ## Permissions Microsoft
 

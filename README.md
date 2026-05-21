@@ -77,8 +77,8 @@ Il permet de tester `Suivant disponible`, `Creer`, `Charger`, `Ouvrir fiche`,
 
 - `PROJECTFLOW_APP_SETTINGS` : chemin vers un `app_settings.json` local pour tester la
   verification de mise a jour sans modifier le code source.
-- `PROJECTFLOW_MICROSOFT_CLIENT_ID` : Client ID Microsoft embarque dans les releases pour
-  activer l'ecriture cloud directe du repertoire chantier OneDrive.
+- `PROJECTFLOW_MICROSOFT_CLIENT_ID` : Client ID Microsoft optionnel pour remplacer le Client ID
+  public embarque dans les releases.
 - `PROJECTFLOW_SMOKE_EXIT_MS` : ferme automatiquement l'app apres le delai indique, pour
   tests smoke.
 - `PROJECTFLOW_DEMO_MODE` : lance l'app avec un repertoire Excel local de demonstration.
@@ -103,7 +103,8 @@ Format :
 
 Ces champs activent la verification de mise a jour via GitHub Releases.
 Le champ `microsoft_client_id` active l'ecriture cloud du repertoire chantier OneDrive. Il est
-public par nature pour une application desktop et ne doit jamais etre accompagne d'un secret.
+public par nature pour une application desktop, dispose d'une valeur embarquee par defaut, et ne
+doit jamais etre accompagne d'un secret.
 
 ## Mises a jour
 
