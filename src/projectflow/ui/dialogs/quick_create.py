@@ -2,15 +2,18 @@ from __future__ import annotations
 
 from datetime import date
 
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -19,6 +22,9 @@ from projectflow.ui.creation_tab import CreationFormData
 
 
 class QuickCreateDialog(QDialog):
+    classic_requested = Signal()
+    next_available_requested = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Nouveau projet rapide")
@@ -52,9 +58,37 @@ class QuickCreateDialog(QDialog):
         self.localisation_edit.setText(data.localisation)
         self.gere_par_edit.setText(data.gere_par)
 
+    def set_project_identity(
+        self,
+        *,
+        year: str,
+        project_id: str,
+        subproject_id: str = "",
+    ) -> None:
+        index = self.year_combo.findText(year)
+        if index >= 0:
+            self.year_combo.setCurrentIndex(index)
+        elif year:
+            self.year_combo.addItem(year)
+            self.year_combo.setCurrentText(year)
+        self.project_id_edit.setText(project_id)
+        self.subproject_edit.setText(subproject_id)
+
     def _build_ui(self) -> None:
         self.resize(460, 280)
         layout = QVBoxLayout(self)
+
+        header = QHBoxLayout()
+        title = QLabel("Nouveau projet rapide")
+        title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.classic_button = QToolButton()
+        self.classic_button.setArrowType(Qt.ArrowType.RightArrow)
+        self.classic_button.setToolTip("Ouvrir la fenetre complete")
+        self.classic_button.clicked.connect(self.classic_requested.emit)
+        header.addWidget(title)
+        header.addWidget(self.classic_button)
+        layout.addLayout(header)
+
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
@@ -66,9 +100,12 @@ class QuickCreateDialog(QDialog):
         self.project_id_edit.setPlaceholderText("4995")
         self.subproject_edit = QLineEdit()
         self.subproject_edit.setPlaceholderText("Sous-projet")
+        self.next_available_button = QPushButton("Suivant disponible")
+        self.next_available_button.clicked.connect(self.next_available_requested.emit)
         identity.addWidget(self.year_combo, 1)
         identity.addWidget(self.project_id_edit, 2)
         identity.addWidget(self.subproject_edit, 1)
+        identity.addWidget(self.next_available_button)
         form.addRow("Numero", _wrap_layout(identity))
 
         self.designation_edit = QLineEdit()

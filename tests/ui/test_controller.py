@@ -13,6 +13,7 @@ from projectflow.core.models import ProjectCreationResult, ProjectInput
 from projectflow.core.numero import parse_project_number
 from projectflow.core.repertoire_service import NextAvailableProject
 from projectflow.ui.controller import ProjectFlowController, _update_prompt_text
+from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.main_window import MainWindow
 
 
@@ -160,6 +161,28 @@ async def test_controller_next_available_prefills_identity(qtbot: Any, tmp_path:
 
     assert window.creation_tab.project_id_edit.text() == "4995"
     assert window.creation_tab.subproject_edit.text() == ""
+
+
+@pytest.mark.asyncio
+async def test_controller_quick_next_available_prefills_dialog(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    dialog = QuickCreateDialog(parent=window)
+    qtbot.addWidget(dialog)
+    dialog.set_project_identity(year="2026", project_id="", subproject_id="2")
+
+    await controller._quick_next_available(dialog)  # noqa: SLF001
+
+    assert dialog.project_id_edit.text() == "4995"
+    assert dialog.subproject_edit.text() == ""
+    assert window.creation_tab.project_id_edit.text() == "4995"
 
 
 def test_controller_load_project_reads_existing_fiche(qtbot: Any, tmp_path: Path) -> None:

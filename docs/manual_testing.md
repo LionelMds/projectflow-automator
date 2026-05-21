@@ -23,7 +23,9 @@
 - L'icone ProjectFlow apparait dans la zone de notification Windows ou la barre des menus macOS.
 - Fermer la fenetre principale masque l'application ; `Quitter ProjectFlow` dans le menu de
   l'icone ferme vraiment le processus.
-- `Nouveau projet rapide` depuis l'icone ouvre un mini-formulaire et declenche la creation normale.
+- Un clic simple sur l'icone ouvre le mini-formulaire rapide.
+- `Nouveau projet rapide` contient `Suivant disponible`, une fleche vers la fenetre complete, et
+  declenche la creation normale.
 - Outlook local peut etre active, teste, puis utiliser `Racine du compte` ou `Boite de reception`.
 - `py -m projectflow.build --target windows` produit `dist/ProjectFlowAutomator.exe`.
 - La release GitHub produit `ProjectFlowAutomatorSetup.exe` et son `.sha256`.

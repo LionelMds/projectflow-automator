@@ -36,8 +36,9 @@ La premiere ouverture affiche un assistant simple pour choisir :
 
 Quand la zone de notification Windows ou la barre des menus macOS est disponible, ProjectFlow y
 place une icone permanente. Fermer la fenetre masque l'application, mais elle reste disponible en
-arriere-plan depuis cette icone. Le menu de l'icone permet d'afficher ProjectFlow, d'ouvrir un
-mini-formulaire `Nouveau projet rapide`, d'ouvrir le repertoire, de chercher une mise a jour ou de
+arriere-plan depuis cette icone. Un clic simple sur l'icone ouvre le mini-formulaire
+`Nouveau projet rapide`; sa fleche permet de basculer vers la fenetre complete. Le menu de l'icone
+permet aussi d'afficher ProjectFlow, d'ouvrir le repertoire, de chercher une mise a jour ou de
 quitter vraiment l'application.
 
 Smoke test non bloquant :

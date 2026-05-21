@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QSizePolicy
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QSizePolicy, QSystemTrayIcon
 
 from projectflow.config import AppConfig
 from projectflow.ui.creation_tab import CreationFormData, CreationTab
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.onboarding.wizard import OnboardingWizard
+from projectflow.ui.tray import ProjectFlowTray
 
 
 def test_onboarding_wizard_smoke(qtbot) -> None:  # type: ignore[no-untyped-def]
@@ -127,6 +129,42 @@ def test_quick_create_dialog_round_trips_form_data(qtbot) -> None:  # type: igno
         localisation="Lausanne",
         gere_par="AB",
     )
+
+
+def test_quick_create_dialog_updates_project_identity(qtbot) -> None:  # type: ignore[no-untyped-def]
+    dialog = QuickCreateDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.set_project_identity(year="2029", project_id="8001")
+
+    assert dialog.year_combo.currentText() == "2029"
+    assert dialog.project_id_edit.text() == "8001"
+    assert dialog.subproject_edit.text() == ""
+
+
+def test_quick_create_dialog_emits_navigation_signals(qtbot) -> None:  # type: ignore[no-untyped-def]
+    dialog = QuickCreateDialog()
+    qtbot.addWidget(dialog)
+    emitted: list[str] = []
+    dialog.classic_requested.connect(lambda: emitted.append("classic"))
+    dialog.next_available_requested.connect(lambda: emitted.append("next"))
+
+    dialog.classic_button.click()
+    dialog.next_available_button.click()
+
+    assert emitted == ["classic", "next"]
+
+
+def test_tray_single_click_opens_quick_create() -> None:
+    tray = ProjectFlowTray(icon=QIcon())
+    emitted: list[str] = []
+    tray.quick_create_requested.connect(lambda: emitted.append("quick"))
+    tray.show_requested.connect(lambda: emitted.append("show"))
+
+    tray._on_activated(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001
+    tray._on_activated(QSystemTrayIcon.ActivationReason.DoubleClick)  # noqa: SLF001
+
+    assert emitted == ["quick", "show"]
 
 
 def test_main_window_close_hides_when_background_mode_enabled(qtbot) -> None:  # type: ignore[no-untyped-def]

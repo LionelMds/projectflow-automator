@@ -80,11 +80,41 @@ class ProjectFlowController:
     def show_quick_create(self) -> None:
         dialog = QuickCreateDialog(parent=self._window)
         dialog.set_data(self._window.creation_tab.data())
+        dialog.classic_requested.connect(lambda: self._show_classic_from_quick(dialog))
+        dialog.next_available_requested.connect(
+            lambda: self._schedule_task(self._quick_next_available(dialog)),
+        )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         self._window.creation_tab.set_form_data(dialog.data())
         self._window.show_and_raise()
         self._schedule_task(self.create_project())
+
+    def _show_classic_from_quick(self, dialog: QuickCreateDialog) -> None:
+        self._window.creation_tab.set_form_data(dialog.data())
+        dialog.reject()
+        self._window.show_and_raise()
+
+    async def _quick_next_available(self, dialog: QuickCreateDialog) -> None:
+        try:
+            year = int(dialog.data().year)
+            result = await self._services.repertoire().next_available(year=year)
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return
+        if result is None:
+            self._log("! Aucun numero disponible trouve")
+            return
+        dialog.set_project_identity(
+            year=str(result.number.year),
+            project_id=result.number.project_id,
+        )
+        self._window.creation_tab.set_project_identity(
+            year=str(result.number.year),
+            project_id=result.number.project_id,
+        )
+        self._save_config_if_available()
+        self._log(f"+ Numero disponible: {result.number}")
 
     async def create_project(self) -> None:
         try:

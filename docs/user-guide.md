@@ -48,9 +48,13 @@ Depuis cette icone, le menu permet de :
 Fermer la fenetre principale masque ProjectFlow au lieu de quitter l'application. Pour quitter
 completement, utiliser `Quitter ProjectFlow` dans le menu de l'icone.
 
+Un clic simple sur l'icone ouvre directement le mini-formulaire rapide. La petite fleche dans ce
+formulaire recopie les champs saisis vers la fenetre principale et ouvre le mode complet.
+
 Le mini-formulaire rapide contient les champs essentiels du projet. Au clic sur `Creer`,
 ProjectFlow recopie ces informations dans la fenetre principale et lance la creation normale, avec
-les memes controles, confirmations et integrations que le formulaire complet.
+les memes controles, confirmations et integrations que le formulaire complet. Le bouton
+`Suivant disponible` y pre-remplit le prochain numero libre comme dans le formulaire principal.
 
 ## Configurer Outlook local
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.20
+
+- Ouvre le mini-formulaire rapide au clic simple sur l'icone ProjectFlow.
+- Ajoute une fleche dans `Nouveau projet rapide` pour basculer vers la fenetre complete.
+- Ajoute `Suivant disponible` dans le mini-formulaire rapide.
+
 ## 0.1.19
 
 - Ajoute une icone de zone de notification Windows / barre des menus macOS.

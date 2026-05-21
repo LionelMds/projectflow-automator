@@ -55,8 +55,8 @@ class ProjectFlowTray(QObject):
         return menu
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason in {
-            QSystemTrayIcon.ActivationReason.Trigger,
-            QSystemTrayIcon.ActivationReason.DoubleClick,
-        }:
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.quick_create_requested.emit()
+            return
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show_requested.emit()
