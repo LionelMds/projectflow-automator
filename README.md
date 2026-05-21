@@ -111,12 +111,18 @@ doit jamais etre accompagne d'un secret.
 Au demarrage, l'application interroge `releases/latest` du depot GitHub configure. Si une
 version plus recente est disponible, ProjectFlow selectionne automatiquement l'artefact adapte :
 
-- Windows : `.exe`
+- Windows : `ProjectFlowAutomatorSetup.exe` en priorite
 - macOS : `.dmg`, puis `.zip` si aucun DMG n'est publie
 
-Le fichier est telecharge dans le dossier de donnees utilisateur ProjectFlow. Sous Windows,
-l'app lance un helper PowerShell qui attend la fermeture de ProjectFlow, remplace l'executable,
-puis redemarre l'application. Sous macOS, le DMG/ZIP est ouvert avec l'application par defaut.
+Le fichier est telecharge dans le dossier de donnees utilisateur ProjectFlow, puis compare au
+fichier `.sha256` publie avec la release. Si la verification echoue, l'installation est
+annulee.
+
+Sous Windows, ProjectFlow lance l'installateur Inno Setup en mode silencieux, ferme
+l'application et laisse l'installateur remplacer proprement la version en place. L'ancien mode
+par copie d'executable reste uniquement comme filet de compatibilite pour les anciennes
+releases portables. Sous macOS, le DMG est ouvert avec l'application par defaut pour laisser
+l'utilisateur glisser l'app dans `Applications`.
 
 ## Packaging
 
@@ -127,6 +133,9 @@ py -m projectflow.build --target windows
 ```
 
 L'executable est produit dans `dist/ProjectFlowAutomator.exe`.
+
+La release GitHub construit en plus `ProjectFlowAutomatorSetup.exe` avec Inno Setup. C'est
+l'artefact recommande pour les utilisateurs Windows.
 
 Si UPX est installe, le builder peut l'utiliser pour compresser davantage l'artefact :
 
@@ -143,6 +152,9 @@ python -m projectflow.build --target macos
 L'app bundle est produit dans `dist/ProjectFlow Automator.app`. La signature Developer ID,
 la notarisation Apple et la creation du DMG sont orchestrees par `.github/workflows/release.yml`
 au push d'un tag `v*.*.*`.
+
+Chaque release publie egalement un fichier `.sha256` pour l'installateur Windows, l'executable
+portable Windows et le DMG macOS.
 
 ## Etat courant
 

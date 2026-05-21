@@ -53,10 +53,31 @@ jobs:
           )
       - name: Build exe
         run: python -m projectflow.build --target windows
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Build Windows installer
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          $env:PROJECTFLOW_VERSION = $env:RELEASE_VERSION.TrimStart("v")
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\windows\ProjectFlowAutomator.iss
+      - name: Generate Windows checksums
+        shell: pwsh
+        run: |
+          foreach ($file in @("dist\ProjectFlowAutomator.exe", "dist\ProjectFlowAutomatorSetup.exe")) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+            $name = Split-Path -Leaf $file
+            "$hash  $name" | Set-Content -NoNewline -Encoding ascii "$file.sha256"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: ProjectFlowAutomator-windows
-          path: dist/ProjectFlowAutomator.exe
+          path: |
+            dist/ProjectFlowAutomator.exe
+            dist/ProjectFlowAutomator.exe.sha256
+            dist/ProjectFlowAutomatorSetup.exe
+            dist/ProjectFlowAutomatorSetup.exe.sha256
 
   build-macos:
     name: Build macOS
@@ -136,10 +157,16 @@ jobs:
             --app-drop-link 450 160 \
             "dist/ProjectFlow Automator.dmg" \
             "dist/dmg"
+      - name: Generate macOS checksum
+        run: |
+          shasum -a 256 "dist/ProjectFlow Automator.dmg" \
+            | sed 's#dist/##' > "dist/ProjectFlow Automator.dmg.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: ProjectFlowAutomator-macos
-          path: dist/ProjectFlow Automator.dmg
+          path: |
+            dist/ProjectFlow Automator.dmg
+            dist/ProjectFlow Automator.dmg.sha256
 
   publish:
     name: Publish GitHub Release
@@ -171,3 +198,4 @@ jobs:
           files: |
             artifacts/**/*.exe
             artifacts/**/*.dmg
+            artifacts/**/*.sha256

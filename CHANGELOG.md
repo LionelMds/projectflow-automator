@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.18
+
+- Ajoute un vrai installateur Windows par utilisateur avec Inno Setup.
+- Securise les mises a jour par verification SHA256 avant installation.
+- Remplace la mise a jour Windows par copie d'executable par le lancement de l'installateur.
+
 ## 0.1.17
 
 - Embarque le Client ID Microsoft public par defaut pour eviter une release macOS sans connecteur Graph.

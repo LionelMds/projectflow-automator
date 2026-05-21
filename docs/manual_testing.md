@@ -22,4 +22,9 @@
 - `Ouvrir fiche` ouvre Excel via l'application par defaut.
 - Outlook local peut etre active, teste, puis utiliser `Racine du compte` ou `Boite de reception`.
 - `py -m projectflow.build --target windows` produit `dist/ProjectFlowAutomator.exe`.
+- La release GitHub produit `ProjectFlowAutomatorSetup.exe` et son `.sha256`.
+- Sur Windows, `Rechercher une mise a jour` telecharge l'installateur, verifie le SHA256 et
+  lance l'installation au lieu de remplacer directement l'executable.
+- Sur macOS, `Rechercher une mise a jour` telecharge le DMG, verifie le SHA256 et ouvre l'image
+  disque.
 - L'executable Windows demarre en mode demo avec `ProjectFlowAutomator.exe --demo`.

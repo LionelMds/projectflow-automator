@@ -13,6 +13,25 @@ Si le repertoire chantier est dans OneDrive, ProjectFlow se connecte directement
 cloud lors de la premiere lecture ou ecriture. Le navigateur Microsoft peut s'ouvrir une seule
 fois pour confirmer le compte. Ensuite la connexion est reutilisee automatiquement.
 
+## Installation
+
+Sous Windows, utiliser `ProjectFlowAutomatorSetup.exe`. L'installation se fait dans le profil
+utilisateur et ne demande normalement pas de droits administrateur.
+
+Sous macOS, ouvrir le DMG, puis glisser `ProjectFlow Automator.app` dans `Applications`.
+
+## Mises a jour
+
+Le menu `ProjectFlow` -> `Rechercher une mise a jour` verifie la derniere release disponible.
+
+Si une mise a jour est disponible :
+
+- Windows telecharge l'installateur, verifie son empreinte SHA256, puis relance
+  l'installation.
+- macOS telecharge le DMG, verifie son empreinte SHA256, puis ouvre l'image disque.
+
+Si la verification SHA256 echoue, ProjectFlow annule la mise a jour.
+
 ## Configurer Outlook local
 
 Dans `Parametres`, section `Outlook` :

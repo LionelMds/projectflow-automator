@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
 
 import httpx
@@ -13,6 +14,7 @@ from projectflow.updates import (
     UpdateDownloader,
     UpdateInfo,
     prepare_install_plan,
+    select_checksum_asset,
     select_platform_asset,
 )
 
@@ -116,13 +118,18 @@ def test_select_platform_asset_picks_windows_exe() -> None:
                 size=1,
             ),
             ReleaseAsset(name="ProjectFlowAutomator.exe", download_url="https://x/app.exe", size=1),
+            ReleaseAsset(
+                name="ProjectFlowAutomatorSetup.exe",
+                download_url="https://x/setup.exe",
+                size=1,
+            ),
         ),
     )
 
     asset = select_platform_asset(update, system_name="Windows")
 
     assert asset is not None
-    assert asset.name == "ProjectFlowAutomator.exe"
+    assert asset.name == "ProjectFlowAutomatorSetup.exe"
 
 
 def test_select_platform_asset_picks_macos_dmg() -> None:
@@ -146,27 +153,95 @@ def test_select_platform_asset_picks_macos_dmg() -> None:
     assert asset.name == "ProjectFlow Automator.dmg"
 
 
+def test_select_checksum_asset_prefers_matching_sha256() -> None:
+    asset = ReleaseAsset(
+        name="ProjectFlowAutomatorSetup.exe",
+        download_url="https://x/setup.exe",
+        size=1,
+    )
+    update = UpdateInfo(
+        current_version="0.1.0",
+        latest_version="0.2.0",
+        release_url="https://github.example/release",
+        assets=(
+            asset,
+            ReleaseAsset(name="SHA256SUMS.txt", download_url="https://x/all.txt", size=1),
+            ReleaseAsset(
+                name="ProjectFlowAutomatorSetup.exe.sha256",
+                download_url="https://x/setup.exe.sha256",
+                size=1,
+            ),
+        ),
+    )
+
+    checksum = select_checksum_asset(update, asset)
+
+    assert checksum is not None
+    assert checksum.name == "ProjectFlowAutomatorSetup.exe.sha256"
+
+
 @pytest.mark.asyncio
 async def test_update_downloader_writes_asset(tmp_path: Path) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "https://github.example/app.exe"
-        return httpx.Response(200, content=b"binary")
+        if str(request.url) == "https://github.example/app.exe":
+            return httpx.Response(200, content=b"binary")
+        assert str(request.url) == "https://github.example/app.exe.sha256"
+        digest = sha256(b"binary").hexdigest()
+        return httpx.Response(200, text=f"{digest}  ProjectFlowAutomatorSetup.exe")
 
     downloader = UpdateDownloader(client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     asset = ReleaseAsset(
-        name="ProjectFlowAutomator.exe",
+        name="ProjectFlowAutomatorSetup.exe",
         download_url="https://github.example/app.exe",
         size=6,
     )
+    checksum = ReleaseAsset(
+        name="ProjectFlowAutomatorSetup.exe.sha256",
+        download_url="https://github.example/app.exe.sha256",
+        size=1,
+    )
 
-    path = await downloader.download(asset, version="0.2.0", destination_dir=tmp_path)
+    path = await downloader.download(
+        asset,
+        version="0.2.0",
+        destination_dir=tmp_path,
+        checksum_asset=checksum,
+    )
 
-    assert path.name == "ProjectFlowAutomator.exe"
+    assert path.name == "ProjectFlowAutomatorSetup.exe"
     assert path.read_bytes() == b"binary"
 
 
-def test_prepare_windows_install_plan_writes_script(tmp_path: Path) -> None:
-    asset_path = tmp_path / "ProjectFlowAutomator.exe"
+@pytest.mark.asyncio
+async def test_update_downloader_rejects_bad_checksum(tmp_path: Path) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://github.example/setup.exe":
+            return httpx.Response(200, content=b"binary")
+        return httpx.Response(200, text=f"{'0' * 64}  ProjectFlowAutomatorSetup.exe")
+
+    downloader = UpdateDownloader(client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    asset = ReleaseAsset(
+        name="ProjectFlowAutomatorSetup.exe",
+        download_url="https://github.example/setup.exe",
+        size=6,
+    )
+    checksum = ReleaseAsset(
+        name="ProjectFlowAutomatorSetup.exe.sha256",
+        download_url="https://github.example/setup.exe.sha256",
+        size=1,
+    )
+
+    with pytest.raises(ProjectFlowError, match="SHA256"):
+        await downloader.download(
+            asset,
+            version="0.2.0",
+            destination_dir=tmp_path,
+            checksum_asset=checksum,
+        )
+
+
+def test_prepare_windows_install_plan_runs_installer(tmp_path: Path) -> None:
+    asset_path = tmp_path / "ProjectFlowAutomatorSetup.exe"
     asset_path.write_bytes(b"binary")
 
     plan = prepare_install_plan(
@@ -178,8 +253,25 @@ def test_prepare_windows_install_plan_writes_script(tmp_path: Path) -> None:
     )
 
     assert plan.should_quit_app is True
+    assert plan.command[0] == str(asset_path)
+    assert "/SILENT" in plan.command
+    assert "/CLOSEAPPLICATIONS" in plan.command
+
+
+def test_prepare_windows_install_plan_keeps_legacy_portable_fallback(tmp_path: Path) -> None:
+    asset_path = tmp_path / "ProjectFlowAutomator.exe"
+    asset_path.write_bytes(b"binary")
+
+    plan = prepare_install_plan(
+        asset_path,
+        current_executable=tmp_path / "current.exe",
+        process_id=123,
+        script_dir=tmp_path,
+        system_name="Windows",
+    )
+
     assert plan.command[0] == "powershell"
-    script_path = tmp_path / "install_projectflow_update.ps1"
+    script_path = tmp_path / "legacy_projectflow_update.ps1"
     assert script_path.exists()
     assert "Copy-Item" in script_path.read_text(encoding="utf-8")
 

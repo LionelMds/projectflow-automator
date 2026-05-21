@@ -28,6 +28,7 @@ from projectflow.updates import (
     UpdateDownloader,
     launch_install_plan,
     prepare_install_plan,
+    select_checksum_asset,
     select_platform_asset,
 )
 
@@ -228,6 +229,7 @@ class ProjectFlowController:
             downloaded_path = await UpdateDownloader().download(
                 asset,
                 version=update.latest_version,
+                checksum_asset=select_checksum_asset(update, asset),
             )
             plan = prepare_install_plan(
                 downloaded_path,

@@ -34,12 +34,27 @@ a faire.
 
 ## Distribution
 
-- Windows : distribuer `ProjectFlowAutomator.exe`.
+- Windows : distribuer `ProjectFlowAutomatorSetup.exe`. L'installateur est par utilisateur et
+  ne demande pas de droits administrateur.
 - macOS : distribuer le `.dmg` produit par la release signee.
+
+Les fichiers `.sha256` publies avec la release servent a la verification automatique des mises
+a jour. Ne les supprimez pas de la GitHub Release.
 
 Au premier lancement, chaque utilisateur choisit ses chemins locaux dans l'assistant. Si le
 repertoire chantier pointe vers OneDrive, ProjectFlow ouvrira le navigateur Microsoft a la
 premiere utilisation du repertoire, puis reutilisera le cache token local.
+
+## Mises a jour
+
+Les mises a jour in-app utilisent les artefacts GitHub Releases :
+
+- Windows telecharge `ProjectFlowAutomatorSetup.exe`, verifie son SHA256, puis lance
+  l'installateur.
+- macOS telecharge le DMG, verifie son SHA256, puis ouvre l'image disque pour installation.
+
+Pour publier une mise a jour, creer un tag `vX.Y.Z`. Le workflow produit les installateurs,
+leurs checksums et la release GitHub.
 
 ## Outlook local
 
