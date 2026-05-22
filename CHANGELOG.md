@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.24
+
+- Remplace le logo ProjectFlow et regenere les icones Windows/macOS aux formats natifs.
+- Libere correctement les fichiers Excel de fiche dossier apres creation, mise a jour ou lecture.
+
 ## 0.1.23
 
 - Decouple les droits Microsoft du repertoire OneDrive et de Planner pour ne plus bloquer le

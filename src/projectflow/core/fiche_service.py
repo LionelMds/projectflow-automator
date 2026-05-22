@@ -84,16 +84,19 @@ class FicheService:
         fiche_path = self.standardize_fiche_name(project_dir, project.number)
 
         workbook = load_workbook(fiche_path)
-        worksheet = _active_worksheet(workbook)
-        worksheet["C3"] = str(project.number)
-        _write_prefixed(worksheet, "D3", "Societe", project.societe)
-        _write_prefixed(worksheet, "D4", "Contact", project.contact)
-        _write_prefixed(worksheet, "D5", "Projet", project.designation)
-        _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
-        if project.gere_par.strip():
-            worksheet["C6"] = project.gere_par.strip()
-        self._write_creation_date(worksheet)
-        workbook.save(fiche_path)
+        try:
+            worksheet = _active_worksheet(workbook)
+            worksheet["C3"] = str(project.number)
+            _write_prefixed(worksheet, "D3", "Societe", project.societe)
+            _write_prefixed(worksheet, "D4", "Contact", project.contact)
+            _write_prefixed(worksheet, "D5", "Projet", project.designation)
+            _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
+            if project.gere_par.strip():
+                worksheet["C6"] = project.gere_par.strip()
+            self._write_creation_date(worksheet)
+            workbook.save(fiche_path)
+        finally:
+            workbook.close()
         return fiche_path
 
     def fill_subproject_fiche(self, project_dir: Path, project: ProjectInput) -> Path:
@@ -107,29 +110,35 @@ class FicheService:
             target_path.write_bytes(source_path.read_bytes())
 
         workbook = load_workbook(target_path)
-        worksheet = _active_worksheet(workbook)
-        worksheet["C3"] = str(project.number)
-        _write_prefixed(worksheet, "D3", "Societe", project.societe)
-        _write_prefixed(worksheet, "D4", "Contact", project.contact)
-        _write_prefixed(worksheet, "D5", "Projet", project.designation)
-        _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
-        if project.gere_par.strip():
-            worksheet["C6"] = project.gere_par.strip()
-        self._write_creation_date(worksheet)
-        workbook.save(target_path)
+        try:
+            worksheet = _active_worksheet(workbook)
+            worksheet["C3"] = str(project.number)
+            _write_prefixed(worksheet, "D3", "Societe", project.societe)
+            _write_prefixed(worksheet, "D4", "Contact", project.contact)
+            _write_prefixed(worksheet, "D5", "Projet", project.designation)
+            _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
+            if project.gere_par.strip():
+                worksheet["C6"] = project.gere_par.strip()
+            self._write_creation_date(worksheet)
+            workbook.save(target_path)
+        finally:
+            workbook.close()
         return target_path
 
     def read_fiche(self, fiche_path: Path) -> FicheData:
         workbook = load_workbook(fiche_path, read_only=True, data_only=True)
-        worksheet = _active_worksheet(workbook)
-        return FicheData(
-            number=_cell_text(worksheet["C3"].value),
-            societe=_strip_prefix(_cell_text(worksheet["D3"].value)),
-            contact=_strip_prefix(_cell_text(worksheet["D4"].value)),
-            designation=_strip_prefix(_cell_text(worksheet["D5"].value)),
-            localisation=_strip_prefix(_cell_text(worksheet["D6"].value)),
-            gere_par=_cell_text(worksheet["C6"].value),
-        )
+        try:
+            worksheet = _active_worksheet(workbook)
+            return FicheData(
+                number=_cell_text(worksheet["C3"].value),
+                societe=_strip_prefix(_cell_text(worksheet["D3"].value)),
+                contact=_strip_prefix(_cell_text(worksheet["D4"].value)),
+                designation=_strip_prefix(_cell_text(worksheet["D5"].value)),
+                localisation=_strip_prefix(_cell_text(worksheet["D6"].value)),
+                gere_par=_cell_text(worksheet["C6"].value),
+            )
+        finally:
+            workbook.close()
 
     def _write_creation_date(self, worksheet: Worksheet) -> None:
         cell = worksheet["B9"]

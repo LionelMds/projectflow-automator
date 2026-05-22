@@ -15,6 +15,7 @@ def test_fill_fiche_prefers_fiche_candidate_and_renames_to_standard(tmp_path: Pa
     workbook = Workbook()
     path = project_dir / "modele fiche.xlsx"
     workbook.save(path)
+    workbook.close()
     project = ProjectInput(
         number=parse_project_number("2026-4995"),
         designation="Escalier",
@@ -37,6 +38,7 @@ def test_fill_fiche_prefers_fiche_candidate_and_renames_to_standard(tmp_path: Pa
     workbook = load_workbook(fiche_path)
     assert workbook.active["B9"].value.date() == date(2026, 5, 6)
     assert workbook.active["B9"].number_format == "DD.MM.YYYY"
+    workbook.close()
 
 
 def test_fill_fiche_keeps_existing_creation_date(tmp_path: Path) -> None:
@@ -44,12 +46,14 @@ def test_fill_fiche_keeps_existing_creation_date(tmp_path: Path) -> None:
     workbook = Workbook()
     workbook.active["B9"] = date(2025, 1, 2)
     workbook.save(path)
+    workbook.close()
     project = ProjectInput(number=parse_project_number("2026-4995"))
 
     fiche_path = FicheService(today=lambda: date(2026, 5, 6)).fill_fiche(tmp_path, project)
 
     loaded = load_workbook(fiche_path)
     assert loaded.active["B9"].value.date() == date(2025, 1, 2)
+    loaded.close()
 
 
 def test_read_fiche_strips_prefixes_case_insensitively(tmp_path: Path) -> None:
@@ -63,6 +67,7 @@ def test_read_fiche_strips_prefixes_case_insensitively(tmp_path: Path) -> None:
     worksheet["D6"] = "Localisation : Zurich"
     worksheet["C6"] = "LM"
     workbook.save(path)
+    workbook.close()
 
     loaded = FicheService().read_fiche(path)
 
@@ -72,7 +77,9 @@ def test_read_fiche_strips_prefixes_case_insensitively(tmp_path: Path) -> None:
 
 def test_standardize_fiche_name_renames_selected_file(tmp_path: Path) -> None:
     source = tmp_path / "ancienne fiche.xlsx"
-    Workbook().save(source)
+    workbook = Workbook()
+    workbook.save(source)
+    workbook.close()
 
     renamed = FicheService().standardize_fiche_name(
         tmp_path,
@@ -83,3 +90,32 @@ def test_standardize_fiche_name_renames_selected_file(tmp_path: Path) -> None:
     assert renamed == tmp_path / "2026-4995 - Fiche dossier clients.xlsx"
     assert renamed.exists()
     assert not source.exists()
+
+
+def test_fill_fiche_releases_file_handle_for_move(tmp_path: Path) -> None:
+    source = tmp_path / "modele fiche.xlsx"
+    workbook = Workbook()
+    workbook.save(source)
+    workbook.close()
+    project = ProjectInput(number=parse_project_number("2026-4995"))
+
+    fiche_path = FicheService().fill_fiche(tmp_path, project)
+    moved_path = tmp_path / "fiche deplacee.xlsx"
+
+    fiche_path.rename(moved_path)
+
+    assert moved_path.exists()
+
+
+def test_read_fiche_releases_file_handle_for_move(tmp_path: Path) -> None:
+    fiche_path = tmp_path / "fiche.xlsx"
+    workbook = Workbook()
+    workbook.save(fiche_path)
+    workbook.close()
+
+    FicheService().read_fiche(fiche_path)
+    moved_path = tmp_path / "fiche deplacee.xlsx"
+
+    fiche_path.rename(moved_path)
+
+    assert moved_path.exists()
