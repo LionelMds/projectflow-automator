@@ -108,6 +108,12 @@ class GraphPlannerClient:
                     email=email,
                 ),
             )
+        if members and all(not member.display_name and not member.email for member in members):
+            raise ConfigError(
+                "Microsoft Graph ne renvoie que les identifiants des membres Planner. "
+                "Ajoutez l'autorisation deleguee User.ReadBasic.All a ProjectFlow, "
+                "accordez le consentement administrateur, puis reconnectez le compte Microsoft.",
+            )
         return members
 
     async def current_user_id(self) -> str:

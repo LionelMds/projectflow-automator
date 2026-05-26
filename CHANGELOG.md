@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.29
+
+- Corrige l'affichage des membres Planner en ajoutant `User.ReadBasic.All`.
+- Affiche une erreur claire si Microsoft Graph ne renvoie que les identifiants techniques des membres.
+- Garde la confirmation de creation rapide ouverte apres `Ouvrir fiche` ou `Ouvrir repertoire`.
+- Corrige le clic simple sur l'icone macOS pour ouvrir uniquement le formulaire rapide, sans afficher le menu.
+
 ## 0.1.28
 
 - Ajoute la selection Planner directement dans le formulaire principal et le menu rapide.

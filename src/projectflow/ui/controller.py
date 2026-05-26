@@ -27,6 +27,7 @@ from projectflow.platform.filemanager import open_file_default_app, open_path
 from projectflow.services import ServiceContainer
 from projectflow.ui.creation_tab import CreationFormData
 from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
+from projectflow.ui.dialogs.quick_confirmation import QuickCreationConfirmationDialog
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow
@@ -559,29 +560,24 @@ class ProjectFlowController:
             if result.project_dir_created
             else "Le projet existant a ete reapplique avec succes."
         )
-        box = QMessageBox(self._window if self._window.isVisible() else None)
-        box.setWindowTitle(title)
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setText(message)
-        box.setInformativeText(f"Dossier:\n{result.project_dir}")
-        open_fiche_button = box.addButton("Ouvrir fiche", QMessageBox.ButtonRole.ActionRole)
-        open_repertoire_button = box.addButton(
-            "Ouvrir repertoire",
-            QMessageBox.ButtonRole.ActionRole,
+        dialog = QuickCreationConfirmationDialog(
+            title=title,
+            message=message,
+            project_dir=result.project_dir,
+            parent=self._window if self._window.isVisible() else None,
         )
-        edit_button = box.addButton("Modifier", QMessageBox.ButtonRole.ActionRole)
-        next_button = box.addButton("Suivant", QMessageBox.ButtonRole.AcceptRole)
-        box.setDefaultButton(next_button)
-        box.exec()
+        dialog.open_fiche_requested.connect(
+            lambda: self._handle_quick_creation_action("open_fiche", result, data, project),
+        )
+        dialog.open_repertoire_requested.connect(
+            lambda: self._handle_quick_creation_action("open_repertoire", result, data, project),
+        )
+        dialog.exec()
 
-        clicked = box.clickedButton()
-        if clicked == open_fiche_button:
-            self._handle_quick_creation_action("open_fiche", result, data, project)
-        elif clicked == open_repertoire_button:
-            self._handle_quick_creation_action("open_repertoire", result, data, project)
-        elif clicked == edit_button:
+        selected_action = dialog.selected_action()
+        if selected_action == "edit":
             self._handle_quick_creation_action("edit", result, data, project)
-        elif clicked == next_button:
+        elif selected_action == "next":
             self._handle_quick_creation_action("next", result, data, project)
 
     def _handle_quick_creation_action(

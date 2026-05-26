@@ -11,7 +11,12 @@ def test_graph_scopes_do_not_include_msal_reserved_scopes() -> None:
     assert set(GRAPH_SCOPES).isdisjoint({"offline_access", "profile", "openid"})
     assert set(PLANNER_GRAPH_SCOPES).isdisjoint({"offline_access", "profile", "openid"})
     assert GRAPH_SCOPES == ("Files.ReadWrite.All",)
-    assert PLANNER_GRAPH_SCOPES == ("Tasks.ReadWrite", "User.Read", "GroupMember.Read.All")
+    assert PLANNER_GRAPH_SCOPES == (
+        "Tasks.ReadWrite",
+        "User.Read",
+        "User.ReadBasic.All",
+        "GroupMember.Read.All",
+    )
 
 
 def test_msal_provider_rejects_placeholder_client_id() -> None:

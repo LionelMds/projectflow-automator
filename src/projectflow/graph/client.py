@@ -125,8 +125,8 @@ def _graph_error_message(response: httpx.Response) -> str:
         return (
             "Microsoft Graph a refuse l'operation (403): acces refuse. "
             "Verifiez que ProjectFlow dispose des autorisations Microsoft necessaires "
-            "(Files.ReadWrite.All, Tasks.ReadWrite, User.Read, GroupMember.Read.All selon "
-            "la fonction) et que "
+            "(Files.ReadWrite.All, Tasks.ReadWrite, User.Read, User.ReadBasic.All, "
+            "GroupMember.Read.All selon la fonction) et que "
             "l'utilisateur connecte a acces a la ressource."
         )
     try:

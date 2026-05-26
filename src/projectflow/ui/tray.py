@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtGui import QAction, QCursor, QIcon
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 
@@ -15,8 +15,8 @@ class ProjectFlowTray(QObject):
     def __init__(self, *, icon: QIcon, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._tray = QSystemTrayIcon(icon, self)
+        self._menu = self._build_menu()
         self._tray.setToolTip("ProjectFlow Automator")
-        self._tray.setContextMenu(self._build_menu())
         self._tray.activated.connect(self._on_activated)
 
     @property
@@ -60,3 +60,9 @@ class ProjectFlowTray(QObject):
             return
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show_requested.emit()
+            return
+        if reason == QSystemTrayIcon.ActivationReason.Context:
+            self._show_context_menu()
+
+    def _show_context_menu(self) -> None:
+        self._menu.popup(QCursor.pos())

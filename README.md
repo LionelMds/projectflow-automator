@@ -117,8 +117,8 @@ public par nature pour une application desktop, dispose d'une valeur embarquee p
 doit jamais etre accompagne d'un secret.
 
 La permission Microsoft deleguee attendue pour le repertoire chantier est `Files.ReadWrite.All`.
-Planner reste optionnel et demande separement `Tasks.ReadWrite`, `User.Read` et
-`GroupMember.Read.All` uniquement quand la fonction Planner est utilisee.
+Planner reste optionnel et demande separement `Tasks.ReadWrite`, `User.Read`,
+`User.ReadBasic.All` et `GroupMember.Read.All` uniquement quand la fonction Planner est utilisee.
 
 ## Mises a jour
 

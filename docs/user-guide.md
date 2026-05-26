@@ -92,6 +92,10 @@ ProjectFlow la reutilise, applique la colonne selectionnee dans le formulaire et
 membres choisis. L'echeance est desactivee par defaut pour chaque projet ; cocher `Echeance`
 permet de renseigner le nombre de jours. Les sous-projets ne creent pas de tache Planner.
 
+Si la selection des membres affiche uniquement des identifiants techniques ou refuse de charger
+les noms, l'administrateur Microsoft doit autoriser `User.ReadBasic.All` pour ProjectFlow, puis
+l'utilisateur doit se reconnecter a Microsoft depuis l'application.
+
 ## Creer un projet
 
 1. Saisir l'annee et l'ID projet, par exemple `2026` et `4995`.

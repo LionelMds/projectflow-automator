@@ -9,6 +9,7 @@ import pytest
 from projectflow.config import PlannerConfig
 from projectflow.core.models import PlannerTaskInput, ProjectInput
 from projectflow.core.numero import parse_project_number
+from projectflow.exceptions import ConfigError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient, planner_task_title
 
@@ -70,6 +71,27 @@ async def test_graph_planner_lists_plans_and_buckets() -> None:
     assert buckets[0].name == "A faire"
     assert members[0].label == "Lionel <lionel@example.test>"
     assert requests[1].url.path.endswith("/planner/plans/plan-id/buckets")
+
+
+@pytest.mark.asyncio
+async def test_graph_planner_refuses_member_ids_without_profile_permission() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/planner/plans/plan-id"):
+            return httpx.Response(
+                200,
+                json={"id": "plan-id", "container": {"type": "group", "containerId": "group-id"}},
+            )
+        if request.url.path.endswith("/groups/group-id/members/microsoft.graph.user"):
+            return httpx.Response(200, json={"value": [{"id": "member-id"}]})
+        return httpx.Response(404, json={"error": {"message": "missing"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphPlannerClient(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+        )
+
+        with pytest.raises(ConfigError, match=r"User\.ReadBasic\.All"):
+            await client.list_members(plan_id="plan-id")
 
 
 @pytest.mark.asyncio

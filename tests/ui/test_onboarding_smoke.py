@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QSizePolicy, QSystemTrayIcon
 
 from projectflow.config import AppConfig
 from projectflow.ui.creation_tab import CreationFormData, CreationTab
+from projectflow.ui.dialogs.quick_confirmation import QuickCreationConfirmationDialog
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.onboarding.wizard import OnboardingWizard
@@ -224,6 +225,41 @@ def test_quick_create_dialog_emits_navigation_signals(qtbot) -> None:  # type: i
     assert emitted == ["classic", "next"]
 
 
+def test_quick_confirmation_keeps_dialog_open_for_file_actions(qtbot) -> None:  # type: ignore[no-untyped-def]
+    dialog = QuickCreationConfirmationDialog(
+        title="Projet cree",
+        message="Le projet a ete cree avec succes.",
+        project_dir="C:/tmp/2026-4995",
+    )
+    qtbot.addWidget(dialog)
+    emitted: list[str] = []
+    dialog.open_fiche_requested.connect(lambda: emitted.append("fiche"))
+    dialog.open_repertoire_requested.connect(lambda: emitted.append("repertoire"))
+    dialog.show()
+
+    dialog.open_fiche_button.click()
+    dialog.open_repertoire_button.click()
+
+    assert dialog.isVisible()
+    assert emitted == ["fiche", "repertoire"]
+    assert dialog.selected_action() is None
+
+
+def test_quick_confirmation_closes_for_next_or_edit(qtbot) -> None:  # type: ignore[no-untyped-def]
+    dialog = QuickCreationConfirmationDialog(
+        title="Projet cree",
+        message="Le projet a ete cree avec succes.",
+        project_dir="C:/tmp/2026-4995",
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.next_button.click()
+
+    assert dialog.selected_action() == "next"
+    assert not dialog.isVisible()
+
+
 def test_tray_single_click_opens_quick_create() -> None:
     tray = ProjectFlowTray(icon=QIcon())
     emitted: list[str] = []
@@ -234,6 +270,20 @@ def test_tray_single_click_opens_quick_create() -> None:
     tray._on_activated(QSystemTrayIcon.ActivationReason.DoubleClick)  # noqa: SLF001
 
     assert emitted == ["quick", "show"]
+
+
+def test_tray_context_click_only_opens_menu(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    tray = ProjectFlowTray(icon=QIcon())
+    emitted: list[str] = []
+    menus: list[bool] = []
+    tray.quick_create_requested.connect(lambda: emitted.append("quick"))
+    tray.show_requested.connect(lambda: emitted.append("show"))
+    monkeypatch.setattr(tray, "_show_context_menu", lambda: menus.append(True))
+
+    tray._on_activated(QSystemTrayIcon.ActivationReason.Context)  # noqa: SLF001
+
+    assert emitted == []
+    assert menus == [True]
 
 
 def test_main_window_close_hides_when_background_mode_enabled(qtbot) -> None:  # type: ignore[no-untyped-def]
