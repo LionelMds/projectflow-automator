@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.27
+
+- Republie les corrections de `0.1.26` apres un echec GitHub Actions du job de publication.
+- Garde la creation depuis le menu rapide dans le flux rapide, sans ouvrir la fenetre principale.
+- Ajoute une confirmation rapide avec `Ouvrir fiche`, `Ouvrir repertoire`, `Modifier` et `Suivant`.
+- Demande `Group.Read.All` pour Planner et charge les colonnes via l'endpoint officiel du plan.
+
 ## 0.1.26
 
 - Republie les corrections de `0.1.25` apres un echec du runner GitHub macOS au checkout.
