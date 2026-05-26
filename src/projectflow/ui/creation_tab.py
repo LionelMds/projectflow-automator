@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QResizeEvent
@@ -18,6 +18,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from projectflow.config import PlannerConfig
+from projectflow.ui.widgets.planner import PlannerSelectionWidget, PlannerTaskFormData
+
 
 @dataclass(frozen=True, slots=True)
 class CreationFormData:
@@ -29,6 +32,7 @@ class CreationFormData:
     contact: str
     localisation: str
     gere_par: str
+    planner: PlannerTaskFormData = field(default_factory=PlannerTaskFormData)
 
 
 class CreationTab(QWidget):
@@ -39,6 +43,7 @@ class CreationTab(QWidget):
     open_repertoire_requested = Signal()
     next_available_requested = Signal()
     settings_requested = Signal()
+    planner_options_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -54,6 +59,7 @@ class CreationTab(QWidget):
             contact=self.contact_edit.text().strip(),
             localisation=self.localisation_edit.text().strip(),
             gere_par=self.gere_par_edit.text().strip(),
+            planner=self.planner_widget.data(),
         )
 
     def set_project_identity(self, *, year: str, project_id: str, subproject_id: str = "") -> None:
@@ -77,6 +83,7 @@ class CreationTab(QWidget):
         self.contact_edit.setText(data.contact)
         self.localisation_edit.setText(data.localisation)
         self.gere_par_edit.setText(data.gere_par)
+        self.planner_widget.set_data(data.planner)
 
     def append_log(self, message: str) -> None:
         self.logs.append(message)
@@ -92,6 +99,15 @@ class CreationTab(QWidget):
             self.gere_par_edit,
         ]:
             edit.clear()
+        self.planner_widget.reset_fields()
+
+    def apply_planner_config(self, planner: PlannerConfig) -> None:
+        self.planner_widget.set_config_defaults(
+            enabled=planner.enabled,
+            bucket_id=planner.bucket_id,
+            bucket_name=planner.bucket_name,
+            due_days=planner.due_days,
+        )
 
     def _build_ui(self) -> None:
         self.setMinimumWidth(760)
@@ -166,6 +182,10 @@ class CreationTab(QWidget):
         client_layout.addRow("Localisation", self.localisation_edit)
         client_layout.addRow("Gere par", self.gere_par_edit)
         root_layout.addWidget(client_frame)
+
+        self.planner_widget = PlannerSelectionWidget()
+        self.planner_widget.options_requested.connect(self.planner_options_requested.emit)
+        root_layout.addWidget(self.planner_widget)
         root_layout.addStretch(1)
 
         self.logs = QTextEdit()

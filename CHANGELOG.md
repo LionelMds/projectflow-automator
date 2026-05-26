@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.28
+
+- Ajoute la selection Planner directement dans le formulaire principal et le menu rapide.
+- Permet de choisir la colonne Planner, un ou plusieurs membres assignes et une echeance par projet.
+- Garde l'echeance Planner desactivee par defaut pour chaque nouvelle creation.
+- Met a jour les taches Planner existantes sans doublon en appliquant la colonne et les assignations choisies.
+- Remplace le droit Planner `Group.Read.All` par `GroupMember.Read.All` pour lister les membres du plan.
+
 ## 0.1.27
 
 - Republie les corrections de `0.1.26` apres un echec GitHub Actions du job de publication.

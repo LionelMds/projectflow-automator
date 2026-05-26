@@ -19,11 +19,13 @@ from PySide6.QtWidgets import (
 )
 
 from projectflow.ui.creation_tab import CreationFormData
+from projectflow.ui.widgets.planner import PlannerSelectionWidget
 
 
 class QuickCreateDialog(QDialog):
     classic_requested = Signal()
     next_available_requested = Signal()
+    planner_options_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -41,6 +43,7 @@ class QuickCreateDialog(QDialog):
             contact=self.contact_edit.text().strip(),
             localisation=self.localisation_edit.text().strip(),
             gere_par=self.gere_par_edit.text().strip(),
+            planner=self.planner_widget.data(),
         )
 
     def set_data(self, data: CreationFormData) -> None:
@@ -57,6 +60,7 @@ class QuickCreateDialog(QDialog):
         self.contact_edit.setText(data.contact)
         self.localisation_edit.setText(data.localisation)
         self.gere_par_edit.setText(data.gere_par)
+        self.planner_widget.set_data(data.planner)
 
     def set_project_identity(
         self,
@@ -74,6 +78,21 @@ class QuickCreateDialog(QDialog):
         self.project_id_edit.setText(project_id)
         self.subproject_edit.setText(subproject_id)
 
+    def apply_planner_config(
+        self,
+        *,
+        enabled: bool,
+        bucket_id: str,
+        bucket_name: str,
+        due_days: int,
+    ) -> None:
+        self.planner_widget.set_config_defaults(
+            enabled=enabled,
+            bucket_id=bucket_id,
+            bucket_name=bucket_name,
+            due_days=due_days,
+        )
+
     def show_and_raise(self) -> None:
         self.show()
         if self.isMinimized():
@@ -82,7 +101,7 @@ class QuickCreateDialog(QDialog):
         self.activateWindow()
 
     def _build_ui(self) -> None:
-        self.resize(460, 280)
+        self.resize(560, 430)
         layout = QVBoxLayout(self)
 
         header = QHBoxLayout()
@@ -126,6 +145,10 @@ class QuickCreateDialog(QDialog):
         form.addRow("Localisation", self.localisation_edit)
         form.addRow("Gere par", self.gere_par_edit)
         layout.addLayout(form)
+
+        self.planner_widget = PlannerSelectionWidget()
+        self.planner_widget.options_requested.connect(self.planner_options_requested.emit)
+        layout.addWidget(self.planner_widget)
 
         buttons = QDialogButtonBox()
         create_button = QPushButton("Creer")

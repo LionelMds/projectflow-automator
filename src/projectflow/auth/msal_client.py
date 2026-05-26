@@ -11,7 +11,7 @@ from projectflow.exceptions import AuthError
 
 AUTHORITY = "https://login.microsoftonline.com/common"
 GRAPH_SCOPES = ("Files.ReadWrite.All",)
-PLANNER_GRAPH_SCOPES = ("Tasks.ReadWrite", "User.Read", "Group.Read.All")
+PLANNER_GRAPH_SCOPES = ("Tasks.ReadWrite", "User.Read", "GroupMember.Read.All")
 CLIENT_ID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",

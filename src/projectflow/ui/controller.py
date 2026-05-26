@@ -13,13 +13,16 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
+from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.config import AppConfig
 from projectflow.core.fiche_service import FicheService, standard_fiche_path
-from projectflow.core.models import ProjectCreationResult, ProjectInput
+from projectflow.core.models import PlannerTaskInput, ProjectCreationResult, ProjectInput
 from projectflow.core.numero import format_project_number, parse_project_number, project_folder_name
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireService
 from projectflow.exceptions import ProjectFlowError
+from projectflow.graph.client import GraphClient
+from projectflow.graph.planner import GraphPlannerClient
 from projectflow.platform.filemanager import open_file_default_app, open_path
 from projectflow.services import ServiceContainer
 from projectflow.ui.creation_tab import CreationFormData
@@ -27,6 +30,11 @@ from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow
+from projectflow.ui.widgets.planner import (
+    PlannerBucketOption,
+    PlannerMemberOption,
+    PlannerSelectionWidget,
+)
 from projectflow.updates import (
     GitHubReleaseChecker,
     UpdateDownloader,
@@ -65,6 +73,8 @@ class ProjectFlowController:
         self._save_config = save_config
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._quick_dialog: QuickCreateDialog | None = None
+        self._planner_bucket_options: list[PlannerBucketOption] = []
+        self._planner_member_options: list[PlannerMemberOption] = []
         self._connect()
 
     def _connect(self) -> None:
@@ -75,6 +85,9 @@ class ProjectFlowController:
         tab.open_fiche_requested.connect(self.open_fiche)
         tab.open_repertoire_requested.connect(self.open_repertoire)
         tab.next_available_requested.connect(lambda: asyncio.create_task(self.next_available()))
+        tab.planner_options_requested.connect(
+            lambda: self._schedule_task(self._load_planner_options(tab.planner_widget)),
+        )
         self._window.settings_requested.connect(self.open_settings)
         self._window.update_check_requested.connect(
             lambda: asyncio.create_task(self.check_updates()),
@@ -91,10 +104,19 @@ class ProjectFlowController:
             return
         dialog = QuickCreateDialog(parent=self._window)
         self._quick_dialog = dialog
+        dialog.apply_planner_config(
+            enabled=self._config.planner.enabled,
+            bucket_id=self._config.planner.bucket_id,
+            bucket_name=self._config.planner.bucket_name,
+            due_days=self._config.planner.due_days,
+        )
         dialog.set_data(self._empty_creation_data() if reset else self._window.creation_tab.data())
         dialog.classic_requested.connect(lambda: self._show_classic_from_quick(dialog))
         dialog.next_available_requested.connect(
             lambda: self._schedule_task(self._quick_next_available(dialog)),
+        )
+        dialog.planner_options_requested.connect(
+            lambda: self._schedule_task(self._load_planner_options(dialog.planner_widget)),
         )
         try:
             result = dialog.exec()
@@ -130,6 +152,35 @@ class ProjectFlowController:
         )
         self._save_config_if_available()
         self._log(f"+ Numero disponible: {result.number}")
+
+    async def _load_planner_options(self, target: PlannerSelectionWidget) -> None:
+        if not self._config.planner.enabled:
+            self._error("Planner n'est pas active dans les parametres.")
+            return
+        plan_id = self._config.planner.target_plan_id
+        if not plan_id:
+            self._error("Selectionnez d'abord un plan Planner dans les parametres.")
+            return
+        try:
+            client = _planner_client()
+            buckets, members = await asyncio.gather(
+                client.list_buckets(plan_id=plan_id),
+                client.list_members(plan_id=plan_id),
+            )
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return
+        self._planner_bucket_options = [
+            PlannerBucketOption(id=bucket.id, name=bucket.name) for bucket in buckets
+        ]
+        self._planner_member_options = [
+            PlannerMemberOption(id=member.id, label=member.label) for member in members
+        ]
+        target.set_options(
+            buckets=self._planner_bucket_options,
+            members=self._planner_member_options,
+        )
+        self._log("+ Options Planner chargees")
 
     async def create_project(self) -> None:
         try:
@@ -343,6 +394,12 @@ class ProjectFlowController:
             contact=data.contact,
             localisation=data.localisation,
             gere_par=data.gere_par,
+            planner=PlannerTaskInput(
+                enabled=data.planner.enabled and self._config.planner.enabled,
+                bucket_id=data.planner.bucket_id,
+                assignee_ids=data.planner.assignee_ids,
+                due_days=data.planner.due_days if data.planner.due_enabled else None,
+            ),
         )
 
     def _empty_creation_data(self) -> CreationFormData:
@@ -605,3 +662,12 @@ def _truncate_release_notes(notes: str, *, limit: int = 1200) -> str:
     if len(notes) <= limit:
         return notes
     return f"{notes[:limit].rstrip()}\n..."
+
+
+def _planner_client() -> GraphPlannerClient:
+    settings = ApplicationSettings.load()
+    token_provider = MsalAccessTokenProvider(
+        client_id=settings.microsoft_client_id,
+        scopes=PLANNER_GRAPH_SCOPES,
+    )
+    return GraphPlannerClient(graph=GraphClient(token_provider=token_provider))

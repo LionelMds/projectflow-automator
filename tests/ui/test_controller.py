@@ -16,6 +16,7 @@ from projectflow.ui.controller import ProjectFlowController, _update_prompt_text
 from projectflow.ui.creation_tab import CreationFormData
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.main_window import MainWindow
+from projectflow.ui.widgets.planner import PlannerTaskFormData
 
 
 class FakeProjectService:
@@ -125,6 +126,48 @@ async def test_controller_create_project_reads_form(
     assert "Projet cree" in window.creation_tab.logs.toPlainText()
     assert project_creation_post_actions["opened"] == [Path("C:/tmp/2026-4995")]
     assert project_creation_post_actions["infos"][0][0] == "Projet cree"
+
+
+@pytest.mark.asyncio
+async def test_controller_create_project_reads_planner_form_options(
+    qtbot: Any,
+    tmp_path: Path,
+    project_creation_post_actions: dict[str, list[Any]],
+) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.planner.enabled = True
+    config.planner.bucket_id = "default-bucket"
+    window = MainWindow(config)
+    qtbot.addWidget(window)
+    services = FakeServices()
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    window.creation_tab.set_project_identity(year="2026", project_id="4995")
+    window.creation_tab.designation_edit.setText("Escalier")
+    window.creation_tab.planner_widget.set_data(
+        PlannerTaskFormData(
+            enabled=True,
+            bucket_id="target-bucket",
+            bucket_name="A traiter",
+            assignee_ids=("user-a", "user-b"),
+            assignee_labels=("A", "B"),
+            due_enabled=True,
+            due_days=10,
+        ),
+    )
+
+    await controller.create_project()
+
+    project = services.project_service.created[0][0]
+    assert project.planner.enabled is True
+    assert project.planner.bucket_id == "target-bucket"
+    assert project.planner.assignee_ids == ("user-a", "user-b")
+    assert project.planner.due_days == 10
+    assert project_creation_post_actions["opened"] == [Path("C:/tmp/2026-4995")]
 
 
 @pytest.mark.asyncio

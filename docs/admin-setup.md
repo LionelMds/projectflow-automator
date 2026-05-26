@@ -30,7 +30,7 @@ Permissions deleguees optionnelles pour Microsoft Planner :
 
 - `Tasks.ReadWrite`
 - `User.Read`
-- `Group.Read.All`
+- `GroupMember.Read.All`
 
 ProjectFlow ne demande pas explicitement les scopes reserves (`offline_access`, `profile`,
 `openid`) : MSAL/Microsoft les gere automatiquement quand ils sont necessaires.
@@ -88,4 +88,4 @@ puis tester l'acces.
 
 ProjectFlow cree une seule tache par numero de projet principal. Si une tache dont le titre
 commence deja par le numero existe dans le plan, ProjectFlow la met a jour au lieu d'en creer une
-nouvelle : titre, colonne cible et assignation a l'utilisateur connecte.
+nouvelle : titre, colonne cible et assignations choisies par l'utilisateur.

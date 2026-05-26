@@ -84,20 +84,23 @@ Dans `Parametres`, section `Microsoft Planner` :
 1. Cliquer sur `Detecter` pour lister les plans accessibles au compte Microsoft connecte.
 2. Selectionner le plan qui doit recevoir les taches ProjectFlow.
 3. Cliquer sur `Detecter colonnes` et choisir la colonne cible.
-4. Regler l'echeance en jours, puis cliquer sur `Tester`.
+4. Regler le nombre de jours d'echeance par defaut, puis cliquer sur `Tester`.
 
 Lors de la creation d'un projet principal, ProjectFlow cree une tache nommee
 `2026-4995 - Designation`. Si une tache existe deja pour ce numero dans le plan choisi,
-ProjectFlow la reutilise, l'assigne a l'utilisateur connecte et la deplace dans la colonne
-selectionnee. Les sous-projets ne creent pas de tache Planner.
+ProjectFlow la reutilise, applique la colonne selectionnee dans le formulaire et ajoute les
+membres choisis. L'echeance est desactivee par defaut pour chaque projet ; cocher `Echeance`
+permet de renseigner le nombre de jours. Les sous-projets ne creent pas de tache Planner.
 
 ## Creer un projet
 
 1. Saisir l'annee et l'ID projet, par exemple `2026` et `4995`.
 2. Renseigner la designation et les informations client disponibles.
 3. Activer Outlook dans les parametres si l'arborescence mail doit etre creee.
-4. Activer Planner dans les parametres si une tache doit etre creee.
-5. Cliquer sur `Creer`.
+4. Configurer Planner dans les parametres si une tache peut etre creee.
+5. Dans le formulaire, cocher `Creer une tache Planner`, choisir la colonne, les membres et
+   l'echeance si necessaire.
+6. Cliquer sur `Creer`.
 
 ProjectFlow cree le dossier projet, copie le dossier de reference sans ecraser, remplit la
 fiche client, inscrit la date de creation en `B9`, et met a jour le repertoire chantier. Si ce

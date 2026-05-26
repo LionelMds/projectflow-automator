@@ -9,6 +9,7 @@ from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.onboarding.wizard import OnboardingWizard
 from projectflow.ui.tray import ProjectFlowTray
+from projectflow.ui.widgets.planner import PlannerTaskFormData
 
 
 def test_onboarding_wizard_smoke(qtbot) -> None:  # type: ignore[no-untyped-def]
@@ -102,6 +103,40 @@ def test_creation_tab_can_apply_quick_form_data(qtbot) -> None:  # type: ignore[
     assert tab.gere_par_edit.text() == "LM"
 
 
+def test_creation_tab_round_trips_planner_options(qtbot) -> None:  # type: ignore[no-untyped-def]
+    tab = CreationTab()
+    qtbot.addWidget(tab)
+    config = AppConfig()
+    config.planner.enabled = True
+    config.planner.bucket_id = "bucket-id"
+    config.planner.bucket_name = "A faire"
+    tab.apply_planner_config(config.planner)
+
+    data = CreationFormData(
+        year="2027",
+        project_id="6001",
+        subproject_id="",
+        designation="Escalier",
+        societe="Balz",
+        contact="Lionel",
+        localisation="Geneve",
+        gere_par="LM",
+        planner=PlannerTaskFormData(
+            enabled=True,
+            bucket_id="bucket-id",
+            bucket_name="A faire",
+            assignee_ids=("user-id",),
+            assignee_labels=("Lionel",),
+            due_enabled=True,
+            due_days=5,
+        ),
+    )
+
+    tab.set_form_data(data)
+
+    assert tab.data() == data
+
+
 def test_quick_create_dialog_round_trips_form_data(qtbot) -> None:  # type: ignore[no-untyped-def]
     dialog = QuickCreateDialog()
     qtbot.addWidget(dialog)
@@ -129,6 +164,40 @@ def test_quick_create_dialog_round_trips_form_data(qtbot) -> None:  # type: igno
         localisation="Lausanne",
         gere_par="AB",
     )
+
+
+def test_quick_create_dialog_round_trips_planner_options(qtbot) -> None:  # type: ignore[no-untyped-def]
+    dialog = QuickCreateDialog()
+    qtbot.addWidget(dialog)
+    dialog.apply_planner_config(
+        enabled=True,
+        bucket_id="bucket-id",
+        bucket_name="A faire",
+        due_days=7,
+    )
+    data = CreationFormData(
+        year="2028",
+        project_id="7001",
+        subproject_id="",
+        designation="Garde-corps",
+        societe="Client",
+        contact="Contact",
+        localisation="Lausanne",
+        gere_par="AB",
+        planner=PlannerTaskFormData(
+            enabled=True,
+            bucket_id="bucket-id",
+            bucket_name="A faire",
+            assignee_ids=("user-id",),
+            assignee_labels=("Lionel",),
+            due_enabled=True,
+            due_days=12,
+        ),
+    )
+
+    dialog.set_data(data)
+
+    assert dialog.data() == data
 
 
 def test_quick_create_dialog_updates_project_identity(qtbot) -> None:  # type: ignore[no-untyped-def]

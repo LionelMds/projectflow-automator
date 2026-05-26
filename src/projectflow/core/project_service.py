@@ -59,7 +59,7 @@ class ProjectService:
 
         root = self._required_path(self._config.paths.racine_projets, "racine projets")
         outlook = await self._validated_outlook()
-        planner = self._validated_planner()
+        planner = self._validated_planner() if project.planner.enabled else None
         project_dir = root / str(project.number.year) / project_folder_name(project.number)
         project_dir_created = not project_dir.exists()
         project_dir.mkdir(parents=True, exist_ok=True)

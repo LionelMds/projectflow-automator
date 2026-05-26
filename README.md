@@ -117,8 +117,8 @@ public par nature pour une application desktop, dispose d'une valeur embarquee p
 doit jamais etre accompagne d'un secret.
 
 La permission Microsoft deleguee attendue pour le repertoire chantier est `Files.ReadWrite.All`.
-Planner reste optionnel et demande separement `Tasks.ReadWrite` et `User.Read` uniquement quand
-la fonction Planner est utilisee.
+Planner reste optionnel et demande separement `Tasks.ReadWrite`, `User.Read` et
+`GroupMember.Read.All` uniquement quand la fonction Planner est utilisee.
 
 ## Mises a jour
 
@@ -181,7 +181,8 @@ Le MVP couvre :
 - date de creation inscrite dans `B9` de la fiche,
 - repertoire chantier via fichier Excel local hors OneDrive, ou via Microsoft Graph Excel si le
   fichier est dans OneDrive,
-- tache Microsoft Planner optionnelle via Graph, sans doublon par numero de projet,
+- tache Microsoft Planner optionnelle via Graph, sans doublon par numero de projet, avec choix
+  de colonne, de membres assignes et d'echeance par projet,
 - blocage de l'ecriture locale dans un fichier OneDrive synchronise pour eviter les copies non
   fusionnees,
 - conservation de la colonne F du repertoire, le champ `Gere par` restant limite a la fiche,
@@ -191,7 +192,7 @@ Le MVP couvre :
 - icone de zone de notification Windows / barre des menus macOS avec mini-formulaire de creation,
 - Outlook local Windows via le profil Outlook classique, desactive par defaut,
 - Mail macOS via l'application native Mail, desactive par defaut,
-- Planner configurable par plan/bucket, desactive par defaut,
+- Planner configurable par plan/bucket, desactive par defaut dans chaque nouveau formulaire,
 - assistant de premiere configuration base uniquement sur les chemins.
 
 Outlook local utilise le profil Outlook classique du poste Windows : `Parametres` -> `Outlook`

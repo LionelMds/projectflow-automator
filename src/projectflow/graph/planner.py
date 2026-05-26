@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -24,12 +25,26 @@ class PlannerBucket:
 
 
 @dataclass(frozen=True, slots=True)
+class PlannerMember:
+    id: str
+    display_name: str
+    email: str
+
+    @property
+    def label(self) -> str:
+        if self.display_name and self.email:
+            return f"{self.display_name} <{self.email}>"
+        return self.display_name or self.email or self.id
+
+
+@dataclass(frozen=True, slots=True)
 class PlannerTask:
     id: str
     title: str
     bucket_id: str
     etag: str
     assignments: frozenset[str]
+    due_date_time: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +80,36 @@ class GraphPlannerClient:
             and (task_plan_id := _string(payload.get("planId")))
         ]
 
+    async def list_members(self, *, plan_id: str) -> list[PlannerMember]:
+        normalized_plan_id = plan_id.strip()
+        if not normalized_plan_id:
+            raise ConfigError("Plan Planner non configure.")
+        plan = await self._graph.get(
+            f"/planner/plans/{normalized_plan_id}?$select=id,title,container,owner",
+        )
+        group_id = _planner_plan_group_id(plan)
+        if not group_id:
+            raise ConfigError("Impossible d'identifier le groupe Microsoft 365 du plan Planner.")
+        payloads = await self._collect_pages(
+            f"/groups/{group_id}/members/microsoft.graph.user"
+            "?$select=id,displayName,mail,userPrincipalName",
+        )
+        members: list[PlannerMember] = []
+        for payload in payloads:
+            member_id = _string(payload.get("id"))
+            if not member_id:
+                continue
+            display_name = _string(payload.get("displayName"))
+            email = _string(payload.get("mail")) or _string(payload.get("userPrincipalName"))
+            members.append(
+                PlannerMember(
+                    id=member_id,
+                    display_name=display_name,
+                    email=email,
+                ),
+            )
+        return members
+
     async def current_user_id(self) -> str:
         if self._current_user_id:
             return self._current_user_id
@@ -81,11 +126,14 @@ class GraphPlannerClient:
         config: PlannerConfig,
     ) -> PlannerTaskResult:
         plan_id = config.target_plan_id
-        bucket_id = config.target_bucket_id
+        bucket_id = project.planner.bucket_id.strip() or config.target_bucket_id
         if not plan_id or not bucket_id:
             raise ConfigError("Planner actif mais plan ou bucket non configure.")
 
-        assignee_id = await self.current_user_id()
+        assignee_ids = tuple(user_id for user_id in project.planner.assignee_ids if user_id.strip())
+        if not assignee_ids:
+            assignee_ids = (await self.current_user_id(),)
+        due_date = _due_date(project.planner.due_days)
         title = planner_task_title(project)
         existing = await self._find_project_task(project, plan_id=plan_id)
         if existing is None:
@@ -93,8 +141,8 @@ class GraphPlannerClient:
                 plan_id=plan_id,
                 bucket_id=bucket_id,
                 title=title,
-                assignee_id=assignee_id,
-                due_days=config.due_days,
+                assignee_ids=assignee_ids,
+                due_date=due_date,
             )
             return PlannerTaskResult(task_id=task.id, created=True, updated=False)
 
@@ -103,8 +151,13 @@ class GraphPlannerClient:
             patch["title"] = title
         if existing.bucket_id != bucket_id:
             patch["bucketId"] = bucket_id
-        if assignee_id not in existing.assignments:
-            patch["assignments"] = _assignments_payload(assignee_id)
+        missing_assignees = [
+            assignee_id for assignee_id in assignee_ids if assignee_id not in existing.assignments
+        ]
+        if missing_assignees:
+            patch["assignments"] = _assignments_payload(missing_assignees)
+        if due_date and existing.due_date_time != due_date:
+            patch["dueDateTime"] = due_date
 
         if patch:
             await self._graph.patch(
@@ -145,6 +198,7 @@ class GraphPlannerClient:
                     bucket_id=bucket_id,
                     etag=etag,
                     assignments=frozenset(_assignment_ids(payload.get("assignments"))),
+                    due_date_time=_string(payload.get("dueDateTime")),
                 ),
             )
         return tasks
@@ -155,16 +209,15 @@ class GraphPlannerClient:
         plan_id: str,
         bucket_id: str,
         title: str,
-        assignee_id: str,
-        due_days: int,
+        assignee_ids: Sequence[str],
+        due_date: str,
     ) -> PlannerTask:
         body: dict[str, Any] = {
             "planId": plan_id,
             "bucketId": bucket_id,
             "title": title,
-            "assignments": _assignments_payload(assignee_id),
+            "assignments": _assignments_payload(assignee_ids),
         }
-        due_date = _due_date(due_days)
         if due_date:
             body["dueDateTime"] = due_date
         payload = await self._graph.post("/planner/tasks", json=body)
@@ -179,6 +232,7 @@ class GraphPlannerClient:
             bucket_id=_string(payload.get("bucketId")) or bucket_id,
             etag=etag,
             assignments=frozenset(_assignment_ids(payload.get("assignments"))),
+            due_date_time=_string(payload.get("dueDateTime")),
         )
 
     async def _collect_pages(self, path: str) -> list[dict[str, Any]]:
@@ -206,17 +260,18 @@ def _task_matches_project(title: str, project_number: str) -> bool:
     return normalized == project_number or normalized.startswith(f"{project_number} ")
 
 
-def _assignments_payload(user_id: str) -> dict[str, dict[str, str]]:
+def _assignments_payload(user_ids: Sequence[str]) -> dict[str, dict[str, str]]:
     return {
         user_id: {
             "@odata.type": "#microsoft.graph.plannerAssignment",
             "orderHint": " !",
-        },
+        }
+        for user_id in user_ids
     }
 
 
-def _due_date(due_days: int) -> str:
-    if due_days <= 0:
+def _due_date(due_days: int | None) -> str:
+    if due_days is None or due_days <= 0:
         return ""
     due = datetime.now(UTC) + timedelta(days=due_days)
     return due.replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -230,3 +285,13 @@ def _assignment_ids(value: object) -> list[str]:
 
 def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _planner_plan_group_id(payload: dict[str, Any]) -> str:
+    container = payload.get("container")
+    if isinstance(container, dict):
+        container_type = _string(container.get("type")).casefold()
+        container_id = _string(container.get("containerId"))
+        if container_id and (not container_type or container_type == "group"):
+            return container_id
+    return _string(payload.get("owner"))

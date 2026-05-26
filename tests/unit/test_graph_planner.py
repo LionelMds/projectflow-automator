@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from projectflow.config import PlannerConfig
-from projectflow.core.models import ProjectInput
+from projectflow.core.models import PlannerTaskInput, ProjectInput
 from projectflow.core.numero import parse_project_number
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient, planner_task_title
@@ -37,6 +37,24 @@ async def test_graph_planner_lists_plans_and_buckets() -> None:
                 200,
                 json={"value": [{"id": "bucket-id", "name": "A faire", "planId": "plan-id"}]},
             )
+        if request.url.path.endswith("/planner/plans/plan-id"):
+            return httpx.Response(
+                200,
+                json={"id": "plan-id", "container": {"type": "group", "containerId": "group-id"}},
+            )
+        if request.url.path.endswith("/groups/group-id/members/microsoft.graph.user"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": [
+                        {
+                            "id": "member-id",
+                            "displayName": "Lionel",
+                            "mail": "lionel@example.test",
+                        },
+                    ],
+                },
+            )
         return httpx.Response(404, json={"error": {"message": "missing"}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
@@ -46,9 +64,11 @@ async def test_graph_planner_lists_plans_and_buckets() -> None:
 
         plans = await client.list_plans()
         buckets = await client.list_buckets(plan_id="plan-id")
+        members = await client.list_members(plan_id="plan-id")
 
     assert plans[0].title == "Projets"
     assert buckets[0].name == "A faire"
+    assert members[0].label == "Lionel <lionel@example.test>"
     assert requests[1].url.path.endswith("/planner/plans/plan-id/buckets")
 
 
@@ -80,7 +100,15 @@ async def test_graph_planner_creates_task_when_missing() -> None:
             graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
         )
         result = await client.ensure_project_task(
-            ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier"),
+            ProjectInput(
+                number=parse_project_number("2026-4995"),
+                designation="Escalier",
+                planner=PlannerTaskInput(
+                    enabled=True,
+                    assignee_ids=("user-id", "second-id"),
+                    due_days=7,
+                ),
+            ),
             PlannerConfig(enabled=True, plan_id="plan-id", bucket_id="bucket-id", due_days=7),
         )
 
@@ -92,6 +120,7 @@ async def test_graph_planner_creates_task_when_missing() -> None:
     assert body["bucketId"] == "bucket-id"
     assert body["title"] == "2026-4995 - Escalier"
     assert "user-id" in body["assignments"]
+    assert "second-id" in body["assignments"]
     assert body["dueDateTime"].endswith("Z")
 
 

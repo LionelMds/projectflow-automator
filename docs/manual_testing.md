@@ -32,9 +32,12 @@
 - Outlook local peut etre active, teste, puis utiliser `Racine du compte` ou `Boite de reception`.
 - Sur macOS, Mail peut etre active, detecter les comptes Mail, puis creer l'arborescence projet.
 - Sur macOS signe, la premiere creation affiche la demande d'autorisation Apple Events pour Mail.
-- Planner peut etre active, detecter les plans, detecter les colonnes du plan choisi et tester
-  l'acces.
-- Creer un projet principal avec Planner actif cree une tache assignee a l'utilisateur connecte.
+- Planner peut etre active, detecter les plans, detecter les colonnes du plan choisi, detecter
+  les membres du plan et tester l'acces.
+- Creer un projet principal avec Planner coche dans le formulaire cree une tache dans la colonne
+  choisie, assignee aux membres selectionnes.
+- L'echeance Planner est desactivee par defaut ; la cocher ajoute une date selon le nombre de
+  jours saisi.
 - Relancer `Creer` sur le meme projet avec Planner actif ne cree pas de doublon : la tache
   existante est reassignee/deplacee si necessaire.
 - Un sous-projet ne cree pas de tache Planner.

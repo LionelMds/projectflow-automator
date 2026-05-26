@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         self.creation_tab.repertoire_label.setText(
             native_path_text(paths.repertoire_chantier.display_path) or "Non configure",
         )
+        self.creation_tab.apply_planner_config(self._config.planner)
 
     def set_background_mode_enabled(self, *, enabled: bool) -> None:
         self._background_mode_enabled = enabled

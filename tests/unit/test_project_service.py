@@ -7,7 +7,7 @@ from openpyxl import Workbook
 
 from projectflow.config import AppConfig, OutlookFolderConfig
 from projectflow.core.fiche_service import FicheService
-from projectflow.core.models import ProjectInput
+from projectflow.core.models import PlannerTaskInput, ProjectInput
 from projectflow.core.numero import parse_project_number
 from projectflow.core.project_service import (
     ProjectService,
@@ -86,7 +86,11 @@ def test_copy_reference_tree_does_not_overwrite_existing_files(tmp_path: Path) -
 
 
 def test_outlook_folder_templates_render_project_placeholders() -> None:
-    project = ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier")
+    project = ProjectInput(
+        number=parse_project_number("2026-4995"),
+        designation="Escalier",
+        planner=PlannerTaskInput(enabled=True),
+    )
     arborescence = [
         OutlookFolderConfig(
             name="Clients",
@@ -140,7 +144,11 @@ async def test_create_project_creates_folder_copies_reference_and_calls_integrat
         planner=planner,
         pin_path=pinned.append,
     )
-    project = ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier")
+    project = ProjectInput(
+        number=parse_project_number("2026-4995"),
+        designation="Escalier",
+        planner=PlannerTaskInput(enabled=True),
+    )
 
     result = await service.create_project(project)
 
@@ -186,7 +194,11 @@ async def test_recreate_existing_project_reapplies_integrations_without_updating
         planner=planner,
         pin_path=pinned.append,
     )
-    project = ProjectInput(number=parse_project_number("2026-4995"), designation="Nouveau texte")
+    project = ProjectInput(
+        number=parse_project_number("2026-4995"),
+        designation="Nouveau texte",
+        planner=PlannerTaskInput(enabled=True),
+    )
 
     result = await service.create_project(project, update_existing_info=False)
 
@@ -276,6 +288,31 @@ async def test_create_project_skips_planner_when_disabled(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_create_project_skips_planner_when_form_option_disabled(tmp_path: Path) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir(parents=True)
+    Workbook().save(config.paths.dossier_reference / "modele fiche.xlsx")
+    config.planner.enabled = True
+
+    planner = FakePlanner()
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=FakeRepertoireService(),  # type: ignore[arg-type]
+        planner=planner,
+    )
+
+    result = await service.create_project(
+        ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier"),
+    )
+
+    assert result.planner_task_id is None
+    assert planner.projects == []
+
+
+@pytest.mark.asyncio
 async def test_create_project_requires_planner_connector_when_enabled(tmp_path: Path) -> None:
     config = AppConfig()
     config.paths.racine_projets = tmp_path / "clients"
@@ -293,7 +330,11 @@ async def test_create_project_requires_planner_connector_when_enabled(tmp_path: 
 
     with pytest.raises(ConfigError, match="Planner"):
         await service.create_project(
-            ProjectInput(number=parse_project_number("2026-4995"), designation="Escalier"),
+            ProjectInput(
+                number=parse_project_number("2026-4995"),
+                designation="Escalier",
+                planner=PlannerTaskInput(enabled=True),
+            ),
         )
 
 
