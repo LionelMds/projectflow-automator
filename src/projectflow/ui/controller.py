@@ -239,6 +239,7 @@ class ProjectFlowController:
             return
         self._save_config_if_available()
         self._log(f"+ Projet mis a jour: {result.fiche_path or result.project_dir}")
+        self._log_creation_integrations(result)
 
     async def next_available(self) -> None:
         try:

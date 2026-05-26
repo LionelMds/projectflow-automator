@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.30
+
+- `Mettre a jour` reapplique maintenant les integrations selectionnees sans doublon.
+- Les sous-projets peuvent creer ou mettre a jour leur propre tache Planner, sans creation Outlook.
+- Outlook Windows reutilise et renomme le dossier projet existant si seule la designation change.
+
 ## 0.1.29
 
 - Corrige l'affichage des membres Planner en ajoutant `User.ReadBasic.All`.

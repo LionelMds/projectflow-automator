@@ -90,7 +90,8 @@ Lors de la creation d'un projet principal, ProjectFlow cree une tache nommee
 `2026-4995 - Designation`. Si une tache existe deja pour ce numero dans le plan choisi,
 ProjectFlow la reutilise, applique la colonne selectionnee dans le formulaire et ajoute les
 membres choisis. L'echeance est desactivee par defaut pour chaque projet ; cocher `Echeance`
-permet de renseigner le nombre de jours. Les sous-projets ne creent pas de tache Planner.
+permet de renseigner le nombre de jours. Les sous-projets peuvent creer leur propre tache Planner
+si la case Planner est activee dans le formulaire.
 
 Si la selection des membres affiche uniquement des identifiants techniques ou refuse de charger
 les noms, l'administrateur Microsoft doit autoriser `User.ReadBasic.All` pour ProjectFlow, puis
@@ -135,4 +136,5 @@ disponible, mais ses valeurs viennent uniquement du formulaire.
 ## Mettre a jour
 
 Le bouton `Mettre a jour` reecrit la fiche et la ligne du repertoire apres confirmation. Il ne
-cree pas de dossier et n'execute aucune integration externe.
+recree pas le dossier projet, mais reapplique les integrations selectionnees sans doublon :
+Outlook pour les projets principaux, Planner pour les projets principaux et les sous-projets.

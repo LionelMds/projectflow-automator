@@ -81,21 +81,11 @@ class ProjectService:
             if existing_fiche_path.exists():
                 fiche_path = existing_fiche_path
 
-        outlook_created = False
-        if outlook is not None:
-            folder_paths = outlook_folder_paths(project, self._config.outlook.arborescence)
-            for folder_path in folder_paths:
-                await outlook.ensure_folder_path(folder_path)
-            outlook_created = bool(folder_paths)
-
-        planner_task_id: str | None = None
-        planner_created = False
-        planner_updated = False
-        if planner is not None:
-            planner_result = await planner.ensure_project_task(project)
-            planner_task_id = getattr(planner_result, "task_id", None)
-            planner_created = bool(getattr(planner_result, "created", False))
-            planner_updated = bool(getattr(planner_result, "updated", False))
+        outlook_created = await self._apply_outlook(project, outlook)
+        planner_task_id, planner_created, planner_updated = await self._apply_planner(
+            project,
+            planner,
+        )
 
         if self._pin_path is not None:
             self._pin_path(project_dir)
@@ -119,12 +109,20 @@ class ProjectService:
         if not project_dir.exists():
             raise ProjectCreationError(f"Dossier du projet parent introuvable: {project_dir}")
 
+        planner = self._validated_planner() if project.planner.enabled else None
         fiche_path = self._fiche_service.fill_subproject_fiche(project_dir, project)
         await self._repertoire_service.upsert_project(project)
+        planner_task_id, planner_created, planner_updated = await self._apply_planner(
+            project,
+            planner,
+        )
         return ProjectCreationResult(
             project_dir_created=False,
             project_dir=str(project_dir),
             fiche_path=str(fiche_path),
+            planner_task_id=planner_task_id,
+            planner_task_created=planner_created,
+            planner_task_updated=planner_updated,
         )
 
     async def update_project(self, project: ProjectInput) -> ProjectCreationResult:
@@ -133,16 +131,29 @@ class ProjectService:
         if not project_dir.exists():
             raise ProjectCreationError(f"Dossier projet introuvable: {project_dir}")
 
+        outlook = None if project.is_subproject else await self._validated_outlook()
+        planner = self._validated_planner() if project.planner.enabled else None
         fiche_path = (
             self._fiche_service.fill_subproject_fiche(project_dir, project)
             if project.is_subproject
             else self._fiche_service.fill_fiche(project_dir, project)
         )
         await self._repertoire_service.upsert_project(project, force_overwrite=True)
+        outlook_created = await self._apply_outlook(project, outlook)
+        planner_task_id, planner_created, planner_updated = await self._apply_planner(
+            project,
+            planner,
+        )
+        if not project.is_subproject and self._pin_path is not None:
+            self._pin_path(project_dir)
         return ProjectCreationResult(
             project_dir_created=False,
             project_dir=str(project_dir),
             fiche_path=str(fiche_path),
+            outlook_folder_created=outlook_created,
+            planner_task_id=planner_task_id,
+            planner_task_created=planner_created,
+            planner_task_updated=planner_updated,
         )
 
     @staticmethod
@@ -170,6 +181,33 @@ class ProjectService:
                 "n'est configure.",
             )
         return self._planner
+
+    async def _apply_outlook(
+        self,
+        project: ProjectInput,
+        outlook: OutlookGateway | None,
+    ) -> bool:
+        if outlook is None:
+            return False
+        folder_paths = outlook_folder_paths(project, self._config.outlook.arborescence)
+        for folder_path in folder_paths:
+            await outlook.ensure_folder_path(folder_path)
+        return bool(folder_paths)
+
+    @staticmethod
+    async def _apply_planner(
+        project: ProjectInput,
+        planner: PlannerGateway | None,
+    ) -> tuple[str | None, bool, bool]:
+        if planner is None:
+            return None, False, False
+        planner_result = await planner.ensure_project_task(project)
+        task_id = getattr(planner_result, "task_id", None)
+        return (
+            task_id if isinstance(task_id, str) else None,
+            bool(getattr(planner_result, "created", False)),
+            bool(getattr(planner_result, "updated", False)),
+        )
 
 
 def copy_reference_tree(reference_dir: Path, project_dir: Path) -> None:

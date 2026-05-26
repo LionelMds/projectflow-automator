@@ -134,6 +134,26 @@ async def test_windows_outlook_creates_missing_folder_path_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_windows_outlook_renames_existing_project_folder_when_designation_changes() -> None:
+    store = FakeStore("store-1", "Boite Balz")
+    namespace = FakeNamespace([store], [FakeAccount(store, "lionel@balzmetal.ch")])
+    client = WindowsLocalOutlookClient(
+        target_store_id="store-1",
+        app_factory=lambda: FakeApp(namespace),
+    )
+
+    await client.ensure_folder_path(["2026", "2026-4995 (Ancien nom)"])
+    await client.ensure_folder_path(["2026", "2026-4995 (Nouveau nom)"])
+
+    year_folder = store.root.Folders.Item(1)
+    assert isinstance(year_folder, FakeFolder)
+    project_folder = year_folder.Folders.Item(1)
+    assert isinstance(project_folder, FakeFolder)
+    assert project_folder.Name == "2026-4995 (Nouveau nom)"
+    assert year_folder.Folders.Count == 1
+
+
+@pytest.mark.asyncio
 async def test_windows_outlook_creates_folder_path_under_inbox() -> None:
     store = FakeStore("store-1", "Boite Balz")
     namespace = FakeNamespace([store], [FakeAccount(store, "lionel@balzmetal.ch")])

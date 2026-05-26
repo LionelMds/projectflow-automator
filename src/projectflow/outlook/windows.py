@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -10,6 +11,7 @@ from projectflow.outlook.models import OutlookAccount
 
 OutlookAppFactory = Callable[[], Any]
 OL_FOLDER_INBOX = 6
+PROJECT_FOLDER_RE = re.compile(r"^(?P<number>\d{4}-\d+(?:-\d+)?)(?:\s|\(|$)")
 
 
 class WindowsLocalOutlookClient:
@@ -169,6 +171,13 @@ def _ensure_child_folder(parent: Any, name: str) -> Any:
     existing = _find_folder(folders, name)
     if existing is not None:
         return existing
+    existing_project_folder = _find_project_folder(folders, name)
+    if existing_project_folder is not None:
+        try:
+            existing_project_folder.Name = name
+        except (AttributeError, RuntimeError, OSError):
+            return existing_project_folder
+        return existing_project_folder
     return folders.Add(name)
 
 
@@ -179,6 +188,22 @@ def _find_folder(folders: Any, name: str) -> Any | None:
         if _clean_text(folder.Name).casefold() == wanted:
             return folder
     return None
+
+
+def _find_project_folder(folders: Any, name: str) -> Any | None:
+    project_number = _project_number_prefix(name)
+    if not project_number:
+        return None
+    for index in range(1, int(folders.Count) + 1):
+        folder = folders.Item(index)
+        if _project_number_prefix(_clean_text(folder.Name)) == project_number:
+            return folder
+    return None
+
+
+def _project_number_prefix(name: str) -> str:
+    match = PROJECT_FOLDER_RE.match(name.strip())
+    return match.group("number") if match else ""
 
 
 def _clean_text(value: object) -> str:

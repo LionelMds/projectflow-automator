@@ -18,7 +18,9 @@
   groupe parent, sans utiliser une ligne disponible de projet principal.
 - La ligne repertoire d'un sous-projet contient uniquement les valeurs saisies par l'utilisateur ;
   elle n'herite d'aucune cellule du projet parent, seulement du format d'une ligne disponible.
-- `Mettre a jour` demande une confirmation et ne cree aucune integration externe.
+- `Mettre a jour` demande une confirmation et reapplique les integrations selectionnees sans
+  doublon : Outlook pour les projets principaux, Planner pour les projets principaux et
+  sous-projets.
 - `Ouvrir fiche` ouvre Excel via l'application par defaut.
 - L'icone ProjectFlow apparait dans la zone de notification Windows ou la barre des menus macOS.
 - Fermer la fenetre principale masque l'application ; `Quitter ProjectFlow` dans le menu de
@@ -40,7 +42,7 @@
   jours saisi.
 - Relancer `Creer` sur le meme projet avec Planner actif ne cree pas de doublon : la tache
   existante est reassignee/deplacee si necessaire.
-- Un sous-projet ne cree pas de tache Planner.
+- Un sous-projet cree sa propre tache Planner si la case Planner est cochee.
 - `py -m projectflow.build --target windows` produit `dist/ProjectFlowAutomator.exe`.
 - La release GitHub produit `ProjectFlowAutomatorSetup.exe` et son `.sha256`.
 - Sur Windows, `Rechercher une mise a jour` telecharge l'installateur, verifie le SHA256 et
