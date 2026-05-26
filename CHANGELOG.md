@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.25
+
+- Garde la creation depuis le menu rapide dans le flux rapide, sans ouvrir la fenetre principale.
+- Ajoute une confirmation rapide avec `Ouvrir fiche`, `Ouvrir repertoire`, `Modifier` et `Suivant`.
+- Demande `Group.Read.All` pour Planner et charge les colonnes via l'endpoint officiel du plan.
+
 ## 0.1.24
 
 - Remplace le logo ProjectFlow et regenere les icones Windows/macOS aux formats natifs.

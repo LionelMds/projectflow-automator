@@ -4,9 +4,11 @@ import asyncio
 import os
 import sys
 from collections.abc import Callable, Coroutine
+from datetime import date
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from projectflow import __version__
@@ -20,6 +22,7 @@ from projectflow.core.repertoire_service import RepertoireService
 from projectflow.exceptions import ProjectFlowError
 from projectflow.platform.filemanager import open_file_default_app, open_path
 from projectflow.services import ServiceContainer
+from projectflow.ui.creation_tab import CreationFormData
 from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
@@ -32,6 +35,8 @@ from projectflow.updates import (
     select_checksum_asset,
     select_platform_asset,
 )
+
+QuickCreationAction = Literal["open_fiche", "open_repertoire", "edit", "next"]
 
 
 class ServiceProvider(Protocol):
@@ -78,13 +83,15 @@ class ProjectFlowController:
     def show_window(self) -> None:
         self._window.show_and_raise()
 
-    def show_quick_create(self) -> None:
+    def show_quick_create(self, *, reset: bool = False) -> None:
         if self._quick_dialog is not None:
+            if reset:
+                self._quick_dialog.set_data(self._empty_creation_data())
             self._quick_dialog.show_and_raise()
             return
         dialog = QuickCreateDialog(parent=self._window)
         self._quick_dialog = dialog
-        dialog.set_data(self._window.creation_tab.data())
+        dialog.set_data(self._empty_creation_data() if reset else self._window.creation_tab.data())
         dialog.classic_requested.connect(lambda: self._show_classic_from_quick(dialog))
         dialog.next_available_requested.connect(
             lambda: self._schedule_task(self._quick_next_available(dialog)),
@@ -96,9 +103,7 @@ class ProjectFlowController:
                 self._quick_dialog = None
         if result != dialog.DialogCode.Accepted:
             return
-        self._window.creation_tab.set_form_data(dialog.data())
-        self._window.show_and_raise()
-        self._schedule_task(self.create_project())
+        self._schedule_task(self._create_project_from_quick(dialog.data()))
 
     def _show_classic_from_quick(self, dialog: QuickCreateDialog) -> None:
         self._window.creation_tab.set_form_data(dialog.data())
@@ -129,31 +134,49 @@ class ProjectFlowController:
     async def create_project(self) -> None:
         try:
             project = self._project_from_form()
-            project_exists = (
-                not project.is_subproject and self._project_dir(project.number).exists()
-            )
-            existing_update = self._existing_project_update_decision(project)
-            if existing_update is None:
-                self._log("! Creation annulee")
+            created = await self._create_project_for_input(project)
+            if created is None:
                 return
-            result = await self._services.project().create_project(
-                project,
-                force_overwrite=project_exists and existing_update,
-                update_existing_info=existing_update,
-            )
         except (ProjectFlowError, ValueError) as exc:
             self._error(str(exc))
             return
+        result, existing_update = created
         self._save_config_if_available()
-        if result.project_dir_created:
-            self._log(f"+ Projet cree: {result.project_dir}")
-        else:
-            self._log(f"+ Projet existant reapplique: {result.project_dir}")
-        if not result.project_dir_created and not existing_update:
-            self._log("+ Informations existantes conservees")
+        self._log_creation_result(result, existing_update=existing_update)
         self._log_creation_integrations(result)
         self._open_project_folder(result)
         self._show_creation_confirmation(result)
+
+    async def _create_project_from_quick(self, data: CreationFormData) -> None:
+        try:
+            project = self._project_from_data(data)
+            created = await self._create_project_for_input(project)
+            if created is None:
+                return
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return
+        result, existing_update = created
+        self._save_config_if_available()
+        self._log_creation_result(result, existing_update=existing_update)
+        self._log_creation_integrations(result)
+        self._show_quick_creation_confirmation(result, data, project)
+
+    async def _create_project_for_input(
+        self,
+        project: ProjectInput,
+    ) -> tuple[ProjectCreationResult, bool] | None:
+        project_exists = not project.is_subproject and self._project_dir(project.number).exists()
+        existing_update = self._existing_project_update_decision(project)
+        if existing_update is None:
+            self._log("! Creation annulee")
+            return None
+        result = await self._services.project().create_project(
+            project,
+            force_overwrite=project_exists and existing_update,
+            update_existing_info=existing_update,
+        )
+        return result, existing_update
 
     async def update_project(self) -> None:
         try:
@@ -307,6 +330,9 @@ class ProjectFlowController:
 
     def _project_from_form(self) -> ProjectInput:
         data = self._window.creation_tab.data()
+        return self._project_from_data(data)
+
+    def _project_from_data(self, data: CreationFormData) -> ProjectInput:
         number = parse_project_number(
             format_project_number(data.year, data.project_id, data.subproject_id),
         )
@@ -317,6 +343,19 @@ class ProjectFlowController:
             contact=data.contact,
             localisation=data.localisation,
             gere_par=data.gere_par,
+        )
+
+    def _empty_creation_data(self) -> CreationFormData:
+        current_year = self._window.creation_tab.data().year or str(date.today().year)
+        return CreationFormData(
+            year=current_year,
+            project_id="",
+            subproject_id="",
+            designation="",
+            societe="",
+            contact="",
+            localisation="",
+            gere_par="",
         )
 
     def _number_from_form(self) -> str:
@@ -403,6 +442,19 @@ class ProjectFlowController:
     def _log(self, message: str) -> None:
         self._window.creation_tab.append_log(message)
 
+    def _log_creation_result(
+        self,
+        result: ProjectCreationResult,
+        *,
+        existing_update: bool,
+    ) -> None:
+        if result.project_dir_created:
+            self._log(f"+ Projet cree: {result.project_dir}")
+        else:
+            self._log(f"+ Projet existant reapplique: {result.project_dir}")
+        if not result.project_dir_created and not existing_update:
+            self._log("+ Informations existantes conservees")
+
     def _log_creation_integrations(self, result: ProjectCreationResult) -> None:
         if self._config.outlook.enabled and result.outlook_folder_created:
             self._log("+ Dossiers Outlook crees")
@@ -437,6 +489,85 @@ class ProjectFlowController:
             title,
             f"{message}\n\nDossier:\n{result.project_dir}",
         )
+
+    def _show_quick_creation_confirmation(
+        self,
+        result: ProjectCreationResult,
+        data: CreationFormData,
+        project: ProjectInput,
+    ) -> None:
+        title = "Projet cree" if result.project_dir_created else "Projet pret"
+        message = (
+            "Le projet a ete cree avec succes."
+            if result.project_dir_created
+            else "Le projet existant a ete reapplique avec succes."
+        )
+        box = QMessageBox(self._window if self._window.isVisible() else None)
+        box.setWindowTitle(title)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(message)
+        box.setInformativeText(f"Dossier:\n{result.project_dir}")
+        open_fiche_button = box.addButton("Ouvrir fiche", QMessageBox.ButtonRole.ActionRole)
+        open_repertoire_button = box.addButton(
+            "Ouvrir repertoire",
+            QMessageBox.ButtonRole.ActionRole,
+        )
+        edit_button = box.addButton("Modifier", QMessageBox.ButtonRole.ActionRole)
+        next_button = box.addButton("Suivant", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(next_button)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked == open_fiche_button:
+            self._handle_quick_creation_action("open_fiche", result, data, project)
+        elif clicked == open_repertoire_button:
+            self._handle_quick_creation_action("open_repertoire", result, data, project)
+        elif clicked == edit_button:
+            self._handle_quick_creation_action("edit", result, data, project)
+        elif clicked == next_button:
+            self._handle_quick_creation_action("next", result, data, project)
+
+    def _handle_quick_creation_action(
+        self,
+        action: QuickCreationAction,
+        result: ProjectCreationResult,
+        data: CreationFormData,
+        project: ProjectInput,
+    ) -> None:
+        if action == "open_fiche":
+            self._open_fiche_from_result(result, project)
+            return
+        if action == "open_repertoire":
+            self.open_repertoire()
+            return
+        if action == "edit":
+            self._window.creation_tab.set_form_data(data)
+            self._window.show_and_raise()
+            return
+        if action == "next":
+            QTimer.singleShot(0, lambda: self.show_quick_create(reset=True))
+
+    def _open_fiche_from_result(
+        self,
+        result: ProjectCreationResult,
+        project: ProjectInput,
+    ) -> None:
+        try:
+            fiche_path = (
+                Path(result.fiche_path)
+                if result.fiche_path is not None
+                else standard_fiche_path(Path(result.project_dir), project.number)
+            )
+            if not fiche_path.exists():
+                fiche_path = self._services.fiche().locate_fiche(Path(result.project_dir))
+            opened = open_file_default_app(fiche_path)
+        except (ProjectFlowError, OSError) as exc:
+            self._error(str(exc))
+            return
+        if not opened:
+            self._error("Impossible d'ouvrir la fiche avec l'application par defaut.")
+            return
+        self._log(f"+ Fiche ouverte: {fiche_path.name}")
 
     def _save_config_if_available(self) -> None:
         if self._save_config is not None:

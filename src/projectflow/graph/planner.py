@@ -56,9 +56,7 @@ class GraphPlannerClient:
         normalized_plan_id = plan_id.strip()
         if not normalized_plan_id:
             raise ConfigError("Plan Planner non configure.")
-        payloads = await self._collect_pages(
-            f"/planner/buckets?$filter=planId eq '{normalized_plan_id}'",
-        )
+        payloads = await self._collect_pages(f"/planner/plans/{normalized_plan_id}/buckets")
         return [
             PlannerBucket(id=item_id, name=name, plan_id=task_plan_id)
             for payload in payloads

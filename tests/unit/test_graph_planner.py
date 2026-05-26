@@ -32,7 +32,7 @@ async def test_graph_planner_lists_plans_and_buckets() -> None:
         requests.append(request)
         if request.url.path.endswith("/me/planner/plans"):
             return httpx.Response(200, json={"value": [{"id": "plan-id", "title": "Projets"}]})
-        if request.url.path.endswith("/planner/buckets"):
+        if request.url.path.endswith("/planner/plans/plan-id/buckets"):
             return httpx.Response(
                 200,
                 json={"value": [{"id": "bucket-id", "name": "A faire", "planId": "plan-id"}]},
@@ -49,7 +49,7 @@ async def test_graph_planner_lists_plans_and_buckets() -> None:
 
     assert plans[0].title == "Projets"
     assert buckets[0].name == "A faire"
-    assert "planId%20eq%20'plan-id'" in str(requests[1].url)
+    assert requests[1].url.path.endswith("/planner/plans/plan-id/buckets")
 
 
 @pytest.mark.asyncio

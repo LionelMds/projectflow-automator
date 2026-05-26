@@ -30,6 +30,7 @@ Permissions deleguees optionnelles pour Microsoft Planner :
 
 - `Tasks.ReadWrite`
 - `User.Read`
+- `Group.Read.All`
 
 ProjectFlow ne demande pas explicitement les scopes reserves (`offline_access`, `profile`,
 `openid`) : MSAL/Microsoft les gere automatiquement quand ils sont necessaires.

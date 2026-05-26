@@ -13,6 +13,7 @@ from projectflow.core.models import ProjectCreationResult, ProjectInput
 from projectflow.core.numero import parse_project_number
 from projectflow.core.repertoire_service import NextAvailableProject
 from projectflow.ui.controller import ProjectFlowController, _update_prompt_text
+from projectflow.ui.creation_tab import CreationFormData
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.main_window import MainWindow
 
@@ -183,6 +184,121 @@ async def test_controller_quick_next_available_prefills_dialog(
     assert dialog.project_id_edit.text() == "4995"
     assert dialog.subproject_edit.text() == ""
     assert window.creation_tab.project_id_edit.text() == "4995"
+
+
+@pytest.mark.asyncio
+async def test_controller_quick_create_stays_in_quick_flow(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_creation_post_actions: dict[str, list[Any]],
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    confirmations: list[tuple[ProjectCreationResult, CreationFormData, ProjectInput]] = []
+    data = CreationFormData(
+        year="2026",
+        project_id="4995",
+        subproject_id="",
+        designation="Escalier rapide",
+        societe="Balz",
+        contact="Lionel",
+        localisation="Geneve",
+        gere_par="LM",
+    )
+
+    def record_confirmation(
+        result: ProjectCreationResult,
+        confirmed_data: CreationFormData,
+        project: ProjectInput,
+    ) -> None:
+        confirmations.append((result, confirmed_data, project))
+
+    monkeypatch.setattr(controller, "_show_quick_creation_confirmation", record_confirmation)
+
+    await controller._create_project_from_quick(data)  # noqa: SLF001
+
+    assert str(services.project_service.created[0][0].number) == "2026-4995"
+    assert services.project_service.created[0][0].designation == "Escalier rapide"
+    assert confirmations[0][1] == data
+    assert str(confirmations[0][2].number) == "2026-4995"
+    assert project_creation_post_actions["opened"] == []
+    assert project_creation_post_actions["infos"] == []
+    assert not window.isVisible()
+
+
+def test_controller_quick_confirmation_modifier_opens_loaded_main_window(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    data = CreationFormData(
+        year="2026",
+        project_id="4995",
+        subproject_id="",
+        designation="Escalier rapide",
+        societe="Balz",
+        contact="Lionel",
+        localisation="Geneve",
+        gere_par="LM",
+    )
+    project = ProjectInput(number=parse_project_number("2026-4995"))
+
+    controller._handle_quick_creation_action(  # noqa: SLF001
+        "edit",
+        services.project_service.creation_result,
+        data,
+        project,
+    )
+
+    assert window.isVisible()
+    assert window.creation_tab.data() == data
+
+
+def test_controller_quick_confirmation_next_reopens_reset_quick_form(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    calls: list[bool] = []
+
+    def record_quick_create(*, reset: bool = False) -> None:
+        calls.append(reset)
+
+    monkeypatch.setattr(controller, "show_quick_create", record_quick_create)
+
+    controller._handle_quick_creation_action(  # noqa: SLF001
+        "next",
+        services.project_service.creation_result,
+        CreationFormData(
+            year="2026",
+            project_id="4995",
+            subproject_id="",
+            designation="Escalier rapide",
+            societe="Balz",
+            contact="Lionel",
+            localisation="Geneve",
+            gere_par="LM",
+        ),
+        ProjectInput(number=parse_project_number("2026-4995")),
+    )
+
+    qtbot.waitUntil(lambda: calls == [True])
 
 
 def test_controller_reuses_existing_quick_dialog(
