@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.31
+
+- `Charger` et `Ouvrir fiche` retrouvent aussi les fiches rangees dans un sous-dossier
+  numerote, par exemple `2026-5093/2026-5093/` ou `2026-5093/2026-5093-2/`.
+- Le formulaire Planner charge automatiquement les colonnes et les membres en arriere-plan
+  quand l'utilisateur active Planner ou interagit avec la selection.
+
 ## 0.1.30
 
 - `Mettre a jour` reapplique maintenant les integrations selectionnees sans doublon.

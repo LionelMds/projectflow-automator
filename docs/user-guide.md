@@ -86,6 +86,9 @@ Dans `Parametres`, section `Microsoft Planner` :
 3. Cliquer sur `Detecter colonnes` et choisir la colonne cible.
 4. Regler le nombre de jours d'echeance par defaut, puis cliquer sur `Tester`.
 
+Dans le formulaire de creation, les colonnes et membres Planner sont charges automatiquement
+quand la case Planner est activee ou quand l'utilisateur ouvre la selection.
+
 Lors de la creation d'un projet principal, ProjectFlow cree une tache nommee
 `2026-4995 - Designation`. Si une tache existe deja pour ce numero dans le plan choisi,
 ProjectFlow la reutilise, applique la colonne selectionnee dans le formulaire et ajoute les
@@ -121,6 +124,13 @@ mettre a jour la fiche et le repertoire.
 
 Le bouton `Reinitialiser` vide uniquement les champs du formulaire pour passer a un autre
 projet. Il ne modifie aucun dossier, aucune fiche, aucun repertoire et aucune configuration.
+
+## Charger une fiche existante
+
+Le bouton `Charger` retrouve la fiche a la racine du dossier projet, mais aussi dans un
+sous-dossier portant le numero du projet ou du sous-projet. Par exemple, ProjectFlow sait lire
+`2026-5093/2026-5093/2026-5093 - Fiche dossier clients.xlsx` et
+`2026-5093/2026-5093-2/2026-5093-2 - Fiche dossier clients.xlsx`.
 
 ## Creer un sous-projet
 

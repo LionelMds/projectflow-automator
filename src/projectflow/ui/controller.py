@@ -155,11 +155,19 @@ class ProjectFlowController:
         self._log(f"+ Numero disponible: {result.number}")
 
     async def _load_planner_options(self, target: PlannerSelectionWidget) -> None:
+        if self._planner_bucket_options or self._planner_member_options:
+            target.set_options(
+                buckets=self._planner_bucket_options,
+                members=self._planner_member_options,
+            )
+            return
         if not self._config.planner.enabled:
+            target.set_options_error()
             self._error("Planner n'est pas active dans les parametres.")
             return
         plan_id = self._config.planner.target_plan_id
         if not plan_id:
+            target.set_options_error()
             self._error("Selectionnez d'abord un plan Planner dans les parametres.")
             return
         try:
@@ -169,6 +177,7 @@ class ProjectFlowController:
                 client.list_members(plan_id=plan_id),
             )
         except (ProjectFlowError, ValueError) as exc:
+            target.set_options_error()
             self._error(str(exc))
             return
         self._planner_bucket_options = [
@@ -262,7 +271,7 @@ class ProjectFlowController:
         try:
             number = parse_project_number(self._number_from_form())
             project_dir = self._project_dir(number)
-            fiche_path = self._choose_fiche(project_dir)
+            fiche_path = self._choose_fiche(project_dir, number)
             data = self._services.fiche().read_fiche(fiche_path)
         except (ProjectFlowError, ValueError, OSError) as exc:
             self._error(str(exc))
@@ -283,7 +292,7 @@ class ProjectFlowController:
             project_dir = self._project_dir(number)
             fiche_path = standard_fiche_path(project_dir, number)
             if not fiche_path.exists():
-                fiche_path = self._services.fiche().locate_fiche(project_dir)
+                fiche_path = self._services.fiche().locate_fiche(project_dir, number)
             opened = open_file_default_app(fiche_path)
         except (ProjectFlowError, ValueError, OSError) as exc:
             self._error(str(exc))
@@ -320,6 +329,8 @@ class ProjectFlowController:
         if isinstance(self._services, ServiceContainer):
             self._services.reset_repertoire()
             self._services.reset_planner()
+        self._planner_bucket_options = []
+        self._planner_member_options = []
         self._window.apply_config_labels()
         self._save_config_if_available()
         self._log("+ Parametres enregistres")
@@ -428,10 +439,11 @@ class ProjectFlowController:
         parsed = parse_project_number(str(number))
         return root / str(parsed.year) / project_folder_name(parsed)
 
-    def _choose_fiche(self, project_dir: Path) -> Path:
-        candidates = self._services.fiche().list_candidates(project_dir)
+    def _choose_fiche(self, project_dir: Path, number: object) -> Path:
+        parsed = parse_project_number(str(number))
+        candidates = self._services.fiche().list_candidates(project_dir, parsed)
         if len(candidates) <= 1:
-            return self._services.fiche().locate_fiche(project_dir)
+            return self._services.fiche().locate_fiche(project_dir, parsed)
         dialog = FicheSelectionDialog(candidates, parent=self._window)
         if dialog.exec() != dialog.DialogCode.Accepted:
             raise ValueError("Selection de fiche annulee.")
@@ -494,7 +506,7 @@ class ProjectFlowController:
         if standard_path.exists():
             return standard_path
         try:
-            return self._services.fiche().locate_fiche(project_dir)
+            return self._services.fiche().locate_fiche(project_dir, project.number)
         except ProjectFlowError:
             return None
 
@@ -613,7 +625,10 @@ class ProjectFlowController:
                 else standard_fiche_path(Path(result.project_dir), project.number)
             )
             if not fiche_path.exists():
-                fiche_path = self._services.fiche().locate_fiche(Path(result.project_dir))
+                fiche_path = self._services.fiche().locate_fiche(
+                    Path(result.project_dir),
+                    project.number,
+                )
             opened = open_file_default_app(fiche_path)
         except (ProjectFlowError, OSError) as exc:
             self._error(str(exc))

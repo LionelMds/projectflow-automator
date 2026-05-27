@@ -395,6 +395,62 @@ def test_controller_load_project_reads_existing_fiche(qtbot: Any, tmp_path: Path
     assert window.creation_tab.designation_edit.text() == "Escalier charge"
 
 
+def test_controller_load_project_reads_fiche_from_numbered_subfolder(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    window.creation_tab.set_project_identity(year="2026", project_id="5093")
+    project_dir = config.paths.racine_projets / "2026" / "2026-5093"
+    nested_dir = project_dir / "2026-5093"
+    nested_dir.mkdir(parents=True)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet["C3"] = "2026-5093"
+    worksheet["D3"] = "Societe : Client niche"
+    worksheet["D5"] = "Projet : Fiche rangee en sous-dossier"
+    workbook.save(nested_dir / "2026-5093 - Fiche dossier clients.xlsx")
+    workbook.close()
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.load_project()
+
+    assert window.creation_tab.societe_edit.text() == "Client niche"
+    assert window.creation_tab.designation_edit.text() == "Fiche rangee en sous-dossier"
+
+
+def test_controller_load_subproject_reads_fiche_from_subproject_subfolder(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    window.creation_tab.set_project_identity(year="2026", project_id="5093", subproject_id="2")
+    project_dir = config.paths.racine_projets / "2026" / "2026-5093"
+    nested_dir = project_dir / "2026-5093-2"
+    nested_dir.mkdir(parents=True)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet["C3"] = "2026-5093-2"
+    worksheet["D3"] = "Societe : Sous client"
+    worksheet["D5"] = "Projet : Sous-projet charge"
+    workbook.save(nested_dir / "2026-5093-2 - Fiche dossier clients.xlsx")
+    workbook.close()
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.load_project()
+
+    assert window.creation_tab.societe_edit.text() == "Sous client"
+    assert window.creation_tab.designation_edit.text() == "Sous-projet charge"
+
+
 def test_controller_load_project_does_not_rename_fiche(
     qtbot: Any,
     tmp_path: Path,

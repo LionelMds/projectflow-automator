@@ -40,4 +40,4 @@ def _candidate_label(candidate: FicheCandidate) -> str:
         tz=UTC,
     ).strftime("%Y-%m-%d %H:%M")
     size_kb = candidate.size_bytes / 1024
-    return f"{candidate.path.name} - {size_kb:.1f} KB - {modified}"
+    return f"{candidate.path.parent.name}/{candidate.path.name} - {size_kb:.1f} KB - {modified}"

@@ -10,6 +10,8 @@
 - La colonne F du repertoire n'est pas modifiee par le champ `Gere par`.
 - `Suivant disponible` ignore les lignes dont une cellule B, C, D ou E est deja remplie.
 - `Charger` lit une fiche existante sans renommer ni creer une fiche standard vierge.
+- `Charger` retrouve aussi une fiche rangee dans un sous-dossier numerote du projet ou du
+  sous-projet.
 - Relancer `Creer` sur un projet existant reapplique Outlook/epingle sans modifier la fiche
   ni le repertoire quand les informations sont identiques.
 - `Reinitialiser` vide les champs du formulaire sans modifier les chemins, logs, fichiers ou
@@ -36,6 +38,8 @@
 - Sur macOS signe, la premiere creation affiche la demande d'autorisation Apple Events pour Mail.
 - Planner peut etre active, detecter les plans, detecter les colonnes du plan choisi, detecter
   les membres du plan et tester l'acces.
+- Dans le formulaire projet, cocher Planner charge automatiquement les colonnes et membres sans
+  bouton manuel.
 - Creer un projet principal avec Planner coche dans le formulaire cree une tache dans la colonne
   choisie, assignee aux membres selectionnes.
 - L'echeance Planner est desactivee par defaut ; la cocher ajoute une date selon le nombre de

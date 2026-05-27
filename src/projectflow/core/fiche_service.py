@@ -43,25 +43,33 @@ class FicheService:
     def __init__(self, today: Callable[[], date] = date.today) -> None:
         self._today = today
 
-    def list_candidates(self, project_dir: Path) -> list[FicheCandidate]:
+    def list_candidates(
+        self,
+        project_dir: Path,
+        number: ProjectNumber | None = None,
+    ) -> list[FicheCandidate]:
         candidates: list[FicheCandidate] = []
-        for path in project_dir.glob("*.xlsx"):
-            if path.name.startswith("~$"):
+        for search_dir in _fiche_search_dirs(project_dir, number):
+            if not search_dir.is_dir():
                 continue
-            stat = path.stat()
-            candidates.append(
-                FicheCandidate(
-                    path=path,
-                    size_bytes=stat.st_size,
-                    modified_timestamp=stat.st_mtime,
-                ),
-            )
-        return sorted(candidates, key=_candidate_sort_key)
+            for path in search_dir.glob("*.xlsx"):
+                if path.name.startswith("~$"):
+                    continue
+                stat = path.stat()
+                candidates.append(
+                    FicheCandidate(
+                        path=path,
+                        size_bytes=stat.st_size,
+                        modified_timestamp=stat.st_mtime,
+                    ),
+                )
+        return sorted(candidates, key=lambda candidate: _candidate_sort_key(candidate, number))
 
-    def locate_fiche(self, project_dir: Path) -> Path:
-        candidates = self.list_candidates(project_dir)
+    def locate_fiche(self, project_dir: Path, number: ProjectNumber | None = None) -> Path:
+        candidates = self.list_candidates(project_dir, number)
         if not candidates:
-            raise ProjectCreationError(f"Aucune fiche Excel trouvee dans {project_dir}")
+            suffix = f" pour {number}" if number is not None else ""
+            raise ProjectCreationError(f"Aucune fiche Excel trouvee{suffix} dans {project_dir}")
         return candidates[0].path
 
     def standardize_fiche_name(
@@ -71,8 +79,8 @@ class FicheService:
         *,
         fiche_path: Path | None = None,
     ) -> Path:
-        source_path = fiche_path or self.locate_fiche(project_dir)
-        standard_path = standard_fiche_path(project_dir, number)
+        source_path = fiche_path or self.locate_fiche(project_dir, number)
+        standard_path = _standard_fiche_path_in(source_path.parent, number)
         if source_path == standard_path:
             return source_path
         if standard_path.exists():
@@ -103,10 +111,15 @@ class FicheService:
         if not project.number.is_subproject:
             return self.fill_fiche(project_dir, project)
 
-        target_path = standard_fiche_path(project_dir, project.number)
+        target_path = _preferred_standard_fiche_path(project_dir, project.number)
         if not target_path.exists():
-            parent_path = standard_fiche_path(project_dir, project.number.parent)
-            source_path = parent_path if parent_path.exists() else self.locate_fiche(project_dir)
+            parent_path = _existing_standard_fiche_path(project_dir, project.number.parent)
+            source_path = (
+                parent_path
+                if parent_path is not None
+                else self.locate_fiche(project_dir, project.number.parent)
+            )
+            target_path.parent.mkdir(parents=True, exist_ok=True)
             target_path.write_bytes(source_path.read_bytes())
 
         workbook = load_workbook(target_path)
@@ -149,16 +162,63 @@ class FicheService:
 
 
 def standard_fiche_path(project_dir: Path, number: ProjectNumber) -> Path:
-    return project_dir / f"{number}{FICHE_SUFFIX}"
+    return _standard_fiche_path_in(project_dir, number)
+
+
+def _standard_fiche_path_in(directory: Path, number: ProjectNumber) -> Path:
+    return directory / f"{number}{FICHE_SUFFIX}"
+
+
+def _standard_fiche_paths(project_dir: Path, number: ProjectNumber) -> list[Path]:
+    paths = [standard_fiche_path(project_dir, number)]
+    nested_path = _standard_fiche_path_in(project_dir / str(number), number)
+    if nested_path not in paths:
+        paths.append(nested_path)
+    return paths
+
+
+def _existing_standard_fiche_path(project_dir: Path, number: ProjectNumber) -> Path | None:
+    for path in _standard_fiche_paths(project_dir, number):
+        if path.exists():
+            return path
+    return None
+
+
+def _preferred_standard_fiche_path(project_dir: Path, number: ProjectNumber) -> Path:
+    existing_path = _existing_standard_fiche_path(project_dir, number)
+    if existing_path is not None:
+        return existing_path
+    nested_dir = project_dir / str(number)
+    if nested_dir.is_dir():
+        return _standard_fiche_path_in(nested_dir, number)
+    return standard_fiche_path(project_dir, number)
+
+
+def _fiche_search_dirs(project_dir: Path, number: ProjectNumber | None) -> list[Path]:
+    directories = [project_dir]
+    if number is not None:
+        directories.append(project_dir / str(number))
+
+    result: list[Path] = []
+    for directory in directories:
+        if directory not in result:
+            result.append(directory)
+    return result
 
 
 def _active_worksheet(workbook: Workbook) -> Worksheet:
     return cast("Worksheet", workbook.active)
 
 
-def _candidate_sort_key(candidate: FicheCandidate) -> tuple[int, str]:
+def _candidate_sort_key(
+    candidate: FicheCandidate,
+    number: ProjectNumber | None,
+) -> tuple[int, int, str]:
+    exact_name_rank = 1
+    if number is not None and candidate.path.name == f"{number}{FICHE_SUFFIX}":
+        exact_name_rank = 0
     contains_fiche = "fiche" in candidate.path.name.lower()
-    return (0 if contains_fiche else 1, candidate.path.name.lower())
+    return (exact_name_rank, 0 if contains_fiche else 1, candidate.path.name.lower())
 
 
 def _write_prefixed(workbook: Worksheet, cell: str, prefix: str, value: str) -> None:

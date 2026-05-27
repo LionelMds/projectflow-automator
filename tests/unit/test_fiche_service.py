@@ -41,6 +41,34 @@ def test_fill_fiche_prefers_fiche_candidate_and_renames_to_standard(tmp_path: Pa
     workbook.close()
 
 
+def test_locate_fiche_finds_numbered_subfolder(tmp_path: Path) -> None:
+    project_dir = tmp_path / "2026-5093"
+    nested_dir = project_dir / "2026-5093"
+    nested_dir.mkdir(parents=True)
+    fiche_path = nested_dir / "2026-5093 - Fiche dossier clients.xlsx"
+    workbook = Workbook()
+    workbook.save(fiche_path)
+    workbook.close()
+
+    located = FicheService().locate_fiche(project_dir, parse_project_number("2026-5093"))
+
+    assert located == fiche_path
+
+
+def test_locate_fiche_finds_subproject_subfolder(tmp_path: Path) -> None:
+    project_dir = tmp_path / "2026-5093"
+    nested_dir = project_dir / "2026-5093-2"
+    nested_dir.mkdir(parents=True)
+    fiche_path = nested_dir / "2026-5093-2 - Fiche dossier clients.xlsx"
+    workbook = Workbook()
+    workbook.save(fiche_path)
+    workbook.close()
+
+    located = FicheService().locate_fiche(project_dir, parse_project_number("2026-5093-2"))
+
+    assert located == fiche_path
+
+
 def test_fill_fiche_keeps_existing_creation_date(tmp_path: Path) -> None:
     path = tmp_path / "modele fiche.xlsx"
     workbook = Workbook()
@@ -90,6 +118,29 @@ def test_standardize_fiche_name_renames_selected_file(tmp_path: Path) -> None:
     assert renamed == tmp_path / "2026-4995 - Fiche dossier clients.xlsx"
     assert renamed.exists()
     assert not source.exists()
+
+
+def test_fill_subproject_updates_existing_nested_fiche(tmp_path: Path) -> None:
+    project_dir = tmp_path / "2026-5093"
+    nested_dir = project_dir / "2026-5093-2"
+    nested_dir.mkdir(parents=True)
+    fiche_path = nested_dir / "2026-5093-2 - Fiche dossier clients.xlsx"
+    workbook = Workbook()
+    workbook.active["D5"] = "Projet : Ancien"
+    workbook.save(fiche_path)
+    workbook.close()
+    project = ProjectInput(
+        number=parse_project_number("2026-5093-2"),
+        designation="Sous-projet charge",
+    )
+
+    updated_path = FicheService().fill_subproject_fiche(project_dir, project)
+
+    assert updated_path == fiche_path
+    assert not (project_dir / "2026-5093-2 - Fiche dossier clients.xlsx").exists()
+    loaded = FicheService().read_fiche(fiche_path)
+    assert loaded.number == "2026-5093-2"
+    assert loaded.designation == "Sous-projet charge"
 
 
 def test_fill_fiche_releases_file_handle_for_move(tmp_path: Path) -> None:
