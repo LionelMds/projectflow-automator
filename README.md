@@ -80,7 +80,7 @@ Ce mode cree un environnement local dans le dossier de donnees utilisateur Proje
 - `Modeles/10-Racine/`
 - `Repertoire chantier demo.xlsx`
 
-Il permet de tester `Suivant disponible`, `Creer`, `Charger`, `Ouvrir fiche`,
+Il permet de tester `Suivant disponible`, `Creer`, `Charger`, `Ouvrir dossier`, `Ouvrir fiche`,
 `Mettre a jour`, et Outlook local si un profil Outlook classique est disponible.
 
 ## Variables utiles
@@ -187,7 +187,7 @@ Le MVP couvre :
   fusionnees,
 - conservation de la colonne F du repertoire, le champ `Gere par` restant limite a la fiche,
 - bouton `Suivant disponible` base sur une ligne projet principal dont B, C, D et E sont vides,
-- `Charger`, `Ouvrir fiche`, `Mettre a jour`,
+- `Charger`, `Ouvrir dossier`, `Ouvrir fiche`, `Mettre a jour`,
 - relance de `Creer` sur projet existant pour reappliquer Outlook/epingle sans ecraser,
 - icone de zone de notification Windows / barre des menus macOS avec mini-formulaire de creation,
 - Outlook local Windows via le profil Outlook classique, desactive par defaut,

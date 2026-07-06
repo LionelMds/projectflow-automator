@@ -23,6 +23,7 @@
 - `Mettre a jour` demande une confirmation et reapplique les integrations selectionnees sans
   doublon : Outlook pour les projets principaux, Planner pour les projets principaux et
   sous-projets.
+- `Ouvrir dossier` ouvre le dossier projet courant dans l'explorateur/Finder.
 - `Ouvrir fiche` ouvre Excel via l'application par defaut.
 - L'icone ProjectFlow apparait dans la zone de notification Windows ou la barre des menus macOS.
 - Fermer la fenetre principale masque l'application ; `Quitter ProjectFlow` dans le menu de

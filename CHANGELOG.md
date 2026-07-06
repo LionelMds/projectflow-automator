@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.32
+
+- Supprime le timeout applicatif de 30 secondes sur les appels Microsoft Graph et passe
+  explicitement le flux de connexion Microsoft en attente illimitee.
+- Ajoute un bouton `Ouvrir dossier` dans la barre d'actions du formulaire principal.
+
 ## 0.1.31
 
 - `Charger` et `Ouvrir fiche` retrouvent aussi les fiches rangees dans un sous-dossier

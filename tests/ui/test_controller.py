@@ -562,6 +562,46 @@ def test_controller_open_fiche_uses_default_app(
     assert opened == [project_dir / "2026-4995 - Fiche dossier clients.xlsx"]
 
 
+def test_controller_open_folder_uses_project_directory(
+    qtbot: Any,
+    tmp_path: Path,
+    project_creation_post_actions: dict[str, list[Any]],
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.open_folder()
+
+    assert project_creation_post_actions["opened"] == [project_dir]
+    assert "Dossier projet ouvert" in window.creation_tab.logs.toPlainText()
+
+
+def test_controller_open_folder_for_subproject_uses_parent_project_directory(
+    qtbot: Any,
+    tmp_path: Path,
+    project_creation_post_actions: dict[str, list[Any]],
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    window.creation_tab.set_project_identity(year="2026", project_id="4995", subproject_id="2")
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.open_folder()
+
+    assert project_creation_post_actions["opened"] == [project_dir]
+
+
 def test_controller_open_repertoire_uses_default_app(
     qtbot: Any,
     tmp_path: Path,

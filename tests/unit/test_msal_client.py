@@ -47,6 +47,7 @@ def test_msal_provider_reuses_in_memory_token_and_saves_cache(
     assert fake_module.app.interactive_scopes == [
         ["Files.ReadWrite.All"],
     ]
+    assert fake_module.app.interactive_timeouts == [None]
 
 
 def test_msal_provider_passes_list_scopes_to_silent_flow(
@@ -113,6 +114,7 @@ class FakePublicClientApplication:
         self._assert_on_silent = assert_on_silent
         self.interactive_calls = 0
         self.interactive_scopes: list[list[str]] = []
+        self.interactive_timeouts: list[object] = []
         self.silent_scopes: list[list[str]] = []
 
     def get_accounts(self) -> list[object]:
@@ -127,9 +129,10 @@ class FakePublicClientApplication:
             return {"access_token": self._silent_token}
         return None
 
-    def acquire_token_interactive(self, *, scopes: object, **_kwargs: object) -> object:
+    def acquire_token_interactive(self, *, scopes: object, **kwargs: object) -> object:
         assert isinstance(scopes, list)
         self.interactive_scopes.append(scopes)
+        self.interactive_timeouts.append(kwargs.get("timeout"))
         self.interactive_calls += 1
         return {"access_token": "token"}
 

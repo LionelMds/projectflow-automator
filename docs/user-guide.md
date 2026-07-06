@@ -125,6 +125,9 @@ mettre a jour la fiche et le repertoire.
 Le bouton `Reinitialiser` vide uniquement les champs du formulaire pour passer a un autre
 projet. Il ne modifie aucun dossier, aucune fiche, aucun repertoire et aucune configuration.
 
+Le bouton `Ouvrir dossier` ouvre le dossier projet courant dans l'explorateur Windows ou le
+Finder macOS. Pour un sous-projet, il ouvre le dossier parent du projet.
+
 ## Charger une fiche existante
 
 Le bouton `Charger` retrouve la fiche a la racine du dossier projet, mais aussi dans un

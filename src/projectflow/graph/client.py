@@ -12,6 +12,7 @@ from projectflow.exceptions import GraphError
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 HTTP_FORBIDDEN = 403
+RequestTimeout = float | httpx.Timeout | None
 
 
 class GraphClient:
@@ -21,10 +22,12 @@ class GraphClient:
         token_provider: AccessTokenProvider,
         http_client: httpx.AsyncClient | None = None,
         base_url: str = GRAPH_BASE_URL,
+        request_timeout: RequestTimeout = None,
     ) -> None:
         self._token_provider = token_provider
         self._http_client = http_client
         self._base_url = base_url.rstrip("/")
+        self._request_timeout = request_timeout
 
     async def get(
         self,
@@ -66,13 +69,19 @@ class GraphClient:
 
         last_response: httpx.Response | None = None
         for attempt in range(3):
-            response = await self._client().request(
-                method,
-                self._url(path),
-                json=json,
-                headers=request_headers,
-                timeout=30,
-            )
+            try:
+                response = await self._client().request(
+                    method,
+                    self._url(path),
+                    json=json,
+                    headers=request_headers,
+                    timeout=self._request_timeout,
+                )
+            except httpx.TimeoutException as exc:
+                raise GraphError(
+                    "Microsoft Graph ne repond pas assez vite. "
+                    "Verifiez la connexion internet et relancez l'operation.",
+                ) from exc
             last_response = response
             if response.status_code not in RETRY_STATUSES:
                 break

@@ -83,6 +83,7 @@ class ProjectFlowController:
         tab.create_requested.connect(lambda: asyncio.create_task(self.create_project()))
         self._window.update_confirmed.connect(lambda: asyncio.create_task(self.update_project()))
         tab.load_requested.connect(self.load_project)
+        tab.open_folder_requested.connect(self.open_folder)
         tab.open_fiche_requested.connect(self.open_fiche)
         tab.open_repertoire_requested.connect(self.open_repertoire)
         tab.next_available_requested.connect(lambda: asyncio.create_task(self.next_available()))
@@ -301,6 +302,23 @@ class ProjectFlowController:
             self._error("Impossible d'ouvrir la fiche avec l'application par defaut.")
             return
         self._log(f"+ Fiche ouverte: {fiche_path.name}")
+
+    def open_folder(self) -> None:
+        try:
+            number = parse_project_number(self._number_from_form())
+            project_dir = self._project_dir(number)
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return
+        if not project_dir.exists():
+            self._error(f"Dossier projet introuvable: {project_dir}")
+            return
+        try:
+            open_path(project_dir)
+        except (ProjectFlowError, OSError) as exc:
+            self._error(str(exc))
+            return
+        self._log(f"+ Dossier projet ouvert: {project_dir}")
 
     def open_repertoire(self) -> None:
         display_path = self._config.paths.repertoire_chantier.display_path.strip()

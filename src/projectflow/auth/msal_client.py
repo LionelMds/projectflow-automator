@@ -56,6 +56,7 @@ class PublicClientApplicationProtocol(Protocol):
         scopes: list[str],
         port: int,
         prompt: str,
+        timeout: int | None,
     ) -> object:
         """Open the browser sign-in flow."""
 
@@ -72,11 +73,13 @@ class MsalAccessTokenProvider:
         client_id: str,
         scopes: Sequence[str] = GRAPH_SCOPES,
         cache_storage: TokenCacheStorage | None = None,
+        interactive_timeout: int | None = None,
     ) -> None:
         self._client_id = client_id.strip()
         self._scopes = list(scopes)
         self._cache_storage = cache_storage or TokenCacheStorage()
         self._cached_token: str = ""
+        self._interactive_timeout = interactive_timeout
 
     async def access_token(self) -> str:
         return await asyncio.to_thread(self._access_token_sync)
@@ -139,6 +142,7 @@ class MsalAccessTokenProvider:
             scopes=self._scopes,
             port=0,
             prompt="select_account",
+            timeout=self._interactive_timeout,
         )
         if isinstance(result, dict):
             return cast("dict[str, object]", result)
