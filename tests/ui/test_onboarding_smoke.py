@@ -1,14 +1,27 @@
 from __future__ import annotations
 
-from PySide6.QtGui import QIcon
+from pathlib import Path
+from typing import Any
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QIcon, QImage
 from PySide6.QtWidgets import QSizePolicy, QSystemTrayIcon
 
 from projectflow.config import AppConfig
+from projectflow.core.numero import parse_project_number
+from projectflow.core.repertoire_service import (
+    NextAvailableProject,
+    RepertoireRow,
+    RepertoireSnapshot,
+)
+from projectflow.core.sortie_service import OutputCandidate, OutputInventory
 from projectflow.ui.creation_tab import CreationFormData, CreationTab
 from projectflow.ui.dialogs.quick_confirmation import QuickCreationConfirmationDialog
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.onboarding.wizard import OnboardingWizard
+from projectflow.ui.repertoire_tab import RepertoireDossierTab
+from projectflow.ui.sortie_tab import SortieDossierTab
 from projectflow.ui.tray import ProjectFlowTray
 from projectflow.ui.widgets.planner import PlannerTaskFormData
 
@@ -39,6 +52,124 @@ def test_main_window_smoke(qtbot) -> None:  # type: ignore[no-untyped-def]
     qtbot.addWidget(window)
 
     assert window.windowTitle() == "ProjectFlow Automator - Balz Metal Sa"
+    assert window.sortie_tab is not None
+    assert window.repertoire_tab is not None
+
+
+def test_repertoire_tab_positions_near_next_available_and_filters(qtbot) -> None:  # type: ignore[no-untyped-def]
+    tab = RepertoireDossierTab()
+    qtbot.addWidget(tab)
+    tab.set_year(2026)
+    snapshot = RepertoireSnapshot(
+        year=2026,
+        rows=tuple(
+            RepertoireRow(
+                row_index=index,
+                values=(f"2026-{4990 + index}", "", "", "", ""),
+            )
+            for index in range(8)
+        ),
+        next_available=NextAvailableProject(
+            number=parse_project_number("2026-4997"),
+            row_index=7,
+        ),
+    )
+
+    tab.set_snapshot(snapshot)
+
+    selected = tab.selected_row_payload()
+    assert selected is not None
+    assert selected[0] == 7
+    assert "2026-4997" in tab.status_label.text()
+
+    tab.search_edit.setText("2026-4992")
+    assert tab.table.model().rowCount() == 1
+    assert tab.sync_project_button.text() == "Mettre à jour le projet"
+
+    tab.search_edit.clear()
+    proxy_index = tab.table.model().index(0, 4)
+    assert tab.table.model().setData(proxy_index, "Modifie", Qt.ItemDataRole.EditRole)
+    source_index = tab._proxy.mapToSource(proxy_index)  # noqa: SLF001
+    dirty_background = tab._model.data(  # noqa: SLF001
+        source_index,
+        Qt.ItemDataRole.BackgroundRole,
+    )
+    assert isinstance(dirty_background, QColor)
+
+    tab.mark_saved(0, ("2026-4990", "", "", "", "Modifie"))
+    assert tab._model.data(  # noqa: SLF001
+        source_index,
+        Qt.ItemDataRole.BackgroundRole,
+    ) is None
+
+
+def test_sortie_tab_has_browse_controls(qtbot) -> None:  # type: ignore[no-untyped-def]
+    tab = SortieDossierTab()
+    qtbot.addWidget(tab)
+
+    assert tab.create_output_button.text() == "Creer dossier de sortie"
+    assert not tab.create_output_button.isEnabled()
+    assert tab.photo_browse_button.text() == "Parcourir"
+    assert tab.plan_browse_button.text() == "Parcourir"
+
+
+def test_sortie_tab_browses_from_project_subfolders_and_previews_photo(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    tab = SortieDossierTab()
+    qtbot.addWidget(tab)
+    fiche = tmp_path / "fiche.xlsx"
+    mesure = tmp_path / "cote.pdf"
+    photo_dir = tmp_path / "photos"
+    photo_dir.mkdir()
+    photo = photo_dir / "photo.png"
+    image = QImage(30, 20, QImage.Format.Format_RGB32)
+    image.fill("#2D6CDF")
+    assert image.save(str(photo))
+    plan_dir = tmp_path / "Plans" / "Plan d'execution"
+    plan_dir.mkdir(parents=True)
+    plan = plan_dir / "plan.pdf"
+    for path in (fiche, mesure, plan):
+        path.touch()
+
+    def candidate(path: Path) -> OutputCandidate:
+        return OutputCandidate(path=path, size_bytes=path.stat().st_size, modified_timestamp=0)
+
+    tab.set_project_directory(tmp_path)
+    tab.set_inventory(
+        OutputInventory(
+            fiches=(candidate(fiche),),
+            mesure_pdfs=(candidate(mesure),),
+            photos=(candidate(photo),),
+            plans=(candidate(plan),),
+        ),
+    )
+    dialog_directories: list[str] = []
+    dialog_results = [([str(photo)], ""), ([str(plan)], "")]
+
+    def fake_get_open_file_names(*args: Any) -> tuple[list[str], str]:
+        dialog_directories.append(args[2])
+        return dialog_results.pop(0)
+
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QFileDialog.getOpenFileNames",
+        fake_get_open_file_names,
+    )
+    tab.photo_browse_button.click()
+    tab.plan_browse_button.click()
+    tab.mesure_list.setCurrentRow(0)
+
+    data = tab.data()
+
+    assert data.fiche_path == fiche.resolve()
+    assert data.mesure_pdf_path == mesure.resolve()
+    assert data.photo_paths == (photo.resolve(),)
+    assert data.plan_paths == (plan.resolve(),)
+    assert dialog_directories == [str(photo_dir), str(plan_dir)]
+    assert tab.photo_preview.pixmap() is not None
+    assert not tab.photo_preview.pixmap().isNull()
 
 
 def test_creation_tab_uses_expanding_field_widths(qtbot) -> None:  # type: ignore[no-untyped-def]

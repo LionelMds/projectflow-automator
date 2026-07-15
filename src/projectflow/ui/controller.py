@@ -15,11 +15,18 @@ from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.config import AppConfig
+from projectflow.core.duplication import PROJECT_WRITABLE_WIDTH
 from projectflow.core.fiche_service import FicheService, standard_fiche_path
 from projectflow.core.models import PlannerTaskInput, ProjectCreationResult, ProjectInput
-from projectflow.core.numero import format_project_number, parse_project_number, project_folder_name
+from projectflow.core.numero import (
+    ProjectNumber,
+    format_project_number,
+    parse_project_number,
+    project_folder_name,
+)
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireService
+from projectflow.core.sortie_service import SortieDossierService
 from projectflow.exceptions import ProjectFlowError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
@@ -76,6 +83,10 @@ class ProjectFlowController:
         self._quick_dialog: QuickCreateDialog | None = None
         self._planner_bucket_options: list[PlannerBucketOption] = []
         self._planner_member_options: list[PlannerMemberOption] = []
+        self._sortie_service = SortieDossierService(self._services.fiche())
+        self._sortie_project_dir: Path | None = None
+        self._sortie_number: ProjectNumber | None = None
+        self._repertoire_loading = False
         self._connect()
 
     def _connect(self) -> None:
@@ -87,6 +98,23 @@ class ProjectFlowController:
         tab.open_fiche_requested.connect(self.open_fiche)
         tab.open_repertoire_requested.connect(self.open_repertoire)
         tab.next_available_requested.connect(lambda: asyncio.create_task(self.next_available()))
+        self._window.sortie_tab.load_requested.connect(self.load_sortie_dossier)
+        self._window.sortie_tab.create_output_requested.connect(self.create_sortie_dossier)
+        self._window.repertoire_tab.load_requested.connect(
+            lambda: self._schedule_task(self.load_repertoire()),
+        )
+        self._window.repertoire_tab.save_requested.connect(
+            lambda row_index, values, expected: self._schedule_task(
+                self.save_repertoire_row(row_index, values, expected),
+            ),
+        )
+        self._window.repertoire_tab.sync_project_requested.connect(
+            self.update_project_from_repertoire,
+        )
+        self._window.repertoire_tab.new_project_requested.connect(
+            self.new_project_from_repertoire,
+        )
+        self._window.tabs.currentChanged.connect(self._on_tab_changed)
         tab.planner_options_requested.connect(
             lambda: self._schedule_task(self._load_planner_options(tab.planner_widget)),
         )
@@ -267,6 +295,243 @@ class ProjectFlowController:
         )
         self._save_config_if_available()
         self._log(f"+ Numero disponible: {result.number}")
+
+    def _on_tab_changed(self, index: int) -> None:
+        if index != self._window.tabs.indexOf(self._window.repertoire_tab):
+            return
+        self._schedule_task(self.load_repertoire())
+
+    async def load_repertoire(self) -> None:
+        if self._repertoire_loading:
+            return
+        tab = self._window.repertoire_tab
+        try:
+            year = tab.year()
+        except ValueError:
+            tab.set_error("L'année doit être un nombre valide.")
+            return
+        self._repertoire_loading = True
+        tab.set_loading(loading=True)
+        try:
+            snapshot = await self._services.repertoire().read_snapshot(year=year)
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            tab.set_error(str(exc))
+        else:
+            tab.set_snapshot(snapshot)
+        finally:
+            self._repertoire_loading = False
+            tab.set_loading(loading=False)
+
+    async def save_repertoire_row(
+        self,
+        row_index: int,
+        values: object,
+        expected_values: object,
+    ) -> None:
+        typed_values = _as_row_values(values)
+        typed_expected = _as_row_values(expected_values)
+        if typed_values is None or typed_expected is None:
+            self._error("La ligne du répertoire est invalide.")
+            return
+        if (
+            len(typed_values) != PROJECT_WRITABLE_WIDTH
+            or len(typed_expected) != PROJECT_WRITABLE_WIDTH
+        ):
+            self._error("La ligne du répertoire doit contenir les colonnes A à E.")
+            return
+        tab = self._window.repertoire_tab
+        try:
+            year = tab.year()
+        except ValueError:
+            self._error("L'année doit être un nombre valide.")
+            return
+        tab.set_loading(loading=True)
+        try:
+            await self._services.repertoire().update_editable_row(
+                year=year,
+                row_index=row_index,
+                values=typed_values,
+                expected_values=typed_expected,
+            )
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            tab.set_error(str(exc))
+        else:
+            tab.mark_saved(row_index, typed_values)
+            tab.set_status_message(f"Ligne Excel {row_index + 1} enregistrée dans le répertoire.")
+        finally:
+            tab.set_loading(loading=False)
+
+    def update_project_from_repertoire(self) -> None:
+        payload = self._window.repertoire_tab.selected_row_payload()
+        if payload is None:
+            self._error("Sélectionnez une ligne de projet dans le répertoire.")
+            return
+        row_index, values, expected_values = payload
+        try:
+            number = parse_project_number(_repertoire_cell_text(values[0]))
+        except ValueError as exc:
+            self._error(str(exc))
+            return
+        answer = QMessageBox.question(
+            self._window,
+            "Mettre à jour le projet",
+            f"Mettre à jour le projet {number} et ses éléments associés ?\n\n"
+            "La fiche sera réécrite avec les informations de la ligne, "
+            "puis Outlook, Planner et l'épinglage seront réappliqués selon les paramètres actifs.\n"
+            "Aucun fichier existant ne sera écrasé par la copie de référence.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._schedule_task(
+            self._sync_project_from_repertoire(
+                row_index=row_index,
+                values=values,
+                expected_values=expected_values,
+            ),
+        )
+
+    async def _sync_project_from_repertoire(
+        self,
+        *,
+        row_index: int,
+        values: tuple[Any, ...],
+        expected_values: tuple[Any, ...],
+    ) -> None:
+        tab = self._window.repertoire_tab
+        try:
+            year = tab.year()
+            number = parse_project_number(_repertoire_cell_text(values[0]))
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return
+        if number.year != year:
+            self._error(f"La ligne {number} n'appartient pas à l'année sélectionnée ({year}).")
+            return
+        try:
+            project_dir = self._project_dir(number)
+            fiche_path = self._choose_fiche(project_dir, number)
+            fiche_data = self._services.fiche().read_fiche(fiche_path)
+            project = ProjectInput(
+                number=number,
+                designation=_repertoire_cell_text(values[4]),
+                societe=_repertoire_cell_text(values[2]),
+                contact=_repertoire_cell_text(values[3]),
+                localisation=fiche_data.localisation,
+                gere_par=fiche_data.gere_par,
+                planner=PlannerTaskInput(
+                    enabled=self._config.planner.enabled,
+                    bucket_id=self._config.planner.target_bucket_id,
+                    due_days=(
+                        self._config.planner.due_days
+                        if self._config.planner.due_days > 0
+                        else None
+                    ),
+                ),
+            )
+            tab.set_loading(loading=True)
+            await self._services.repertoire().update_editable_row(
+                year=year,
+                row_index=row_index,
+                values=values,
+                expected_values=expected_values,
+            )
+            result = await self._services.project().update_project(project)
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            self._error(str(exc))
+            return
+        finally:
+            tab.set_loading(loading=False)
+
+        tab.mark_saved(row_index, values)
+        integrations = ["fiche", "répertoire"]
+        if self._config.outlook.enabled:
+            integrations.append("Outlook")
+        if self._config.planner.enabled:
+            integrations.append("Planner")
+        tab.set_status_message(
+            f"Projet {project.number} mis à jour : {', '.join(integrations)}."
+        )
+        self._window.creation_tab.append_log(
+            f"+ Projet {project.number} mis à jour depuis le répertoire"
+        )
+        self._log_creation_integrations(result)
+
+    def new_project_from_repertoire(self) -> None:
+        tab = self._window.repertoire_tab
+        try:
+            year = str(tab.year())
+        except ValueError:
+            year = str(date.today().year)
+        self._window.creation_tab.reset_form_fields()
+        self._window.creation_tab.set_project_identity(
+            year=year,
+            project_id="",
+            subproject_id="",
+        )
+        self._window.show_creation_tab()
+
+    def load_sortie_dossier(self) -> None:
+        tab = self._window.sortie_tab
+        try:
+            year, project_id = tab.project_identity()
+            number = _parse_sortie_number(year, project_id)
+            root = self._config.paths.racine_projets
+            if root is None:
+                self._output_error("Racine projets non configuree.")
+                return
+            project_dir = root / str(number.year) / project_folder_name(number)
+            inventory = self._sortie_service.discover(project_dir, number)
+        except (ProjectFlowError, OSError, ValueError) as exc:
+            self._output_error(str(exc))
+            return
+        tab.set_project_identity(year=str(number.year), project_id=str(number))
+        tab.set_project_directory(project_dir)
+        tab.set_inventory(inventory)
+        self._sortie_project_dir = project_dir
+        self._sortie_number = number
+        tab.append_log(f"+ Projet charge: {project_dir}")
+
+    def create_sortie_dossier(self) -> None:
+        tab = self._window.sortie_tab
+        year, project_id = tab.project_identity()
+        try:
+            number = _parse_sortie_number(year, project_id)
+        except (ProjectFlowError, ValueError) as exc:
+            self._output_error(str(exc))
+            return
+        if self._sortie_project_dir is None or self._sortie_number != number:
+            self._output_error("Chargez le projet avant de creer le dossier de sortie.")
+            return
+        project_dir = self._sortie_project_dir
+        try:
+            selection = tab.data()
+            output_dir = self._sortie_service.create_output_folder(
+                project_dir,
+                number,
+                selection,
+            )
+        except (ProjectFlowError, OSError, ValueError) as exc:
+            self._output_error(str(exc))
+            return
+        tab.append_log(f"+ Dossier de sortie cree: {output_dir}")
+        answer = QMessageBox.question(
+            self._window,
+            "Sortie dossier",
+            f"Le dossier de sortie a ete cree ici :\n{output_dir}\n\n"
+            "Voulez-vous l'ouvrir maintenant ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            open_path(output_dir)
+        except (ProjectFlowError, OSError) as exc:
+            tab.append_log(f"! Dossier de sortie cree, mais ouverture impossible: {exc}")
+            return
+        tab.append_log("+ Dossier de sortie ouvert")
 
     def load_project(self) -> None:
         try:
@@ -669,12 +934,35 @@ class ProjectFlowController:
         self._window.creation_tab.append_log(f"! {message}")
         QMessageBox.critical(self._window, "ProjectFlow", message)
 
+    def _output_error(self, message: str) -> None:
+        self._window.sortie_tab.append_log(f"! {message}")
+        QMessageBox.critical(self._window, "Sortie dossier", message)
+
 
 def _non_empty_changed(current: str, existing: str) -> bool:
     normalized_current = current.strip()
     if not normalized_current:
         return False
     return normalized_current != existing.strip()
+
+
+def _as_row_values(value: object) -> tuple[Any, ...] | None:
+    if not isinstance(value, (list, tuple)):
+        return None
+    return tuple(value)
+
+
+def _repertoire_cell_text(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _parse_sortie_number(year: str, project_id: str) -> ProjectNumber:
+    raw_project_id = project_id.strip()
+    if "-" in raw_project_id:
+        return parse_project_number(raw_project_id)
+    return parse_project_number(format_project_number(year, raw_project_id))
 
 
 def _update_prompt_text(version: str, release_notes: str) -> str:

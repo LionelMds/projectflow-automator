@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
@@ -19,6 +19,7 @@ from projectflow.core.numero import ProjectNumber, parse_project_number
 from projectflow.exceptions import ProjectCreationError
 
 MAIN_PROJECT_RE = re.compile(r"^(\d{4})-(\d+)$")
+PROJECT_ROW_RE = re.compile(r"^\d{4}-\d+(?:-\d+)?$")
 # Colonnes A:E = saisie ProjectFlow. Colonnes F:L = donnees comptables intouchables.
 REPERTOIRE_TABLE_WIDTH = 12
 
@@ -58,24 +59,109 @@ class NextAvailableProject:
     row_index: int
 
 
+@dataclass(frozen=True, slots=True)
+class RepertoireRow:
+    """A safe, editable view of one project row.
+
+    ``row_index`` is zero-based to match the values returned by the workbook
+    gateways. Only A:E are exposed to the UI; accounting columns F:L never
+    enter this model.
+    """
+
+    row_index: int
+    values: tuple[Any, ...]
+
+    @property
+    def number(self) -> str:
+        return _cell_as_text(list(self.values), 0)
+
+
+@dataclass(frozen=True, slots=True)
+class RepertoireSnapshot:
+    year: int
+    rows: tuple[RepertoireRow, ...]
+    next_available: NextAvailableProject | None
+
+
 class RepertoireService:
     def __init__(self, workbook: WorkbookGateway, today: Callable[[], date] = date.today) -> None:
         self._workbook = workbook
         self._today = today
 
     async def next_available(self, *, year: int) -> NextAvailableProject | None:
+        snapshot = await self.read_snapshot(year=year)
+        return snapshot.next_available
+
+    async def read_snapshot(self, *, year: int) -> RepertoireSnapshot:
         async with self._workbook.session():
             worksheet_name = str(year)
             await self._assert_worksheet_exists(worksheet_name)
             rows = await self._workbook.used_range_values(worksheet_name)
-            for index, row in enumerate(rows):
-                number = _cell_as_text(row, 0)
-                if MAIN_PROJECT_RE.fullmatch(number) and project_info_columns_empty(row):
-                    return NextAvailableProject(
-                        number=parse_project_number(number),
-                        row_index=index,
+            next_available = _find_next_available(rows)
+            display_rows = tuple(
+                RepertoireRow(
+                    row_index=index,
+                    values=tuple(
+                        _ensure_width(list(row), width=PROJECT_WRITABLE_WIDTH)[
+                            :PROJECT_WRITABLE_WIDTH
+                        ]
+                    ),
+                )
+                for index, row in enumerate(rows)
+                if PROJECT_ROW_RE.fullmatch(_cell_as_text(row, 0))
+            )
+            return RepertoireSnapshot(
+                year=year,
+                rows=display_rows,
+                next_available=next_available,
+            )
+
+    async def update_editable_row(
+        self,
+        *,
+        year: int,
+        row_index: int,
+        values: Sequence[Any],
+        expected_values: Sequence[Any] | None = None,
+    ) -> None:
+        """Update one displayed row without touching columns F:L.
+
+        The expected values protect against silently overwriting a concurrent
+        edit made in the shared workbook.
+        """
+        async with self._workbook.session():
+            worksheet_name = str(year)
+            await self._assert_worksheet_exists(worksheet_name)
+            rows = await self._workbook.used_range_values(worksheet_name)
+            if row_index < 0 or row_index >= len(rows):
+                raise ProjectCreationError("La ligne du repertoire n'existe plus.")
+
+            current = _ensure_width(list(rows[row_index]), width=PROJECT_WRITABLE_WIDTH)[
+                :PROJECT_WRITABLE_WIDTH
+            ]
+            edited = _ensure_width(list(values), width=PROJECT_WRITABLE_WIDTH)[
+                :PROJECT_WRITABLE_WIDTH
+            ]
+            if _cell_as_text(edited, 0) != _cell_as_text(current, 0):
+                raise ProjectCreationError("Le numero du projet ne peut pas etre modifie ici.")
+            if expected_values is not None:
+                expected = _ensure_width(list(expected_values), width=PROJECT_WRITABLE_WIDTH)[
+                    :PROJECT_WRITABLE_WIDTH
+                ]
+                if not all(
+                    _same_cell(actual, wanted)
+                    for actual, wanted in zip(current, expected, strict=True)
+                ):
+                    raise ProjectCreationError(
+                        "La ligne a ete modifiee dans le fichier partage. "
+                        "Actualisez le repertoire avant de recommencer.",
                     )
-            return None
+
+            await self._workbook.update_range_values(
+                worksheet_name,
+                _row_address(row_index, width=PROJECT_WRITABLE_WIDTH),
+                [edited],
+            )
 
     async def upsert_project(
         self,
@@ -213,6 +299,29 @@ def _first_available_main_project_row_index(rows: list[list[Any]]) -> int | None
         if MAIN_PROJECT_RE.fullmatch(number) and project_info_columns_empty(row):
             return index
     return None
+
+
+def _find_next_available(rows: list[list[Any]]) -> NextAvailableProject | None:
+    for index, row in enumerate(rows):
+        number = _cell_as_text(row, 0)
+        if MAIN_PROJECT_RE.fullmatch(number) and project_info_columns_empty(row):
+            return NextAvailableProject(
+                number=parse_project_number(number),
+                row_index=index,
+            )
+    return None
+
+
+def _same_cell(left: object, right: object) -> bool:
+    return _cell_text_value(left) == _cell_text_value(right)
+
+
+def _cell_text_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, date):
+        return value.strftime("%d.%m.%Y")
+    return str(value).strip()
 
 
 @asynccontextmanager

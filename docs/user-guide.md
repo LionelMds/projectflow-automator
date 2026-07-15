@@ -111,7 +111,7 @@ l'utilisateur doit se reconnecter a Microsoft depuis l'application.
 6. Cliquer sur `Creer`.
 
 ProjectFlow cree le dossier projet, copie le dossier de reference sans ecraser, remplit la
-fiche client, inscrit la date de creation en `B9`, et met a jour le repertoire chantier. Si ce
+fiche client, inscrit la date d'atelier en `E2` sans modifier `B9`, et met a jour le repertoire chantier. Si ce
 repertoire est dans OneDrive, l'ecriture se fait directement dans le classeur cloud partage et
 non dans la copie locale synchronisee.
 Apres une creation reussie, ProjectFlow ouvre le dossier projet et affiche une confirmation.
@@ -127,6 +127,53 @@ projet. Il ne modifie aucun dossier, aucune fiche, aucun repertoire et aucune co
 
 Le bouton `Ouvrir dossier` ouvre le dossier projet courant dans l'explorateur Windows ou le
 Finder macOS. Pour un sous-projet, il ouvre le dossier parent du projet.
+
+## Repertoire chantier
+
+L'onglet `Repertoire chantier` affiche une vue de travail du classeur Excel partage. A l'ouverture
+de l'onglet, ProjectFlow charge l'annee selectionnee et place la vue quelques lignes avant la
+prochaine ligne disponible. Le tableau reste ensuite defilable vers les lignes precedentes et la
+recherche filtre par numero, client, contact ou designation.
+
+Les colonnes `A:E` sont les seules colonnes ProjectFlow affichees et modifiables. Selectionner une
+ligne, modifier la date, le client, le contact ou la designation, puis cliquer sur `Enregistrer la
+ligne`. ProjectFlow relit la ligne avant d'ecrire : si elle a change dans le classeur partage,
+l'enregistrement est refuse et il faut cliquer sur `Actualiser` avant de recommencer. Les colonnes
+comptables `F:L` ne sont jamais copiees ni reecrites par cet onglet.
+
+Les cellules modifiees sont surlignees en vert pale tant qu'elles ne sont pas appliquees. Si la
+valeur revient a son contenu initial, la surbrillance disparait. Elle est aussi retiree apres un
+enregistrement reussi ou une mise a jour complete du projet.
+
+Le bouton `Nouveau projet` bascule vers le formulaire principal avec l'annee selectionnee afin de
+creer un projet selon le flux habituel.
+
+Le bouton `Mettre à jour le projet` agit sur la ligne sélectionnée après confirmation. Il reprend
+la désignation, le client et le contact du tableau, relit la fiche pour conserver la localisation
+et la personne responsable, puis réapplique la fiche, le répertoire et les intégrations activées
+dans les paramètres. Outlook, Planner et l'épinglage restent idempotents : les éléments existants
+sont réutilisés ou ajustés, sans doublon. La copie du dossier de référence n'est pas relancée.
+
+## Sortie dossier
+
+L'onglet `Sortie dossier` prepare un dossier de documents a transmettre ou imprimer sans modifier
+les fichiers du projet.
+
+1. Saisir l'annee et le numero du projet, puis cliquer sur `Charger`.
+2. Choisir la fiche dossier Excel. La premiere fiche est selectionnee automatiquement, mais
+   toutes les fiches trouvees a la racine et dans le sous-dossier numerote restent disponibles.
+3. Choisir, si necessaire, le PDF de prise de cote initiale.
+4. Cliquer sur `Parcourir` dans le groupe `Photos`. Le dialogue s'ouvre directement dans le
+   sous-dossier `photos`; selectionner une ou plusieurs images. Seules les images ajoutees sont
+   reprises dans la sortie. Cliquer sur une image pour afficher son apercu simple.
+5. Cliquer sur `Parcourir` dans le groupe `Plans d'execution`. Le dialogue s'ouvre directement
+   dans `Plans/Plan d'execution`; selectionner les PDF a copier.
+6. Cliquer sur `Creer dossier de sortie`.
+
+ProjectFlow cree un dossier horodate sous `Sorties dossier`, avec les sous-dossiers `01 - Fiche
+dossier`, `02 - Prise de cote`, `03 - Photos` et `04 - Plans`. Chaque document selectionne y est
+copie individuellement. Les fichiers sources ne sont ni renommes, ni modifies, ni ecrases.
+Une confirmation propose ensuite d'ouvrir le dossier de sortie.
 
 ## Charger une fiche existante
 

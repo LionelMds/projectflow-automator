@@ -36,8 +36,8 @@ def test_fill_fiche_prefers_fiche_candidate_and_renames_to_standard(tmp_path: Pa
     assert loaded.localisation == "Zurich"
     assert loaded.gere_par == "LM"
     workbook = load_workbook(fiche_path)
-    assert workbook.active["B9"].value.date() == date(2026, 5, 6)
-    assert workbook.active["B9"].number_format == "DD.MM.YYYY"
+    assert workbook.active["B9"].value is None
+    assert workbook.active["E2"].value == "fiche d'atelier le 06.05.2026"
     workbook.close()
 
 
@@ -69,7 +69,7 @@ def test_locate_fiche_finds_subproject_subfolder(tmp_path: Path) -> None:
     assert located == fiche_path
 
 
-def test_fill_fiche_keeps_existing_creation_date(tmp_path: Path) -> None:
+def test_fill_fiche_does_not_touch_existing_creation_date(tmp_path: Path) -> None:
     path = tmp_path / "modele fiche.xlsx"
     workbook = Workbook()
     workbook.active["B9"] = date(2025, 1, 2)
@@ -81,6 +81,41 @@ def test_fill_fiche_keeps_existing_creation_date(tmp_path: Path) -> None:
 
     loaded = load_workbook(fiche_path)
     assert loaded.active["B9"].value.date() == date(2025, 1, 2)
+    loaded.close()
+
+
+def test_fill_fiche_keeps_existing_atelier_date(tmp_path: Path) -> None:
+    path = tmp_path / "modele fiche.xlsx"
+    workbook = Workbook()
+    workbook.active["E2"] = "fiche d'atelier le 02.01.2025"
+    workbook.save(path)
+    workbook.close()
+    project = ProjectInput(number=parse_project_number("2026-4995"))
+
+    fiche_path = FicheService(today=lambda: date(2026, 5, 6)).fill_fiche(tmp_path, project)
+
+    loaded = load_workbook(fiche_path)
+    assert loaded.active["E2"].value == "fiche d'atelier le 02.01.2025"
+    loaded.close()
+
+
+def test_ensure_atelier_date_repairs_existing_fiche_without_overwriting_fields(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "fiche.xlsx"
+    workbook = Workbook()
+    workbook.active["D3"] = "Societe : Information conservee"
+    workbook.active["E2"] = "fiche d'atelier le"
+    workbook.active["B9"] = date(2024, 3, 4)
+    workbook.save(path)
+    workbook.close()
+
+    FicheService(today=lambda: date(2026, 7, 15)).ensure_atelier_date(path)
+
+    loaded = load_workbook(path)
+    assert loaded.active["D3"].value == "Societe : Information conservee"
+    assert loaded.active["B9"].value.date() == date(2024, 3, 4)
+    assert loaded.active["E2"].value == "fiche d'atelier le 15.07.2026"
     loaded.close()
 
 

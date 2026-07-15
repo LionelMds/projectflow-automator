@@ -20,6 +20,11 @@ PREFIX_RE = re.compile(
     "^\\s*(?P<label>societe|soci\u00e9t\u00e9|contact|projet|localisation)\\s*:\\s*",
     re.IGNORECASE,
 )
+ATELIER_PREFIX_RE = re.compile(
+    r"^\s*fiche\s+d['\u2019]atelier\s+le\s*:?[\s]*$",
+    re.IGNORECASE,
+)
+ATELIER_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}\s*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,8 +106,21 @@ class FicheService:
             _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
             if project.gere_par.strip():
                 worksheet["C6"] = project.gere_par.strip()
-            self._write_creation_date(worksheet)
+            self._write_atelier_date(worksheet)
             workbook.save(fiche_path)
+        finally:
+            workbook.close()
+        return fiche_path
+
+    def ensure_atelier_date(self, fiche_path: Path) -> Path:
+        """Complete E2 without changing the rest of an existing fiche."""
+        workbook = load_workbook(fiche_path)
+        try:
+            worksheet = _active_worksheet(workbook)
+            current = "" if worksheet["E2"].value is None else str(worksheet["E2"].value).strip()
+            if not ATELIER_DATE_RE.search(current):
+                self._write_atelier_date(worksheet)
+                workbook.save(fiche_path)
         finally:
             workbook.close()
         return fiche_path
@@ -132,7 +150,7 @@ class FicheService:
             _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
             if project.gere_par.strip():
                 worksheet["C6"] = project.gere_par.strip()
-            self._write_creation_date(worksheet)
+            self._write_atelier_date(worksheet)
             workbook.save(target_path)
         finally:
             workbook.close()
@@ -153,12 +171,16 @@ class FicheService:
         finally:
             workbook.close()
 
-    def _write_creation_date(self, worksheet: Worksheet) -> None:
-        cell = worksheet["B9"]
-        if cell.value not in (None, ""):
+    def _write_atelier_date(self, worksheet: Worksheet) -> None:
+        cell = worksheet["E2"]
+        current = "" if cell.value is None else str(cell.value).strip()
+        if ATELIER_DATE_RE.search(current):
             return
-        cell.value = self._today()
-        cell.number_format = "DD.MM.YYYY"
+        today = self._today().strftime("%d.%m.%Y")
+        if not current or ATELIER_PREFIX_RE.fullmatch(current):
+            cell.value = f"fiche d'atelier le {today}"
+            return
+        cell.value = f"{current.rstrip()} {today}"
 
 
 def standard_fiche_path(project_dir: Path, number: ProjectNumber) -> Path:

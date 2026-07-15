@@ -4,11 +4,13 @@ from datetime import date
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QWidget
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QTabWidget, QVBoxLayout, QWidget
 
 from projectflow.config import AppConfig
 from projectflow.platform.paths import native_path_text
 from projectflow.ui.creation_tab import CreationTab
+from projectflow.ui.repertoire_tab import RepertoireDossierTab
+from projectflow.ui.sortie_tab import SortieDossierTab
 
 
 class MainWindow(QMainWindow):
@@ -27,11 +29,21 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 680)
 
         central = QWidget()
-        layout = QHBoxLayout(central)
+        tabs = QTabWidget(central)
+        self.tabs = tabs
         self.creation_tab = CreationTab()
-        self.creation_tab.year_combo.addItems([str(date.today().year), str(date.today().year + 1)])
+        years = [str(date.today().year), str(date.today().year + 1)]
+        self.creation_tab.year_combo.addItems(years)
+        self.sortie_tab = SortieDossierTab()
+        self.sortie_tab.year_combo.addItems(years)
+        self.repertoire_tab = RepertoireDossierTab()
+        self.repertoire_tab.year_combo.addItems(years)
         self.apply_config_labels()
-        layout.addWidget(self.creation_tab)
+        tabs.addTab(self.creation_tab, "Creation projet")
+        tabs.addTab(self.sortie_tab, "Sortie dossier")
+        tabs.addTab(self.repertoire_tab, "Repertoire chantier")
+        central_layout = QVBoxLayout(central)
+        central_layout.addWidget(tabs)
         self.setCentralWidget(central)
 
         self._build_header()
@@ -98,6 +110,10 @@ class MainWindow(QMainWindow):
             self.showNormal()
         self.raise_()
         self.activateWindow()
+
+    def show_creation_tab(self) -> None:
+        self.tabs.setCurrentWidget(self.creation_tab)
+        self.show_and_raise()
 
     def request_quit(self) -> None:
         self._quit_requested = True

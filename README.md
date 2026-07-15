@@ -178,7 +178,7 @@ Le MVP couvre :
 - creation projet principal et sous-projet,
 - copie non destructive du dossier de reference,
 - fiche dossier locale via `openpyxl`,
-- date de creation inscrite dans `B9` de la fiche,
+- date d'atelier inscrite dans `E2` de la fiche, sans modifier `B9`,
 - repertoire chantier via fichier Excel local hors OneDrive, ou via Microsoft Graph Excel si le
   fichier est dans OneDrive,
 - tache Microsoft Planner optionnelle via Graph, sans doublon par numero de projet, avec choix
@@ -187,7 +187,11 @@ Le MVP couvre :
   fusionnees,
 - conservation de la colonne F du repertoire, le champ `Gere par` restant limite a la fiche,
 - bouton `Suivant disponible` base sur une ligne projet principal dont B, C, D et E sont vides,
+- onglet `Repertoire chantier` avec recherche, positionnement pres de la prochaine ligne
+  disponible, defilement vers les anciennes lignes et edition sure de `A:E` uniquement,
 - `Charger`, `Ouvrir dossier`, `Ouvrir fiche`, `Mettre a jour`,
+- onglet `Sortie dossier` pour selectionner la fiche, la prise de cote, les photos et les plans,
+  avec selection manuelle des photos/plans, apercu photo simple et creation d'un dossier de sortie,
 - relance de `Creer` sur projet existant pour reappliquer Outlook/epingle sans ecraser,
 - icone de zone de notification Windows / barre des menus macOS avec mini-formulaire de creation,
 - Outlook local Windows via le profil Outlook classique, desactive par defaut,

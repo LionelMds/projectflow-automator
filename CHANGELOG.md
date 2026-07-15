@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 0.1.33
+
+- Ajoute l'onglet `Sortie dossier` pour preparer une sortie complete par numero de projet.
+- Repertorie les disponibilites de la fiche, du PDF de prise de cote, des photos et des plans,
+  puis ouvre les dialogues `Parcourir` directement dans les bons sous-dossiers.
+- Remplace la liste complete des photos par une liste des fichiers ajoutes manuellement et un
+  apercu simple de la photo selectionnee.
+- Remplace l'impression composite par un dossier horodate contenant une copie de chaque document
+  selectionne, sans modifier les originaux ni melanger les formats A4/A3.
+- Demande si l'utilisateur souhaite ouvrir le dossier de sortie juste apres sa creation.
+- Complete la cellule `E2` des fiches avec `fiche d'atelier le JJ.MM.AAAA`, sans ajouter la date
+  une seconde fois lors d'une mise a jour.
+- Repare aussi `E2` lors de la recreation d'un projet existant, sans reecrire les informations
+  deja presentes dans la fiche ni modifier `B9`.
+- Ajoute l'onglet `Repertoire chantier` avec recherche par numero/client/contact/designation,
+  defilement libre dans les anciennes lignes et positionnement initial autour de la prochaine
+  ligne disponible.
+- Permet de modifier directement les colonnes ProjectFlow `A:E` avec verification de conflit
+  avant ecriture. Les colonnes comptables `F:L` restent hors du modele et ne sont jamais reecrites.
+- Ajoute `Mettre à jour le projet` dans cet onglet : après confirmation, la fiche et le répertoire
+  sont mis à jour, puis Outlook, Planner et l'épinglage configurés sont réappliqués sans doublon.
+- Surligne les cellules modifiées dans le tableau et retire la surbrillance après application
+  de la modification.
+
 ## 0.1.32
 
 - Supprime le timeout applicatif de 30 secondes sur les appels Microsoft Graph et passe

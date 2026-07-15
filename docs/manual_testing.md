@@ -5,7 +5,7 @@
 - Apres creation, le dossier projet s'ouvre et un message de confirmation s'affiche.
 - La copie du dossier de reference n'ecrase pas les fichiers existants.
 - La fiche est renommee au format `{numero} - Fiche dossier clients.xlsx`.
-- La fiche contient la date de creation dans `B9`.
+- La fiche contient `fiche d'atelier le JJ.MM.AAAA` dans `E2` et `B9` reste intacte.
 - Le repertoire chantier local ouvert dans Excel accepte une mise a jour apres sauvegarde.
 - La colonne F du repertoire n'est pas modifiee par le champ `Gere par`.
 - `Suivant disponible` ignore les lignes dont une cellule B, C, D ou E est deja remplie.
@@ -24,6 +24,15 @@
   doublon : Outlook pour les projets principaux, Planner pour les projets principaux et
   sous-projets.
 - `Ouvrir dossier` ouvre le dossier projet courant dans l'explorateur/Finder.
+- L'onglet `Sortie dossier` charge les fiches, le PDF de prise de cote, les photos et les plans
+  depuis un projet existant sans modifier les sources.
+- Dans `Sortie dossier`, `Parcourir` ouvre directement `photos` et permet d'ajouter plusieurs
+  images ; cliquer sur une image affiche son apercu simple.
+- Dans `Sortie dossier`, `Parcourir` ouvre directement `Plans/Plan d'execution` et permet
+  d'ajouter plusieurs PDF.
+- La sortie dossier cree un dossier horodate avec des copies dans `01 - Fiche dossier`,
+  `02 - Prise de cote`, `03 - Photos` et `04 - Plans`, sans modifier les sources.
+- Apres creation, une confirmation propose d'ouvrir le dossier de sortie ; `Non` le laisse ferme.
 - `Ouvrir fiche` ouvre Excel via l'application par defaut.
 - L'icone ProjectFlow apparait dans la zone de notification Windows ou la barre des menus macOS.
 - Fermer la fenetre principale masque l'application ; `Quitter ProjectFlow` dans le menu de

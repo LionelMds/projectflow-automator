@@ -49,9 +49,23 @@ class FakeProjectService:
 
 
 class FakeRepertoireService:
+    def __init__(self) -> None:
+        self.updated_rows: list[tuple[int, tuple[Any, ...], tuple[Any, ...]]] = []
+
     async def next_available(self, *, year: int) -> NextAvailableProject:
         assert year == 2026
         return NextAvailableProject(number=parse_project_number("2026-4995"), row_index=1)
+
+    async def update_editable_row(
+        self,
+        *,
+        year: int,
+        row_index: int,
+        values: tuple[Any, ...],
+        expected_values: tuple[Any, ...],
+    ) -> None:
+        assert year == 2026
+        self.updated_rows.append((row_index, values, expected_values))
 
 
 class FakeServices:
@@ -205,6 +219,64 @@ async def test_controller_next_available_prefills_identity(qtbot: Any, tmp_path:
 
     assert window.creation_tab.project_id_edit.text() == "4995"
     assert window.creation_tab.subproject_edit.text() == ""
+
+
+@pytest.mark.asyncio
+async def test_controller_repertoire_sync_updates_full_project(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    fiche_path = project_dir / "2026-4995 - Fiche dossier clients.xlsx"
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet["C3"] = "2026-4995"
+    worksheet["D3"] = "Societe : Ancien client"
+    worksheet["D4"] = "Contact : Ancien contact"
+    worksheet["D5"] = "Projet : Ancienne designation"
+    worksheet["D6"] = "Localisation : Geneve"
+    worksheet["C6"] = "LM"
+    workbook.save(fiche_path)
+    workbook.close()
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    values = (
+        "2026-4995",
+        "15.07.2026",
+        "Nouveau client",
+        "Nouveau contact",
+        "Nouveau projet",
+    )
+    expected = (
+        "2026-4995",
+        "14.07.2026",
+        "Ancien client",
+        "Ancien contact",
+        "Ancienne designation",
+    )
+
+    await controller._sync_project_from_repertoire(  # noqa: SLF001
+        row_index=7,
+        values=values,
+        expected_values=expected,
+    )
+
+    assert services.repertoire_service.updated_rows == [(7, values, expected)]
+    assert len(services.project_service.updated) == 1
+    project = services.project_service.updated[0]
+    assert str(project.number) == "2026-4995"
+    assert project.designation == "Nouveau projet"
+    assert project.societe == "Nouveau client"
+    assert project.contact == "Nouveau contact"
+    assert project.localisation == "Geneve"
+    assert project.gere_par == "LM"
+    assert project.planner.enabled is False
 
 
 @pytest.mark.asyncio
@@ -648,6 +720,71 @@ def test_controller_open_repertoire_reports_missing_path(
     controller.open_repertoire()
 
     assert "Repertoire chantier non configure" in window.creation_tab.logs.toPlainText()
+
+
+def test_controller_load_sortie_dossier_repertories_project_files(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    (project_dir / "photos").mkdir(parents=True)
+    (project_dir / "Plans" / "Plan d'execution").mkdir(parents=True)
+    (project_dir / "fiche.xlsx").touch()
+    (project_dir / "cote.pdf").touch()
+    (project_dir / "photos" / "photo.jpg").touch()
+    (project_dir / "Plans" / "Plan d'execution" / "plan.pdf").touch()
+    window.sortie_tab.set_project_identity(year="2026", project_id="4995")
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.load_sortie_dossier()
+
+    assert window.sortie_tab.fiche_list.count() == 1
+    assert window.sortie_tab.mesure_list.count() == 1
+    assert window.sortie_tab.photo_list.count() == 0
+    assert window.sortie_tab.plan_list.count() == 0
+    assert window.sortie_tab.photo_browse_button.isEnabled()
+    assert window.sortie_tab.plan_browse_button.isEnabled()
+    assert "Projet charge" in window.sortie_tab.logs.text()
+
+
+def test_controller_create_sortie_dossier_logs_success(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    fiche = project_dir / "fiche.xlsx"
+    workbook = Workbook()
+    workbook.active["E2"] = "fiche d'atelier le"
+    workbook.save(fiche)
+    workbook.close()
+    window.sortie_tab.set_project_identity(year="2026", project_id="4995")
+    opened: list[Path] = []
+    monkeypatch.setattr("projectflow.ui.controller.open_path", opened.append)
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.load_sortie_dossier()
+    controller.create_sortie_dossier()
+
+    assert "Dossier de sortie cree" in window.sortie_tab.logs.text()
+    output_dir = next((project_dir / "Sorties dossier").iterdir())
+    assert opened == [output_dir]
+    assert "Dossier de sortie ouvert" in window.sortie_tab.logs.text()
 
 
 def test_update_prompt_includes_release_notes() -> None:

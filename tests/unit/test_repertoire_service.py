@@ -80,6 +80,77 @@ async def test_next_available_returns_first_main_project_with_empty_info_columns
 
 
 @pytest.mark.asyncio
+async def test_read_snapshot_exposes_project_rows_and_next_available_row() -> None:
+    workbook = FakeWorkbook([
+        ["NO.", "DATE", "CLIENT", "CONTACT", "DESCRIPTION"],
+        ["2026-4995", "11.05.2026", "Balz", "Lionel", "Escalier"],
+        ["2026-4996", "", "", "", ""],
+        ["2026-4996-2", "", "", "", "Variante"],
+    ])
+
+    snapshot = await RepertoireService(workbook).read_snapshot(year=2026)
+
+    assert [row.number for row in snapshot.rows] == [
+        "2026-4995",
+        "2026-4996",
+        "2026-4996-2",
+    ]
+    assert [row.row_index for row in snapshot.rows] == [1, 2, 3]
+    assert snapshot.next_available is not None
+    assert str(snapshot.next_available.number) == "2026-4996"
+    assert snapshot.next_available.row_index == 2
+
+
+@pytest.mark.asyncio
+async def test_update_editable_row_writes_only_a_to_e() -> None:
+    workbook = FakeWorkbook([[
+        "2026-4995",
+        "11.05.2026",
+        "Balz",
+        "Lionel",
+        "Escalier",
+        "Valeur comptable",
+        "Montant comptable",
+    ]])
+
+    await RepertoireService(workbook).update_editable_row(
+        year=2026,
+        row_index=0,
+        values=("2026-4995", "12.05.2026", "Client", "Contact", "Nouveau projet"),
+        expected_values=("2026-4995", "11.05.2026", "Balz", "Lionel", "Escalier"),
+    )
+
+    assert workbook.updated_ranges == [
+        (
+            "2026",
+            "A1:E1",
+            [["2026-4995", "12.05.2026", "Client", "Contact", "Nouveau projet"]],
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_editable_row_rejects_concurrent_change() -> None:
+    workbook = FakeWorkbook([[
+        "2026-4995",
+        "11.05.2026",
+        "Client modifie",
+        "Lionel",
+        "Escalier",
+    ]])
+
+    with pytest.raises(ProjectCreationError, match="modifiee dans le fichier partage"):
+        await RepertoireService(workbook).update_editable_row(
+            year=2026,
+            row_index=0,
+            values=("2026-4995", "12.05.2026", "Client", "Contact", "Nouveau projet"),
+            expected_values=("2026-4995", "11.05.2026", "Balz", "Lionel", "Escalier"),
+        )
+
+    assert workbook.updated_ranges == []
+
+
+@pytest.mark.asyncio
 async def test_upsert_project_updates_existing_empty_row() -> None:
     workbook = FakeWorkbook([["2026-4995", "", "", "", "", "Ne pas toucher"]])
     project = ProjectInput(

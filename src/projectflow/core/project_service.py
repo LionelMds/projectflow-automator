@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 from projectflow.config import AppConfig, OutlookFolderConfig
-from projectflow.core.fiche_service import FicheService, standard_fiche_path
+from projectflow.core.fiche_service import FicheService
 from projectflow.core.models import ProjectCreationResult, ProjectInput
 from projectflow.core.numero import project_folder_name
 from projectflow.core.repertoire_service import RepertoireService
@@ -77,9 +77,15 @@ class ProjectService:
                 force_overwrite=force_overwrite,
             )
         else:
-            existing_fiche_path = standard_fiche_path(project_dir, project.number)
-            if existing_fiche_path.exists():
-                fiche_path = existing_fiche_path
+            try:
+                existing_fiche_path = self._fiche_service.locate_fiche(
+                    project_dir,
+                    project.number,
+                )
+            except ProjectCreationError:
+                existing_fiche_path = None
+            if existing_fiche_path is not None:
+                fiche_path = self._fiche_service.ensure_atelier_date(existing_fiche_path)
 
         outlook_created = await self._apply_outlook(project, outlook)
         planner_task_id, planner_created, planner_updated = await self._apply_planner(

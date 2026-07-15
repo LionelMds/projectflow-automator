@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from projectflow.config import AppConfig, OutlookFolderConfig
 from projectflow.core.fiche_service import FicheService
@@ -175,9 +176,15 @@ async def test_recreate_existing_project_reapplies_integrations_without_updating
     config.paths.dossier_reference.mkdir(parents=True)
     Workbook().save(config.paths.dossier_reference / "modele fiche.xlsx")
     project_dir = config.paths.racine_projets / "2026" / "2026-4995"
-    project_dir.mkdir(parents=True)
-    fiche_path = project_dir / "2026-4995 - Fiche dossier clients.xlsx"
-    Workbook().save(fiche_path)
+    fiche_dir = project_dir / "2026-4995"
+    fiche_dir.mkdir(parents=True)
+    fiche_path = fiche_dir / "2026-4995 - Fiche dossier clients.xlsx"
+    workbook = Workbook()
+    workbook.active["D3"] = "Societe : Information conservee"
+    workbook.active["E2"] = "fiche d'atelier le"
+    workbook.active["B9"] = date(2024, 3, 4)
+    workbook.save(fiche_path)
+    workbook.close()
     config.outlook.enabled = True
     config.planner.enabled = True
 
@@ -188,7 +195,7 @@ async def test_recreate_existing_project_reapplies_integrations_without_updating
     pinned: list[Path] = []
     service = ProjectService(
         config=config,
-        fiche_service=FicheService(),
+        fiche_service=FicheService(today=lambda: date(2026, 7, 15)),
         repertoire_service=repertoire,  # type: ignore[arg-type]
         outlook=outlook,
         planner=planner,
@@ -205,6 +212,11 @@ async def test_recreate_existing_project_reapplies_integrations_without_updating
     assert result.project_dir_created is False
     assert result.fiche_path == str(fiche_path)
     assert not (project_dir / "modele fiche.xlsx").exists()
+    workbook = load_workbook(fiche_path)
+    assert workbook.active["D3"].value == "Societe : Information conservee"
+    assert workbook.active["B9"].value.date() == date(2024, 3, 4)
+    assert workbook.active["E2"].value == "fiche d'atelier le 15.07.2026"
+    workbook.close()
     assert repertoire.calls == []
     assert outlook.paths == [["2026", "2026-4995 (Nouveau texte)"]]
     assert planner.projects == [project]
