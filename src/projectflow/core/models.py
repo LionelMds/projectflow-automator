@@ -37,3 +37,5 @@ class ProjectCreationResult:
     planner_task_id: str | None = None
     planner_task_created: bool = False
     planner_task_updated: bool = False
+    outlook_error: str | None = None
+    planner_error: str | None = None

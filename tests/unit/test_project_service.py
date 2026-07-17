@@ -17,7 +17,7 @@ from projectflow.core.project_service import (
     outlook_project_folder_name,
     render_outlook_folder_name,
 )
-from projectflow.exceptions import ConfigError
+from projectflow.exceptions import ConfigError, OutlookError
 
 
 class FakeRepertoireService:
@@ -48,6 +48,12 @@ class BrokenOutlook:
     async def ensure_folder_path(self, names: list[str]) -> object:
         del names
         return object()
+
+
+class FailingDuringCreationOutlook(FakeOutlook):
+    async def ensure_folder_path(self, names: list[str]) -> object:
+        del names
+        raise OutlookError("Impossible de creer le dossier Outlook")
 
 
 class FakePlannerResult:
@@ -164,6 +170,41 @@ async def test_create_project_creates_folder_copies_reference_and_calls_integrat
     assert result.planner_task_created is True
     assert result.planner_task_id == "task-id"
     assert pinned == [project_dir]
+
+
+@pytest.mark.asyncio
+async def test_create_project_still_creates_planner_task_when_outlook_fails(
+    tmp_path: Path,
+) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir(parents=True)
+    Workbook().save(config.paths.dossier_reference / "modele fiche.xlsx")
+    config.outlook.enabled = True
+    config.planner.enabled = True
+
+    planner = FakePlanner()
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=FakeRepertoireService(),  # type: ignore[arg-type]
+        outlook=FailingDuringCreationOutlook(),
+        planner=planner,
+    )
+    project = ProjectInput(
+        number=parse_project_number("2026-4996"),
+        designation="Escalier",
+        planner=PlannerTaskInput(enabled=True),
+    )
+
+    result = await service.create_project(project)
+
+    assert result.outlook_folder_created is False
+    assert result.outlook_error == "Impossible de creer le dossier Outlook"
+    assert planner.projects == [project]
+    assert result.planner_task_created is True
+    assert result.planner_task_id == "task-id"
 
 
 @pytest.mark.asyncio

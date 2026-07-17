@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.34
+
+- Isole les integrations Outlook et Planner lors de la creation ou de la mise a jour d'un projet :
+  une erreur Outlook ne bloque plus la creation de la tache Planner.
+- Affiche l'erreur de l'integration en echec dans les logs au lieu de terminer silencieusement
+  la tache asynchrone de creation.
+
 ## 0.1.33
 
 - Ajoute l'onglet `Sortie dossier` pour preparer une sortie complete par numero de projet.

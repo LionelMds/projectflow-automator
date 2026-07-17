@@ -96,7 +96,7 @@ def test_create_output_folder_copies_documents_without_modifying_sources(
         plan_paths=(plan,),
     )
     service = SortieDossierService(
-        FicheService(),
+        FicheService(today=lambda: date(2026, 7, 15)),
         now=lambda: datetime(2026, 7, 15, 10, 11, 12, tzinfo=UTC),
     )
 

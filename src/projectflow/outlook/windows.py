@@ -178,7 +178,10 @@ def _ensure_child_folder(parent: Any, name: str) -> Any:
         except (AttributeError, RuntimeError, OSError):
             return existing_project_folder
         return existing_project_folder
-    return folders.Add(name)
+    try:
+        return folders.Add(name)
+    except (_com_error_type(), AttributeError, RuntimeError, OSError) as exc:
+        raise OutlookError(f"Impossible de creer le dossier Outlook: {name}") from exc
 
 
 def _find_folder(folders: Any, name: str) -> Any | None:

@@ -810,18 +810,24 @@ class ProjectFlowController:
             self._log("+ Informations existantes conservees")
 
     def _log_creation_integrations(self, result: ProjectCreationResult) -> None:
-        if self._config.outlook.enabled and result.outlook_folder_created:
+        if result.outlook_error:
+            self._log(f"! Dossiers Outlook non crees: {result.outlook_error}")
+        elif self._config.outlook.enabled and result.outlook_folder_created:
             self._log("+ Dossiers Outlook crees")
         elif self._config.outlook.enabled:
             self._log("! Outlook active mais aucun dossier Outlook cree")
         else:
             self._log("-> Outlook desactive")
-        if self._config.planner.enabled and result.planner_task_created:
+        if result.planner_error:
+            self._log(f"! Tache Planner non creee: {result.planner_error}")
+        elif self._config.planner.enabled and result.planner_task_created:
             self._log("+ Tache Planner creee")
         elif self._config.planner.enabled and result.planner_task_updated:
             self._log("+ Tache Planner mise a jour")
         elif self._config.planner.enabled and result.planner_task_id:
             self._log("+ Tache Planner deja existante")
+        elif self._config.planner.enabled:
+            self._log("! Planner actif mais aucune tache n'a ete associee a ce projet")
 
     def _open_project_folder(self, result: ProjectCreationResult) -> None:
         try:

@@ -87,11 +87,13 @@ class ProjectService:
             if existing_fiche_path is not None:
                 fiche_path = self._fiche_service.ensure_atelier_date(existing_fiche_path)
 
-        outlook_created = await self._apply_outlook(project, outlook)
-        planner_task_id, planner_created, planner_updated = await self._apply_planner(
-            project,
-            planner,
-        )
+        outlook_created, outlook_error = await self._apply_outlook(project, outlook)
+        (
+            planner_task_id,
+            planner_created,
+            planner_updated,
+            planner_error,
+        ) = await self._apply_planner(project, planner)
 
         if self._pin_path is not None:
             self._pin_path(project_dir)
@@ -104,6 +106,8 @@ class ProjectService:
             planner_task_id=planner_task_id,
             planner_task_created=planner_created,
             planner_task_updated=planner_updated,
+            outlook_error=outlook_error,
+            planner_error=planner_error,
         )
 
     async def create_subproject(self, project: ProjectInput) -> ProjectCreationResult:
@@ -118,10 +122,12 @@ class ProjectService:
         planner = self._validated_planner() if project.planner.enabled else None
         fiche_path = self._fiche_service.fill_subproject_fiche(project_dir, project)
         await self._repertoire_service.upsert_project(project)
-        planner_task_id, planner_created, planner_updated = await self._apply_planner(
-            project,
-            planner,
-        )
+        (
+            planner_task_id,
+            planner_created,
+            planner_updated,
+            planner_error,
+        ) = await self._apply_planner(project, planner)
         return ProjectCreationResult(
             project_dir_created=False,
             project_dir=str(project_dir),
@@ -129,6 +135,7 @@ class ProjectService:
             planner_task_id=planner_task_id,
             planner_task_created=planner_created,
             planner_task_updated=planner_updated,
+            planner_error=planner_error,
         )
 
     async def update_project(self, project: ProjectInput) -> ProjectCreationResult:
@@ -145,11 +152,13 @@ class ProjectService:
             else self._fiche_service.fill_fiche(project_dir, project)
         )
         await self._repertoire_service.upsert_project(project, force_overwrite=True)
-        outlook_created = await self._apply_outlook(project, outlook)
-        planner_task_id, planner_created, planner_updated = await self._apply_planner(
-            project,
-            planner,
-        )
+        outlook_created, outlook_error = await self._apply_outlook(project, outlook)
+        (
+            planner_task_id,
+            planner_created,
+            planner_updated,
+            planner_error,
+        ) = await self._apply_planner(project, planner)
         if not project.is_subproject and self._pin_path is not None:
             self._pin_path(project_dir)
         return ProjectCreationResult(
@@ -160,6 +169,8 @@ class ProjectService:
             planner_task_id=planner_task_id,
             planner_task_created=planner_created,
             planner_task_updated=planner_updated,
+            outlook_error=outlook_error,
+            planner_error=planner_error,
         )
 
     @staticmethod
@@ -192,28 +203,40 @@ class ProjectService:
         self,
         project: ProjectInput,
         outlook: OutlookGateway | None,
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         if outlook is None:
-            return False
-        folder_paths = outlook_folder_paths(project, self._config.outlook.arborescence)
-        for folder_path in folder_paths:
-            await outlook.ensure_folder_path(folder_path)
-        return bool(folder_paths)
+            return False, None
+        try:
+            folder_paths = outlook_folder_paths(project, self._config.outlook.arborescence)
+            for folder_path in folder_paths:
+                await outlook.ensure_folder_path(folder_path)
+            return bool(folder_paths), None
+        except Exception as exc:  # noqa: BLE001 - isolate one integration from the others
+            return False, _integration_error_message(exc)
 
     @staticmethod
     async def _apply_planner(
         project: ProjectInput,
         planner: PlannerGateway | None,
-    ) -> tuple[str | None, bool, bool]:
+    ) -> tuple[str | None, bool, bool, str | None]:
         if planner is None:
-            return None, False, False
-        planner_result = await planner.ensure_project_task(project)
-        task_id = getattr(planner_result, "task_id", None)
-        return (
-            task_id if isinstance(task_id, str) else None,
-            bool(getattr(planner_result, "created", False)),
-            bool(getattr(planner_result, "updated", False)),
-        )
+            return None, False, False, None
+        try:
+            planner_result = await planner.ensure_project_task(project)
+            task_id = getattr(planner_result, "task_id", None)
+            return (
+                task_id if isinstance(task_id, str) else None,
+                bool(getattr(planner_result, "created", False)),
+                bool(getattr(planner_result, "updated", False)),
+                None,
+            )
+        except Exception as exc:  # noqa: BLE001 - isolate one integration from the others
+            return None, False, False, _integration_error_message(exc)
+
+
+def _integration_error_message(error: Exception) -> str:
+    message = str(error).strip()
+    return message or type(error).__name__
 
 
 def copy_reference_tree(reference_dir: Path, project_dir: Path) -> None:
