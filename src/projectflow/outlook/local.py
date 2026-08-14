@@ -17,6 +17,9 @@ class LocalOutlookGateway(Protocol):
     async def ensure_folder_path(self, names: list[str]) -> object:
         """Ensure the nested Outlook folder path exists."""
 
+    async def delete_folder_path(self, names: list[str]) -> bool:
+        """Delete the leaf Outlook folder when it exists."""
+
 
 def create_local_outlook_client(config: OutlookConfig) -> LocalOutlookGateway | None:
     if not config.enabled:

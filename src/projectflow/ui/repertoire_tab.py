@@ -25,7 +25,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from projectflow.core.repertoire_service import RepertoireRow, RepertoireSnapshot
+from projectflow.core.repertoire_service import (
+    NextAvailableProject,
+    RepertoireRow,
+    RepertoireSnapshot,
+)
 
 HEADERS = ("No.", "Date", "Client", "Contact", "Designation")
 _EMPTY_INDEX = QModelIndex()
@@ -38,6 +42,7 @@ class RepertoireTableModel(QAbstractTableModel):
         self._original: dict[int, tuple[Any, ...]] = {}
         self._dirty_cells: set[tuple[int, int]] = set()
         self._next_row_index: int | None = None
+        self._next_available: NextAvailableProject | None = None
 
     def rowCount(  # noqa: N802
         self,
@@ -122,6 +127,7 @@ class RepertoireTableModel(QAbstractTableModel):
         self._next_row_index = (
             snapshot.next_available.row_index if snapshot.next_available is not None else None
         )
+        self._next_available = snapshot.next_available
         self.endResetModel()
 
     def row_at(self, source_row: int) -> RepertoireRow | None:
@@ -132,6 +138,15 @@ class RepertoireTableModel(QAbstractTableModel):
     def original_values(self, row_index: int) -> tuple[Any, ...] | None:
         return self._original.get(row_index)
 
+    def original_rows(self) -> tuple[RepertoireRow, ...]:
+        return tuple(
+            RepertoireRow(row_index=row.row_index, values=self._original[row.row_index])
+            for row in self._rows
+        )
+
+    def next_available(self) -> NextAvailableProject | None:
+        return self._next_available
+
     def mark_saved(self, row_index: int, values: tuple[Any, ...]) -> None:
         for source_row, row in enumerate(self._rows):
             if row.row_index != row_index:
@@ -139,9 +154,7 @@ class RepertoireTableModel(QAbstractTableModel):
             updated = RepertoireRow(row_index=row_index, values=values)
             self._rows[source_row] = updated
             self._original[row_index] = values
-            self._dirty_cells = {
-                key for key in self._dirty_cells if key[0] != row_index
-            }
+            self._dirty_cells = {key for key in self._dirty_cells if key[0] != row_index}
             left = self.index(source_row, 0)
             right = self.index(source_row, len(HEADERS) - 1)
             self.dataChanged.emit(left, right)
@@ -159,6 +172,10 @@ class RepertoireDossierTab(QWidget):
     save_requested = Signal(int, object, object)
     sync_project_requested = Signal()
     new_project_requested = Signal()
+    open_project_requested = Signal()
+    create_subproject_requested = Signal()
+    duplicate_project_requested = Signal()
+    delete_project_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -167,6 +184,7 @@ class RepertoireDossierTab(QWidget):
         self._proxy.setSourceModel(self._model)
         self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._proxy.setFilterKeyColumn(-1)
+        self._loading = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -211,13 +229,26 @@ class RepertoireDossierTab(QWidget):
         self.table.setSortingEnabled(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setDefaultSectionSize(28)
+        self.table.doubleClicked.connect(lambda _index: self.open_project_requested.emit())
+        self.table.selectionModel().selectionChanged.connect(
+            lambda _selected, _deselected: self._update_action_states()
+        )
         root.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
-        actions.addStretch(1)
         self.new_project_button = QPushButton("Nouveau projet")
         self.new_project_button.clicked.connect(self.new_project_requested.emit)
         actions.addWidget(self.new_project_button)
+        self.open_project_button = QPushButton("Charger le projet")
+        self.open_project_button.clicked.connect(self.open_project_requested.emit)
+        actions.addWidget(self.open_project_button)
+        self.create_subproject_button = QPushButton("Créer sous-projet")
+        self.create_subproject_button.clicked.connect(self.create_subproject_requested.emit)
+        actions.addWidget(self.create_subproject_button)
+        self.duplicate_project_button = QPushButton("Dupliquer")
+        self.duplicate_project_button.clicked.connect(self.duplicate_project_requested.emit)
+        actions.addWidget(self.duplicate_project_button)
+        actions.addStretch(1)
         self.sync_project_button = QPushButton("Mettre à jour le projet")
         self.sync_project_button.setToolTip(
             "Mettre à jour la fiche et les intégrations configurées du projet sélectionné"
@@ -227,12 +258,21 @@ class RepertoireDossierTab(QWidget):
         self.save_button = QPushButton("Enregistrer la ligne")
         self.save_button.clicked.connect(self._save_selected)
         actions.addWidget(self.save_button)
+        self.delete_project_button = QPushButton("Supprimer avec éléments liés")
+        self.delete_project_button.setToolTip(
+            "Supprimer le projet sélectionné après confirmation et libérer son numéro"
+        )
+        self.delete_project_button.setStyleSheet("color: #B42318;")
+        self.delete_project_button.clicked.connect(self.delete_project_requested.emit)
+        actions.addWidget(self.delete_project_button)
         root.addLayout(actions)
+        self._update_action_states()
 
     def set_snapshot(self, snapshot: RepertoireSnapshot) -> None:
         self._model.set_snapshot(snapshot)
         self._resize_columns()
         self._position_near_next_available(snapshot)
+        self._update_action_states()
         if snapshot.next_available is None:
             self.status_label.setText(
                 f"{len(snapshot.rows)} lignes chargées. Aucune ligne disponible détectée."
@@ -246,10 +286,19 @@ class RepertoireDossierTab(QWidget):
             )
 
     def set_loading(self, *, loading: bool) -> None:
+        self._loading = loading
         self.load_button.setEnabled(not loading)
         self.refresh_button.setEnabled(not loading)
         self.save_button.setEnabled(not loading)
         self.sync_project_button.setEnabled(not loading)
+        self.open_project_button.setEnabled(not loading and self._selected_project_is_occupied())
+        self.create_subproject_button.setEnabled(
+            not loading and self._selected_project_is_occupied()
+        )
+        self.duplicate_project_button.setEnabled(
+            not loading and self._selected_project_is_occupied()
+        )
+        self.delete_project_button.setEnabled(not loading and self._selected_project_is_occupied())
         if loading:
             self.status_label.setText("Chargement du répertoire en cours…")
 
@@ -285,6 +334,12 @@ class RepertoireDossierTab(QWidget):
     def mark_saved(self, row_index: int, values: tuple[Any, ...]) -> None:
         self._model.mark_saved(row_index, values)
 
+    def original_rows(self) -> tuple[RepertoireRow, ...]:
+        return self._model.original_rows()
+
+    def next_available(self) -> NextAvailableProject | None:
+        return self._model.next_available()
+
     def _filter_rows(self, text: str) -> None:
         self._proxy.setFilterRegularExpression(QRegularExpression.escape(text.strip()))
 
@@ -293,6 +348,24 @@ class RepertoireDossierTab(QWidget):
         if payload is not None:
             row_index, values, original = payload
             self.save_requested.emit(row_index, values, original)
+
+    def _selected_project_is_occupied(self) -> bool:
+        payload = self.selected_row_payload()
+        if payload is None:
+            return False
+        _row_index, values, _original = payload
+        return any(_display_value(value).strip() for value in values[1:])
+
+    def _update_action_states(self) -> None:
+        occupied = self._selected_project_is_occupied() and not self._loading
+        for button in (
+            self.open_project_button,
+            self.create_subproject_button,
+            self.duplicate_project_button,
+            self.sync_project_button,
+            self.delete_project_button,
+        ):
+            button.setEnabled(occupied)
 
     def _resize_columns(self) -> None:
         self.table.resizeColumnsToContents()

@@ -85,6 +85,7 @@ def test_create_output_folder_copies_documents_without_modifying_sources(
     workbook = Workbook()
     workbook.active["E2"] = "fiche d'atelier le"
     workbook.active["B9"] = date(2024, 3, 4)
+    workbook.active["C9"] = "LM"
     workbook.save(fiche)
     workbook.close()
     original_photo = photo.read_bytes()
@@ -112,10 +113,12 @@ def test_create_output_folder_copies_documents_without_modifying_sources(
     output_workbook = load_workbook(copied_fiche)
     assert output_workbook.active["E2"].value == "fiche d'atelier le 15.07.2026"
     assert output_workbook.active["B9"].value.date() == date(2024, 3, 4)
+    assert output_workbook.active["C9"].value == "LM"
     output_workbook.close()
     source_workbook = load_workbook(fiche)
     assert source_workbook.active["E2"].value == "fiche d'atelier le"
     assert source_workbook.active["B9"].value.date() == date(2024, 3, 4)
+    assert source_workbook.active["C9"].value == "LM"
     source_workbook.close()
     assert (output_dir / "02 - Prise de cote" / mesure.name).exists()
     copied_photo = output_dir / "03 - Photos" / photo.name

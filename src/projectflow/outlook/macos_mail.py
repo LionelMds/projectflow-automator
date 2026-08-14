@@ -61,6 +61,29 @@ on run argv
 end run
 """
 
+DELETE_MAILBOX_SCRIPT = """
+on run argv
+    set accountName to item 1 of argv
+    set mailboxPath to item 2 of argv
+    tell application "Mail"
+        if accountName is "" then
+            if exists mailbox mailboxPath then
+                delete mailbox mailboxPath
+                return "1"
+            end if
+        else
+            tell account accountName
+                if exists mailbox mailboxPath then
+                    delete mailbox mailboxPath
+                    return "1"
+                end if
+            end tell
+        end if
+    end tell
+    return "0"
+end run
+"""
+
 
 class MacNativeMailClient:
     def __init__(
@@ -87,6 +110,9 @@ class MacNativeMailClient:
         await asyncio.to_thread(self._ensure_folder_path_sync, names)
         return object()
 
+    async def delete_folder_path(self, names: list[str]) -> bool:
+        return await asyncio.to_thread(self._delete_folder_path_sync, names)
+
     async def validate_target(self) -> None:
         await asyncio.to_thread(self.validate_target_sync)
 
@@ -100,6 +126,15 @@ class MacNativeMailClient:
         mailbox_path = "/".join(_mailbox_segment(name) for name in self._path_segments(names))
         account_name = "" if account.id == ON_MY_MAC_ID else account.id
         self._script_runner(ENSURE_MAILBOX_SCRIPT, [account_name, mailbox_path])
+
+    def _delete_folder_path_sync(self, names: list[str]) -> bool:
+        if not names:
+            raise ValueError("La liste de dossiers Mail ne peut pas etre vide.")
+        account = self._selected_account()
+        mailbox_path = "/".join(_mailbox_segment(name) for name in self._path_segments(names))
+        account_name = "" if account.id == ON_MY_MAC_ID else account.id
+        result = self._script_runner(DELETE_MAILBOX_SCRIPT, [account_name, mailbox_path])
+        return result.strip() == "1"
 
     def _path_segments(self, names: list[str]) -> list[str]:
         if self._base_folder == "root":

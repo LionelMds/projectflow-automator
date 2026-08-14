@@ -105,8 +105,8 @@ class FicheService:
             _write_prefixed(worksheet, "D5", "Projet", project.designation)
             _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
             if project.gere_par.strip():
-                worksheet["C6"] = project.gere_par.strip()
-            self._write_atelier_date(worksheet)
+                worksheet["C9"] = project.gere_par.strip()
+            self._write_creation_date(worksheet)
             workbook.save(fiche_path)
         finally:
             workbook.close()
@@ -130,7 +130,8 @@ class FicheService:
             return self.fill_fiche(project_dir, project)
 
         target_path = _preferred_standard_fiche_path(project_dir, project.number)
-        if not target_path.exists():
+        fiche_created = not target_path.exists()
+        if fiche_created:
             parent_path = _existing_standard_fiche_path(project_dir, project.number.parent)
             source_path = (
                 parent_path
@@ -149,8 +150,8 @@ class FicheService:
             _write_prefixed(worksheet, "D5", "Projet", project.designation)
             _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
             if project.gere_par.strip():
-                worksheet["C6"] = project.gere_par.strip()
-            self._write_atelier_date(worksheet)
+                worksheet["C9"] = project.gere_par.strip()
+            self._write_creation_date(worksheet, overwrite=fiche_created)
             workbook.save(target_path)
         finally:
             workbook.close()
@@ -166,10 +167,17 @@ class FicheService:
                 contact=_strip_prefix(_cell_text(worksheet["D4"].value)),
                 designation=_strip_prefix(_cell_text(worksheet["D5"].value)),
                 localisation=_strip_prefix(_cell_text(worksheet["D6"].value)),
-                gere_par=_cell_text(worksheet["C6"].value),
+                gere_par=_cell_text(worksheet["C9"].value) or _cell_text(worksheet["C6"].value),
             )
         finally:
             workbook.close()
+
+    def _write_creation_date(self, worksheet: Worksheet, *, overwrite: bool = False) -> None:
+        cell = worksheet["B9"]
+        if cell.value is not None and not overwrite:
+            return
+        cell.value = self._today()
+        cell.number_format = "DD.MM.YYYY"
 
     def _write_atelier_date(self, worksheet: Worksheet) -> None:
         cell = worksheet["E2"]

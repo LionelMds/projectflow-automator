@@ -8,6 +8,7 @@ from PySide6.QtGui import QColor, QIcon, QImage
 from PySide6.QtWidgets import QSizePolicy, QSystemTrayIcon
 
 from projectflow.config import AppConfig
+from projectflow.core.client_directory import ClientDirectory
 from projectflow.core.numero import parse_project_number
 from projectflow.core.repertoire_service import (
     NextAvailableProject,
@@ -97,10 +98,17 @@ def test_repertoire_tab_positions_near_next_available_and_filters(qtbot) -> None
     assert isinstance(dirty_background, QColor)
 
     tab.mark_saved(0, ("2026-4990", "", "", "", "Modifie"))
-    assert tab._model.data(  # noqa: SLF001
-        source_index,
-        Qt.ItemDataRole.BackgroundRole,
-    ) is None
+    assert (
+        tab._model.data(  # noqa: SLF001
+            source_index,
+            Qt.ItemDataRole.BackgroundRole,
+        )
+        is None
+    )
+    assert tab.open_project_button.text() == "Charger le projet"
+    assert tab.create_subproject_button.text() == "Créer sous-projet"
+    assert tab.duplicate_project_button.text() == "Dupliquer"
+    assert tab.delete_project_button.text() == "Supprimer avec éléments liés"
 
 
 def test_sortie_tab_has_browse_controls(qtbot) -> None:  # type: ignore[no-untyped-def]
@@ -179,6 +187,45 @@ def test_creation_tab_uses_expanding_field_widths(qtbot) -> None:  # type: ignor
     assert tab.minimumWidth() >= 760
     assert tab.project_id_edit.minimumWidth() > tab.year_combo.minimumWidth()
     assert tab.designation_edit.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+
+
+def test_creation_tab_normalizes_company_and_filters_contacts(qtbot) -> None:  # type: ignore[no-untyped-def]
+    tab = CreationTab()
+    qtbot.addWidget(tab)
+    tab.set_client_directory(
+        ClientDirectory.from_repertoire_rows(
+            [
+                ("2026-5000", "", "Métal SA", "Élodie Martin", "Projet"),
+                ("2026-5001", "", "Autre Client", "Jean Dupont", "Projet"),
+            ]
+        )
+    )
+
+    tab.societe_edit.setText("metal sa")
+    tab.societe_edit.editingFinished.emit()
+    tab.contact_edit.setText("elodie martin")
+    tab.contact_edit.editingFinished.emit()
+
+    assert tab.societe_edit.text() == "Métal SA"
+    assert tab.contact_edit.text() == "Élodie Martin"
+    contact_model = tab.contact_edit.completer().model()
+    assert contact_model.rowCount() == 1
+    assert contact_model.index(0, 0).data() == "Élodie Martin"
+
+
+def test_quick_create_uses_same_client_directory(qtbot) -> None:  # type: ignore[no-untyped-def]
+    dialog = QuickCreateDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_client_directory(
+        ClientDirectory.from_repertoire_rows(
+            [("2026-5000", "", "Balz Metal SA", "Lionel", "Projet")]
+        )
+    )
+
+    company_model = dialog.societe_edit.completer().model()
+
+    assert company_model.rowCount() == 1
+    assert company_model.index(0, 0).data() == "Balz Metal SA"
 
 
 def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # type: ignore[no-untyped-def]

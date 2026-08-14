@@ -192,6 +192,60 @@ async def test_graph_planner_updates_existing_task_bucket_and_assignment() -> No
     assert "user-id" in body["assignments"]
 
 
+@pytest.mark.asyncio
+async def test_graph_planner_deletes_only_tasks_for_exact_project_number() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/planner/plans/plan-id/tasks"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": [
+                        {
+                            "id": "main-task",
+                            "title": "2026-4995 - Escalier",
+                            "bucketId": "bucket-id",
+                            "@odata.etag": "main-etag",
+                            "assignments": {},
+                        },
+                        {
+                            "id": "sub-task",
+                            "title": "2026-4995-2 - Variante",
+                            "bucketId": "bucket-id",
+                            "@odata.etag": "sub-etag",
+                            "assignments": {},
+                        },
+                        {
+                            "id": "other-task",
+                            "title": "2026-5000 - Autre",
+                            "bucketId": "bucket-id",
+                            "@odata.etag": "other-etag",
+                            "assignments": {},
+                        },
+                    ]
+                },
+            )
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        return httpx.Response(404, json={"error": {"message": "missing"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphPlannerClient(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+        )
+        deleted = await client.delete_project_tasks(
+            ProjectInput(number=parse_project_number("2026-4995")),
+            PlannerConfig(enabled=True, plan_id="plan-id", bucket_id="bucket-id"),
+        )
+
+    delete_requests = [request for request in requests if request.method == "DELETE"]
+    assert deleted == 1
+    assert [request.url.path for request in delete_requests] == ["/v1.0/planner/tasks/main-task"]
+    assert delete_requests[0].headers["if-match"] == "main-etag"
+
+
 def test_planner_task_title_uses_project_number_and_designation() -> None:
     assert (
         planner_task_title(

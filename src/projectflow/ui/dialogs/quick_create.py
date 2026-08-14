@@ -18,7 +18,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from projectflow.core.client_directory import ClientDirectory
 from projectflow.ui.creation_tab import CreationFormData
+from projectflow.ui.widgets.client_autocomplete import ClientAutocomplete
 from projectflow.ui.widgets.planner import PlannerSelectionWidget
 
 
@@ -26,6 +28,7 @@ class QuickCreateDialog(QDialog):
     classic_requested = Signal()
     next_available_requested = Signal()
     planner_options_requested = Signal()
+    client_suggestions_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -93,6 +96,9 @@ class QuickCreateDialog(QDialog):
             due_days=due_days,
         )
 
+    def set_client_directory(self, directory: ClientDirectory) -> None:
+        self._client_autocomplete.set_directory(directory)
+
     def show_and_raise(self) -> None:
         self.show()
         if self.isMinimized():
@@ -137,6 +143,16 @@ class QuickCreateDialog(QDialog):
         self.designation_edit = QLineEdit()
         self.societe_edit = QLineEdit()
         self.contact_edit = QLineEdit()
+        self._client_autocomplete = ClientAutocomplete(
+            societe_edit=self.societe_edit,
+            contact_edit=self.contact_edit,
+        )
+        self.societe_edit.textEdited.connect(
+            lambda _text: self.client_suggestions_requested.emit(),
+        )
+        self.contact_edit.textEdited.connect(
+            lambda _text: self.client_suggestions_requested.emit(),
+        )
         self.localisation_edit = QLineEdit()
         self.gere_par_edit = QLineEdit()
         form.addRow("Designation", self.designation_edit)

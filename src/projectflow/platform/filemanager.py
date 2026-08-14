@@ -5,7 +5,7 @@ import platform
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QFile, QUrl
 from PySide6.QtGui import QDesktopServices
 
 from projectflow.exceptions import ProjectCreationError
@@ -30,6 +30,14 @@ def pin_to_filemanager_favorites(path: Path) -> None:
         return
     if system == "Darwin":
         _add_macos_finder_favorite(path)
+
+
+def move_path_to_trash(path: Path) -> bool:
+    if not path.exists():
+        return False
+    if not QFile.moveToTrash(str(path)):
+        raise ProjectCreationError(f"Impossible de placer cet élément dans la corbeille: {path}")
+    return True
 
 
 def _pin_windows_quick_access(path: Path) -> None:

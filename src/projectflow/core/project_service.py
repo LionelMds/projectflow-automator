@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
 from projectflow.config import AppConfig, OutlookFolderConfig
-from projectflow.core.fiche_service import FicheService
-from projectflow.core.models import ProjectCreationResult, ProjectInput
+from projectflow.core.fiche_service import FicheService, standard_fiche_path
+from projectflow.core.models import ProjectCreationResult, ProjectDeletionResult, ProjectInput
 from projectflow.core.numero import project_folder_name
-from projectflow.core.repertoire_service import RepertoireService
+from projectflow.core.repertoire_service import RepertoireRow, RepertoireService
 from projectflow.exceptions import ConfigError, ProjectCreationError
 
 
@@ -20,13 +20,20 @@ class OutlookGateway(Protocol):
     async def ensure_folder_path(self, names: list[str]) -> object:
         """Ensure the nested Outlook folder path exists."""
 
+    async def delete_folder_path(self, names: list[str]) -> bool:
+        """Delete the leaf Outlook folder when it exists."""
+
 
 class PlannerGateway(Protocol):
     async def ensure_project_task(self, project: ProjectInput) -> object:
         """Ensure the Planner task for this project exists."""
 
+    async def delete_project_tasks(self, project: ProjectInput) -> int:
+        """Delete every Planner task matching this project."""
+
 
 PinPathCallable = Callable[[Path], None]
+TrashPathCallable = Callable[[Path], bool]
 
 
 class ProjectService:
@@ -39,6 +46,7 @@ class ProjectService:
         outlook: OutlookGateway | None = None,
         planner: PlannerGateway | None = None,
         pin_path: PinPathCallable | None = None,
+        trash_path: TrashPathCallable | None = None,
     ) -> None:
         self._config = config
         self._fiche_service = fiche_service
@@ -46,6 +54,7 @@ class ProjectService:
         self._outlook = outlook
         self._planner = planner
         self._pin_path = pin_path
+        self._trash_path = trash_path
 
     async def create_project(
         self,
@@ -85,7 +94,7 @@ class ProjectService:
             except ProjectCreationError:
                 existing_fiche_path = None
             if existing_fiche_path is not None:
-                fiche_path = self._fiche_service.ensure_atelier_date(existing_fiche_path)
+                fiche_path = existing_fiche_path
 
         outlook_created, outlook_error = await self._apply_outlook(project, outlook)
         (
@@ -173,6 +182,68 @@ class ProjectService:
             planner_error=planner_error,
         )
 
+    async def delete_project(
+        self,
+        project: ProjectInput,
+        *,
+        related_projects: Sequence[ProjectInput],
+        repertoire_rows: Sequence[RepertoireRow],
+    ) -> ProjectDeletionResult:
+        await self._repertoire_service.validate_project_deletion(
+            number=project.number,
+            rows=repertoire_rows,
+        )
+        if self._trash_path is None:
+            raise ConfigError("La corbeille du systeme n'est pas configuree.")
+        planner = self._validated_planner() if self._config.planner.enabled else None
+        outlook = (
+            await self._validated_outlook()
+            if self._config.outlook.enabled and not project.is_subproject
+            else None
+        )
+
+        planner_tasks_deleted = 0
+        if planner is not None:
+            for related in related_projects:
+                planner_tasks_deleted += await planner.delete_project_tasks(related)
+
+        outlook_folders_deleted = 0
+        if outlook is not None:
+            for folder_path in outlook_folder_paths(project, self._config.outlook.arborescence):
+                if await outlook.delete_folder_path(folder_path):
+                    outlook_folders_deleted += 1
+
+        project_path_trashed = self._trash_project_path(project)
+        await self._repertoire_service.clear_project_rows(
+            number=project.number,
+            rows=repertoire_rows,
+        )
+        return ProjectDeletionResult(
+            numbers_released=tuple(
+                row.number
+                for row in repertoire_rows
+                if any(_has_value(value) for value in row.values[1:])
+            ),
+            project_path_trashed=project_path_trashed,
+            outlook_folders_deleted=outlook_folders_deleted,
+            planner_tasks_deleted=planner_tasks_deleted,
+        )
+
+    def _trash_project_path(self, project: ProjectInput) -> bool:
+        trash_path = self._trash_path
+        if trash_path is None:
+            raise ConfigError("La corbeille du systeme n'est pas configuree.")
+        root = self._required_path(self._config.paths.racine_projets, "racine projets")
+        project_dir = root / str(project.number.year) / project_folder_name(project.number)
+        if not project.is_subproject:
+            return trash_path(project_dir)
+
+        nested_dir = project_dir / str(project.number)
+        if nested_dir.exists():
+            return trash_path(nested_dir)
+        fiche_path = standard_fiche_path(project_dir, project.number)
+        return trash_path(fiche_path)
+
     @staticmethod
     def _required_path(path: Path | None, label: str) -> Path:
         if path is None:
@@ -194,8 +265,7 @@ class ProjectService:
             return None
         if self._planner is None:
             raise ConfigError(
-                "Creation Planner activee mais aucun connecteur Microsoft Planner "
-                "n'est configure.",
+                "Creation Planner activee mais aucun connecteur Microsoft Planner n'est configure.",
             )
         return self._planner
 
@@ -237,6 +307,10 @@ class ProjectService:
 def _integration_error_message(error: Exception) -> str:
     message = str(error).strip()
     return message or type(error).__name__
+
+
+def _has_value(value: object) -> bool:
+    return value is not None and str(value).strip() != ""
 
 
 def copy_reference_tree(reference_dir: Path, project_dir: Path) -> None:

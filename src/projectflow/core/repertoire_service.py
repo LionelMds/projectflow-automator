@@ -163,6 +163,37 @@ class RepertoireService:
                 [edited],
             )
 
+    async def validate_project_deletion(
+        self,
+        *,
+        number: ProjectNumber,
+        rows: Sequence[RepertoireRow],
+    ) -> None:
+        async with self._workbook.session():
+            worksheet_name = str(number.year)
+            await self._assert_worksheet_exists(worksheet_name)
+            current = await self._workbook.used_range_values(worksheet_name)
+            _validate_deletion_rows(current, number=number, expected_rows=rows)
+
+    async def clear_project_rows(
+        self,
+        *,
+        number: ProjectNumber,
+        rows: Sequence[RepertoireRow],
+    ) -> None:
+        async with self._workbook.session():
+            worksheet_name = str(number.year)
+            await self._assert_worksheet_exists(worksheet_name)
+            current = await self._workbook.used_range_values(worksheet_name)
+            _validate_deletion_rows(current, number=number, expected_rows=rows)
+            for row in rows:
+                excel_row = row.row_index + 1
+                await self._workbook.update_range_values(
+                    worksheet_name,
+                    f"B{excel_row}:E{excel_row}",
+                    [["", "", "", ""]],
+                )
+
     async def upsert_project(
         self,
         project: ProjectInput,
@@ -314,6 +345,50 @@ def _find_next_available(rows: list[list[Any]]) -> NextAvailableProject | None:
 
 def _same_cell(left: object, right: object) -> bool:
     return _cell_text_value(left) == _cell_text_value(right)
+
+
+def _validate_deletion_rows(
+    current_rows: list[list[Any]],
+    *,
+    number: ProjectNumber,
+    expected_rows: Sequence[RepertoireRow],
+) -> None:
+    if not expected_rows:
+        raise ProjectCreationError("Aucune ligne de repertoire a supprimer.")
+    expected_group = {row.row_index: row.number for row in expected_rows}
+    current_group = {
+        index: _cell_as_text(row, 0)
+        for index, row in enumerate(current_rows)
+        if _belongs_to_deletion_group(_cell_as_text(row, 0), number)
+    }
+    if current_group != expected_group:
+        raise ProjectCreationError(
+            "Le groupe de projet a change dans le fichier partage. "
+            "Actualisez le repertoire avant de supprimer.",
+        )
+    for expected in expected_rows:
+        if expected.row_index < 0 or expected.row_index >= len(current_rows):
+            raise ProjectCreationError("Une ligne du projet n'existe plus dans le repertoire.")
+        current = _ensure_width(
+            list(current_rows[expected.row_index]),
+            width=PROJECT_WRITABLE_WIDTH,
+        )[:PROJECT_WRITABLE_WIDTH]
+        wanted = _ensure_width(list(expected.values), width=PROJECT_WRITABLE_WIDTH)[
+            :PROJECT_WRITABLE_WIDTH
+        ]
+        if not all(
+            _same_cell(actual, value) for actual, value in zip(current, wanted, strict=True)
+        ):
+            raise ProjectCreationError(
+                "Une ligne du projet a ete modifiee dans le fichier partage. "
+                "Actualisez le repertoire avant de supprimer.",
+            )
+
+
+def _belongs_to_deletion_group(value: str, number: ProjectNumber) -> bool:
+    if number.is_subproject:
+        return value == str(number)
+    return value == str(number) or value.startswith(f"{number}-")
 
 
 def _cell_text_value(value: object) -> str:

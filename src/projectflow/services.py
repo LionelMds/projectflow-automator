@@ -16,7 +16,7 @@ from projectflow.graph.client import GraphClient
 from projectflow.graph.excel import GraphExcelWorkbookGateway
 from projectflow.graph.planner import GraphPlannerClient, PlannerTaskResult
 from projectflow.outlook.local import create_local_outlook_client
-from projectflow.platform.filemanager import pin_to_filemanager_favorites
+from projectflow.platform.filemanager import move_path_to_trash, pin_to_filemanager_favorites
 
 
 @dataclass(slots=True)
@@ -70,6 +70,7 @@ class ServiceContainer:
             outlook=create_local_outlook_client(self.config.outlook),
             planner=self.planner(),
             pin_path=pin_to_filemanager_favorites,
+            trash_path=move_path_to_trash,
         )
 
     def planner(self) -> ConfiguredPlannerGateway | None:
@@ -115,3 +116,6 @@ class ConfiguredPlannerGateway:
 
     async def ensure_project_task(self, project: ProjectInput) -> PlannerTaskResult:
         return await self.client.ensure_project_task(project, self.config.planner)
+
+    async def delete_project_tasks(self, project: ProjectInput) -> int:
+        return await self.client.delete_project_tasks(project, self.config.planner)

@@ -36,8 +36,10 @@ def test_fill_fiche_prefers_fiche_candidate_and_renames_to_standard(tmp_path: Pa
     assert loaded.localisation == "Zurich"
     assert loaded.gere_par == "LM"
     workbook = load_workbook(fiche_path)
-    assert workbook.active["B9"].value is None
-    assert workbook.active["E2"].value == "fiche d'atelier le 06.05.2026"
+    assert workbook.active["B9"].value.date() == date(2026, 5, 6)
+    assert workbook.active["B9"].number_format == "DD.MM.YYYY"
+    assert workbook.active["C9"].value == "LM"
+    assert workbook.active["E2"].value is None
     workbook.close()
 
 
@@ -128,7 +130,7 @@ def test_read_fiche_strips_prefixes_case_insensitively(tmp_path: Path) -> None:
     worksheet["D4"] = "CONTACT : Lionel"
     worksheet["D5"] = "Projet : Escalier"
     worksheet["D6"] = "Localisation : Zurich"
-    worksheet["C6"] = "LM"
+    worksheet["C9"] = "LM"
     workbook.save(path)
     workbook.close()
 
@@ -136,6 +138,19 @@ def test_read_fiche_strips_prefixes_case_insensitively(tmp_path: Path) -> None:
 
     assert loaded.societe == "Balz"
     assert loaded.contact == "Lionel"
+    assert loaded.gere_par == "LM"
+
+
+def test_read_fiche_supports_legacy_gere_par_cell(tmp_path: Path) -> None:
+    path = tmp_path / "fiche.xlsx"
+    workbook = Workbook()
+    workbook.active["C6"] = "LM"
+    workbook.save(path)
+    workbook.close()
+
+    loaded = FicheService().read_fiche(path)
+
+    assert loaded.gere_par == "LM"
 
 
 def test_standardize_fiche_name_renames_selected_file(tmp_path: Path) -> None:
@@ -167,15 +182,24 @@ def test_fill_subproject_updates_existing_nested_fiche(tmp_path: Path) -> None:
     project = ProjectInput(
         number=parse_project_number("2026-5093-2"),
         designation="Sous-projet charge",
+        gere_par="AB",
     )
 
-    updated_path = FicheService().fill_subproject_fiche(project_dir, project)
+    updated_path = FicheService(today=lambda: date(2026, 5, 6)).fill_subproject_fiche(
+        project_dir,
+        project,
+    )
 
     assert updated_path == fiche_path
     assert not (project_dir / "2026-5093-2 - Fiche dossier clients.xlsx").exists()
     loaded = FicheService().read_fiche(fiche_path)
     assert loaded.number == "2026-5093-2"
     assert loaded.designation == "Sous-projet charge"
+    workbook = load_workbook(fiche_path)
+    assert workbook.active["B9"].value.date() == date(2026, 5, 6)
+    assert workbook.active["C9"].value == "AB"
+    assert workbook.active["E2"].value is None
+    workbook.close()
 
 
 def test_fill_fiche_releases_file_handle_for_move(tmp_path: Path) -> None:

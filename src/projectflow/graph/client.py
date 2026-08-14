@@ -55,6 +55,14 @@ class GraphClient:
     ) -> dict[str, Any]:
         return await self.request("PATCH", path, json=json, headers=headers)
 
+    async def delete(
+        self,
+        path: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return await self.request("DELETE", path, headers=headers)
+
     async def request(
         self,
         method: str,

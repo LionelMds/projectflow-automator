@@ -17,20 +17,40 @@ from projectflow.core.project_service import (
     outlook_project_folder_name,
     render_outlook_folder_name,
 )
+from projectflow.core.repertoire_service import RepertoireRow
 from projectflow.exceptions import ConfigError, OutlookError
 
 
 class FakeRepertoireService:
     def __init__(self) -> None:
         self.calls: list[tuple[ProjectInput, bool]] = []
+        self.validated_deletions: list[tuple[object, tuple[RepertoireRow, ...]]] = []
+        self.cleared_deletions: list[tuple[object, tuple[RepertoireRow, ...]]] = []
 
     async def upsert_project(self, project: ProjectInput, *, force_overwrite: bool = False) -> None:
         self.calls.append((project, force_overwrite))
+
+    async def validate_project_deletion(
+        self,
+        *,
+        number: object,
+        rows: tuple[RepertoireRow, ...] | list[RepertoireRow],
+    ) -> None:
+        self.validated_deletions.append((number, tuple(rows)))
+
+    async def clear_project_rows(
+        self,
+        *,
+        number: object,
+        rows: tuple[RepertoireRow, ...] | list[RepertoireRow],
+    ) -> None:
+        self.cleared_deletions.append((number, tuple(rows)))
 
 
 class FakeOutlook:
     def __init__(self) -> None:
         self.paths: list[list[str]] = []
+        self.deleted_paths: list[list[str]] = []
         self.validated = False
 
     async def validate_target(self) -> None:
@@ -40,6 +60,10 @@ class FakeOutlook:
         self.paths.append(names)
         return object()
 
+    async def delete_folder_path(self, names: list[str]) -> bool:
+        self.deleted_paths.append(names)
+        return True
+
 
 class BrokenOutlook:
     async def validate_target(self) -> None:
@@ -48,6 +72,10 @@ class BrokenOutlook:
     async def ensure_folder_path(self, names: list[str]) -> object:
         del names
         return object()
+
+    async def delete_folder_path(self, names: list[str]) -> bool:
+        del names
+        return False
 
 
 class FailingDuringCreationOutlook(FakeOutlook):
@@ -72,11 +100,16 @@ class FakePlannerResult:
 class FakePlanner:
     def __init__(self) -> None:
         self.projects: list[ProjectInput] = []
+        self.deleted_projects: list[ProjectInput] = []
         self.result = FakePlannerResult()
 
     async def ensure_project_task(self, project: ProjectInput) -> FakePlannerResult:
         self.projects.append(project)
         return self.result
+
+    async def delete_project_tasks(self, project: ProjectInput) -> int:
+        self.deleted_projects.append(project)
+        return 1
 
 
 def test_copy_reference_tree_does_not_overwrite_existing_files(tmp_path: Path) -> None:
@@ -256,7 +289,7 @@ async def test_recreate_existing_project_reapplies_integrations_without_updating
     workbook = load_workbook(fiche_path)
     assert workbook.active["D3"].value == "Societe : Information conservee"
     assert workbook.active["B9"].value.date() == date(2024, 3, 4)
-    assert workbook.active["E2"].value == "fiche d'atelier le 15.07.2026"
+    assert workbook.active["E2"].value == "fiche d'atelier le"
     workbook.close()
     assert repertoire.calls == []
     assert outlook.paths == [["2026", "2026-4995 (Nouveau texte)"]]
@@ -589,3 +622,94 @@ async def test_create_subproject_creates_planner_task_without_outlook(tmp_path: 
     assert result.outlook_folder_created is False
     assert result.planner_task_id == "task-id"
     assert result.planner_task_created is True
+
+
+@pytest.mark.asyncio
+async def test_delete_main_project_removes_related_integrations_and_trashes_parent(
+    tmp_path: Path,
+) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    config.outlook.enabled = True
+    config.planner.enabled = True
+    repertoire = FakeRepertoireService()
+    outlook = FakeOutlook()
+    planner = FakePlanner()
+    trashed: list[Path] = []
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=repertoire,  # type: ignore[arg-type]
+        outlook=outlook,
+        planner=planner,
+        trash_path=lambda path: trashed.append(path) is None,
+    )
+    main = ProjectInput(
+        number=parse_project_number("2026-4995"),
+        designation="Escalier",
+    )
+    subproject = ProjectInput(
+        number=parse_project_number("2026-4995-2"),
+        designation="Variante",
+    )
+    rows = (
+        RepertoireRow(
+            row_index=10,
+            values=("2026-4995", date(2026, 8, 14), "Balz", "Lionel", "Escalier"),
+        ),
+        RepertoireRow(
+            row_index=11,
+            values=("2026-4995-2", date(2026, 8, 14), "Balz", "Lionel", "Variante"),
+        ),
+    )
+
+    result = await service.delete_project(
+        main,
+        related_projects=(main, subproject),
+        repertoire_rows=rows,
+    )
+
+    assert repertoire.validated_deletions == [(main.number, rows)]
+    assert repertoire.cleared_deletions == [(main.number, rows)]
+    assert planner.deleted_projects == [main, subproject]
+    assert outlook.deleted_paths == [["2026", "2026-4995 (Escalier)"]]
+    assert trashed == [project_dir]
+    assert result.numbers_released == ("2026-4995", "2026-4995-2")
+    assert result.planner_tasks_deleted == 2
+    assert result.outlook_folders_deleted == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_subproject_trashes_only_its_nested_folder(tmp_path: Path) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    nested_dir = project_dir / "2026-4995-2"
+    nested_dir.mkdir(parents=True)
+    repertoire = FakeRepertoireService()
+    trashed: list[Path] = []
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=repertoire,  # type: ignore[arg-type]
+        trash_path=lambda path: trashed.append(path) is None,
+    )
+    subproject = ProjectInput(number=parse_project_number("2026-4995-2"))
+    rows = (
+        RepertoireRow(
+            row_index=11,
+            values=("2026-4995-2", date(2026, 8, 14), "", "", "Variante"),
+        ),
+    )
+
+    result = await service.delete_project(
+        subproject,
+        related_projects=(subproject,),
+        repertoire_rows=rows,
+    )
+
+    assert trashed == [nested_dir]
+    assert project_dir.exists()
+    assert result.project_path_trashed is True

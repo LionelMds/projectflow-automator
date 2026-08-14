@@ -39,3 +39,11 @@ class ProjectCreationResult:
     planner_task_updated: bool = False
     outlook_error: str | None = None
     planner_error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectDeletionResult:
+    numbers_released: tuple[str, ...]
+    project_path_trashed: bool
+    outlook_folders_deleted: int = 0
+    planner_tasks_deleted: int = 0

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -15,6 +15,7 @@ from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.config import AppConfig
+from projectflow.core.client_directory import ClientDirectory
 from projectflow.core.duplication import PROJECT_WRITABLE_WIDTH
 from projectflow.core.fiche_service import FicheService, standard_fiche_path
 from projectflow.core.models import PlannerTaskInput, ProjectCreationResult, ProjectInput
@@ -25,7 +26,7 @@ from projectflow.core.numero import (
     project_folder_name,
 )
 from projectflow.core.project_service import ProjectService
-from projectflow.core.repertoire_service import RepertoireService
+from projectflow.core.repertoire_service import RepertoireRow, RepertoireService
 from projectflow.core.sortie_service import SortieDossierService
 from projectflow.exceptions import ProjectFlowError
 from projectflow.graph.client import GraphClient
@@ -53,6 +54,14 @@ from projectflow.updates import (
 )
 
 QuickCreationAction = Literal["open_fiche", "open_repertoire", "edit", "next"]
+
+
+class ClientSuggestionsTarget(Protocol):
+    def data(self) -> CreationFormData:
+        """Return current creation form values."""
+
+    def set_client_directory(self, directory: ClientDirectory) -> None:
+        """Apply company and contact suggestions."""
 
 
 class ServiceProvider(Protocol):
@@ -83,6 +92,9 @@ class ProjectFlowController:
         self._quick_dialog: QuickCreateDialog | None = None
         self._planner_bucket_options: list[PlannerBucketOption] = []
         self._planner_member_options: list[PlannerMemberOption] = []
+        self._client_directories: dict[int, ClientDirectory] = {}
+        self._client_directory_loading: set[int] = set()
+        self._client_directory_failed: set[int] = set()
         self._sortie_service = SortieDossierService(self._services.fiche())
         self._sortie_project_dir: Path | None = None
         self._sortie_number: ProjectNumber | None = None
@@ -114,9 +126,24 @@ class ProjectFlowController:
         self._window.repertoire_tab.new_project_requested.connect(
             self.new_project_from_repertoire,
         )
+        self._window.repertoire_tab.open_project_requested.connect(
+            self.open_project_from_repertoire,
+        )
+        self._window.repertoire_tab.create_subproject_requested.connect(
+            self.create_subproject_from_repertoire,
+        )
+        self._window.repertoire_tab.duplicate_project_requested.connect(
+            self.duplicate_project_from_repertoire,
+        )
+        self._window.repertoire_tab.delete_project_requested.connect(
+            self.delete_project_from_repertoire,
+        )
         self._window.tabs.currentChanged.connect(self._on_tab_changed)
         tab.planner_options_requested.connect(
             lambda: self._schedule_task(self._load_planner_options(tab.planner_widget)),
+        )
+        tab.client_suggestions_requested.connect(
+            lambda: self._request_client_suggestions(tab),
         )
         self._window.settings_requested.connect(self.open_settings)
         self._window.update_check_requested.connect(
@@ -141,12 +168,16 @@ class ProjectFlowController:
             due_days=self._config.planner.due_days,
         )
         dialog.set_data(self._empty_creation_data() if reset else self._window.creation_tab.data())
+        self._apply_cached_client_directory(dialog)
         dialog.classic_requested.connect(lambda: self._show_classic_from_quick(dialog))
         dialog.next_available_requested.connect(
             lambda: self._schedule_task(self._quick_next_available(dialog)),
         )
         dialog.planner_options_requested.connect(
             lambda: self._schedule_task(self._load_planner_options(dialog.planner_widget)),
+        )
+        dialog.client_suggestions_requested.connect(
+            lambda: self._request_client_suggestions(dialog),
         )
         try:
             result = dialog.exec()
@@ -165,10 +196,12 @@ class ProjectFlowController:
     async def _quick_next_available(self, dialog: QuickCreateDialog) -> None:
         try:
             year = int(dialog.data().year)
-            result = await self._services.repertoire().next_available(year=year)
+            snapshot = await self._services.repertoire().read_snapshot(year=year)
         except (ProjectFlowError, ValueError) as exc:
             self._error(str(exc))
             return
+        self._remember_client_directory(snapshot.year, snapshot.rows)
+        result = snapshot.next_available
         if result is None:
             self._log("! Aucun numero disponible trouve")
             return
@@ -282,10 +315,12 @@ class ProjectFlowController:
     async def next_available(self) -> None:
         try:
             year = int(self._window.creation_tab.data().year)
-            result = await self._services.repertoire().next_available(year=year)
+            snapshot = await self._services.repertoire().read_snapshot(year=year)
         except (ProjectFlowError, ValueError) as exc:
             self._error(str(exc))
             return
+        self._remember_client_directory(snapshot.year, snapshot.rows)
+        result = snapshot.next_available
         if result is None:
             self._log("! Aucun numero disponible trouve")
             return
@@ -318,9 +353,54 @@ class ProjectFlowController:
             tab.set_error(str(exc))
         else:
             tab.set_snapshot(snapshot)
+            self._remember_client_directory(snapshot.year, snapshot.rows)
         finally:
             self._repertoire_loading = False
             tab.set_loading(loading=False)
+
+    def _request_client_suggestions(self, target: ClientSuggestionsTarget) -> None:
+        try:
+            year = int(target.data().year)
+        except ValueError:
+            return
+        cached = self._client_directories.get(year)
+        if cached is not None:
+            target.set_client_directory(cached)
+            return
+        if year in self._client_directory_loading or year in self._client_directory_failed:
+            return
+        self._schedule_task(self._load_client_suggestions(year))
+
+    async def _load_client_suggestions(self, year: int) -> None:
+        self._client_directory_loading.add(year)
+        try:
+            snapshot = await self._services.repertoire().read_snapshot(year=year)
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            self._client_directory_failed.add(year)
+            self._window.creation_tab.append_log(
+                f"! Suggestions Societe/Contact indisponibles: {exc}",
+            )
+        else:
+            self._remember_client_directory(snapshot.year, snapshot.rows)
+        finally:
+            self._client_directory_loading.discard(year)
+
+    def _remember_client_directory(self, year: int, rows: Sequence[RepertoireRow]) -> None:
+        directory = ClientDirectory.from_repertoire_rows(row.values for row in rows)
+        self._client_directories[year] = directory
+        self._client_directory_failed.discard(year)
+        self._apply_cached_client_directory(self._window.creation_tab)
+        if self._quick_dialog is not None:
+            self._apply_cached_client_directory(self._quick_dialog)
+
+    def _apply_cached_client_directory(self, target: ClientSuggestionsTarget) -> None:
+        try:
+            year = int(target.data().year)
+        except ValueError:
+            return
+        directory = self._client_directories.get(year)
+        if directory is not None:
+            target.set_client_directory(directory)
 
     async def save_repertoire_row(
         self,
@@ -424,9 +504,7 @@ class ProjectFlowController:
                     enabled=self._config.planner.enabled,
                     bucket_id=self._config.planner.target_bucket_id,
                     due_days=(
-                        self._config.planner.due_days
-                        if self._config.planner.due_days > 0
-                        else None
+                        self._config.planner.due_days if self._config.planner.due_days > 0 else None
                     ),
                 ),
             )
@@ -450,9 +528,7 @@ class ProjectFlowController:
             integrations.append("Outlook")
         if self._config.planner.enabled:
             integrations.append("Planner")
-        tab.set_status_message(
-            f"Projet {project.number} mis à jour : {', '.join(integrations)}."
-        )
+        tab.set_status_message(f"Projet {project.number} mis à jour : {', '.join(integrations)}.")
         self._window.creation_tab.append_log(
             f"+ Projet {project.number} mis à jour depuis le répertoire"
         )
@@ -471,6 +547,165 @@ class ProjectFlowController:
             subproject_id="",
         )
         self._window.show_creation_tab()
+
+    def open_project_from_repertoire(self) -> None:
+        selected = self._selected_repertoire_project()
+        if selected is None:
+            return
+        _row_index, number, _values, _original = selected
+        if self._load_project_number(number):
+            self._window.show_creation_tab()
+
+    def create_subproject_from_repertoire(self) -> None:
+        selected = self._selected_repertoire_project()
+        if selected is None:
+            return
+        _row_index, number, _values, _original = selected
+        parent = number.parent
+        subproject_id = _next_subproject_id(
+            parent,
+            self._window.repertoire_tab.original_rows(),
+        )
+        self._window.creation_tab.reset_form_fields()
+        self._window.creation_tab.set_project_identity(
+            year=str(parent.year),
+            project_id=parent.project_id,
+            subproject_id=subproject_id,
+        )
+        self._window.show_creation_tab()
+        self._log(f"+ Nouveau sous-projet préparé: {parent}-{subproject_id}")
+
+    def duplicate_project_from_repertoire(self) -> None:
+        selected = self._selected_repertoire_project()
+        if selected is None:
+            return
+        _row_index, source_number, _values, _original = selected
+        next_available = self._window.repertoire_tab.next_available()
+        if next_available is None:
+            self._error("Aucun numéro disponible n'a été détecté dans le répertoire.")
+            return
+        if not self._load_project_number(source_number):
+            return
+        target = next_available.number
+        self._window.creation_tab.set_project_identity(
+            year=str(target.year),
+            project_id=target.project_id,
+            subproject_id="",
+        )
+        self._window.show_creation_tab()
+        self._log(f"+ Projet {source_number} dupliqué dans le formulaire sous le numéro {target}")
+
+    def delete_project_from_repertoire(self) -> None:
+        selected = self._selected_repertoire_project()
+        if selected is None:
+            return
+        _row_index, number, values, original = selected
+        if values != original:
+            self._error(
+                "La ligne contient des modifications non enregistrées. "
+                "Enregistrez ou actualisez le répertoire avant de supprimer.",
+            )
+            return
+        rows = _project_deletion_rows(
+            number,
+            self._window.repertoire_tab.original_rows(),
+        )
+        projects = tuple(
+            sorted(
+                (
+                    ProjectInput(
+                        number=parse_project_number(row.number),
+                        designation=_repertoire_cell_text(row.values[4]),
+                    )
+                    for row in rows
+                    if any(_repertoire_cell_text(value) for value in row.values[1:])
+                ),
+                key=lambda item: (item.number != number, item.number.subproject_id or ""),
+            )
+        )
+        if not projects:
+            self._error(f"Aucun projet actif n'est associé au numéro {number}.")
+            return
+
+        related_note = ""
+        if not number.is_subproject and len(projects) > 1:
+            related_note = f"\n- {len(projects) - 1} sous-projet(s) lié(s) et leurs tâches Planner"
+        outlook_note = "\n- le dossier Outlook" if self._config.outlook.enabled else ""
+        planner_note = "\n- la ou les tâches Planner" if self._config.planner.enabled else ""
+        answer = QMessageBox.warning(
+            self._window,
+            "Supprimer le projet et ses éléments liés",
+            f"Confirmez-vous la suppression de {number} ?\n\n"
+            "Cette opération va supprimer :\n"
+            "- les informations B:E du répertoire, en conservant le numéro A\n"
+            "- le dossier projet OneDrive, placé dans la corbeille du système"
+            f"{outlook_note}{planner_note}{related_note}\n\n"
+            "Le numéro restera disponible pour un nouveau projet.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._schedule_task(
+            self._delete_project_and_related(
+                project=projects[0],
+                related_projects=projects,
+                rows=rows,
+            )
+        )
+
+    async def _delete_project_and_related(
+        self,
+        *,
+        project: ProjectInput,
+        related_projects: Sequence[ProjectInput],
+        rows: Sequence[RepertoireRow],
+    ) -> None:
+        tab = self._window.repertoire_tab
+        tab.set_loading(loading=True)
+        try:
+            result = await self._services.project().delete_project(
+                project,
+                related_projects=related_projects,
+                repertoire_rows=rows,
+            )
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            tab.set_error(str(exc))
+            self._error(str(exc))
+            return
+        finally:
+            tab.set_loading(loading=False)
+
+        await self.load_repertoire()
+        details = [f"{len(result.numbers_released)} numéro(s) libéré(s)"]
+        if result.project_path_trashed:
+            details.append("dossier placé dans la corbeille")
+        if result.outlook_folders_deleted:
+            details.append(f"{result.outlook_folders_deleted} dossier(s) Outlook supprimé(s)")
+        if result.planner_tasks_deleted:
+            details.append(f"{result.planner_tasks_deleted} tâche(s) Planner supprimée(s)")
+        message = f"Projet {project.number} supprimé : {', '.join(details)}."
+        tab.set_status_message(message)
+        self._window.creation_tab.append_log(f"+ {message}")
+        QMessageBox.information(self._window, "Projet supprimé", message)
+
+    def _selected_repertoire_project(
+        self,
+    ) -> tuple[int, ProjectNumber, tuple[Any, ...], tuple[Any, ...]] | None:
+        payload = self._window.repertoire_tab.selected_row_payload()
+        if payload is None:
+            self._error("Sélectionnez une ligne de projet dans le répertoire.")
+            return None
+        row_index, values, original = payload
+        try:
+            number = parse_project_number(_repertoire_cell_text(values[0]))
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return None
+        if not any(_repertoire_cell_text(value) for value in values[1:]):
+            self._error(f"Le numéro {number} est disponible et ne contient aucun projet à charger.")
+            return None
+        return row_index, number, values, original
 
     def load_sortie_dossier(self) -> None:
         tab = self._window.sortie_tab
@@ -536,13 +771,26 @@ class ProjectFlowController:
     def load_project(self) -> None:
         try:
             number = parse_project_number(self._number_from_form())
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            self._error(str(exc))
+            return
+
+        self._load_project_number(number)
+
+    def _load_project_number(self, number: ProjectNumber) -> bool:
+        try:
             project_dir = self._project_dir(number)
             fiche_path = self._choose_fiche(project_dir, number)
             data = self._services.fiche().read_fiche(fiche_path)
         except (ProjectFlowError, ValueError, OSError) as exc:
             self._error(str(exc))
-            return
+            return False
 
+        self._window.creation_tab.set_project_identity(
+            year=str(number.year),
+            project_id=number.project_id,
+            subproject_id=number.subproject_id or "",
+        )
         self._window.creation_tab.designation_edit.setText(data.designation)
         self._window.creation_tab.societe_edit.setText(data.societe)
         self._window.creation_tab.contact_edit.setText(data.contact)
@@ -551,6 +799,7 @@ class ProjectFlowController:
         if data.number and data.number != str(number):
             self._log(f"! C3 contient {data.number}, attendu {number}")
         self._log(f"+ Fiche chargee: {fiche_path.name}")
+        return True
 
     def open_fiche(self) -> None:
         try:
@@ -962,6 +1211,32 @@ def _repertoire_cell_text(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _next_subproject_id(parent: ProjectNumber, rows: Sequence[RepertoireRow]) -> str:
+    used_ids: set[int] = set()
+    for row in rows:
+        try:
+            number = parse_project_number(row.number)
+        except ValueError:
+            continue
+        if number.parent != parent or number.subproject_id is None:
+            continue
+        used_ids.add(int(number.subproject_id))
+    candidate = 2
+    while candidate in used_ids:
+        candidate += 1
+    return str(candidate)
+
+
+def _project_deletion_rows(
+    number: ProjectNumber,
+    rows: Sequence[RepertoireRow],
+) -> tuple[RepertoireRow, ...]:
+    if number.is_subproject:
+        return tuple(row for row in rows if row.number == str(number))
+    prefix = f"{number}-"
+    return tuple(row for row in rows if row.number == str(number) or row.number.startswith(prefix))
 
 
 def _parse_sortie_number(year: str, project_id: str) -> ProjectNumber:

@@ -174,6 +174,27 @@ class GraphPlannerClient:
             return PlannerTaskResult(task_id=existing.id, created=False, updated=True)
         return PlannerTaskResult(task_id=existing.id, created=False, updated=False)
 
+    async def delete_project_tasks(
+        self,
+        project: ProjectInput,
+        config: PlannerConfig,
+    ) -> int:
+        plan_id = config.target_plan_id
+        if not plan_id:
+            raise ConfigError("Planner actif mais plan non configure.")
+        project_number = str(project.number)
+        matches = [
+            task
+            for task in await self._list_tasks(plan_id=plan_id)
+            if _task_matches_project(task.title, project_number)
+        ]
+        for task in matches:
+            await self._graph.delete(
+                f"/planner/tasks/{task.id}",
+                headers={"If-Match": task.etag},
+            )
+        return len(matches)
+
     async def _find_project_task(
         self,
         project: ProjectInput,

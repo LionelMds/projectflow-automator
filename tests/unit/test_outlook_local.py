@@ -7,7 +7,11 @@ import pytest
 from projectflow.config import OutlookConfig
 from projectflow.exceptions import ConfigError
 from projectflow.outlook.local import create_local_outlook_client
-from projectflow.outlook.macos_mail import ENSURE_MAILBOX_SCRIPT, MacNativeMailClient
+from projectflow.outlook.macos_mail import (
+    DELETE_MAILBOX_SCRIPT,
+    ENSURE_MAILBOX_SCRIPT,
+    MacNativeMailClient,
+)
 from projectflow.outlook.windows import WindowsLocalOutlookClient
 
 
@@ -23,15 +27,20 @@ class FakeCollection:
         return self.items[index - 1]
 
     def Add(self, name: str) -> object:  # noqa: N802
-        folder = FakeFolder(name)
+        folder = FakeFolder(name, parent=self)
         self.items.append(folder)
         return folder
 
 
 class FakeFolder:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, parent: FakeCollection | None = None) -> None:
         self.Name = name
         self.Folders = FakeCollection()
+        self.parent = parent
+
+    def Delete(self) -> None:  # noqa: N802
+        if self.parent is not None:
+            self.parent.items.remove(self)
 
 
 class FakeStore:
@@ -173,6 +182,25 @@ async def test_windows_outlook_creates_folder_path_under_inbox() -> None:
 
 
 @pytest.mark.asyncio
+async def test_windows_outlook_deletes_project_folder_but_keeps_year_folder() -> None:
+    store = FakeStore("store-1", "Boite Balz")
+    namespace = FakeNamespace([store], [FakeAccount(store, "lionel@balzmetal.ch")])
+    client = WindowsLocalOutlookClient(
+        target_store_id="store-1",
+        app_factory=lambda: FakeApp(namespace),
+    )
+    await client.ensure_folder_path(["2026", "2026-4995 (Escalier)"])
+
+    deleted = await client.delete_folder_path(["2026", "2026-4995"])
+
+    year_folder = store.root.Folders.Item(1)
+    assert isinstance(year_folder, FakeFolder)
+    assert deleted is True
+    assert store.root.Folders.Count == 1
+    assert year_folder.Folders.Count == 0
+
+
+@pytest.mark.asyncio
 async def test_windows_outlook_can_select_store_by_email_label() -> None:
     store = FakeStore("store-1", "Boite Balz")
     namespace = FakeNamespace([store], [FakeAccount(store, "lionel@balzmetal.ch")])
@@ -196,8 +224,7 @@ def test_local_outlook_requires_selected_account_when_enabled() -> None:
 def test_macos_mail_lists_accounts_and_local_mailbox() -> None:
     client = MacNativeMailClient(
         script_runner=lambda _script, _args: (
-            "Balz Metal\tBalz Metal\tlionel@balzmetal.ch\n"
-            "on-my-mac\tSur mon Mac\t"
+            "Balz Metal\tBalz Metal\tlionel@balzmetal.ch\non-my-mac\tSur mon Mac\t"
         ),
     )
 
@@ -247,6 +274,28 @@ async def test_macos_mail_can_create_under_inbox() -> None:
     await client.ensure_folder_path(["2026", "2026-4995"])
 
     assert calls[-1] == (ENSURE_MAILBOX_SCRIPT, ["Balz Metal", "INBOX/2026/2026-4995"])
+
+
+@pytest.mark.asyncio
+async def test_macos_mail_deletes_selected_project_mailbox() -> None:
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_runner(script: str, args: Sequence[str]) -> str:
+        calls.append((script, list(args)))
+        if script == DELETE_MAILBOX_SCRIPT:
+            return "1"
+        return "Balz Metal\tBalz Metal\tlionel@balzmetal.ch"
+
+    client = MacNativeMailClient(
+        target_store_id="Balz Metal",
+        base_folder="inbox",
+        script_runner=fake_runner,
+    )
+
+    deleted = await client.delete_folder_path(["2026", "2026-4995"])
+
+    assert deleted is True
+    assert calls[-1] == (DELETE_MAILBOX_SCRIPT, ["Balz Metal", "INBOX/2026/2026-4995"])
 
 
 def test_local_outlook_uses_macos_mail_client(monkeypatch: pytest.MonkeyPatch) -> None:

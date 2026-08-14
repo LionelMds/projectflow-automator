@@ -9,9 +9,13 @@ from PySide6.QtWidgets import QMessageBox
 
 from projectflow.config import AppConfig
 from projectflow.core.fiche_service import FicheService
-from projectflow.core.models import ProjectCreationResult, ProjectInput
+from projectflow.core.models import ProjectCreationResult, ProjectDeletionResult, ProjectInput
 from projectflow.core.numero import parse_project_number
-from projectflow.core.repertoire_service import NextAvailableProject
+from projectflow.core.repertoire_service import (
+    NextAvailableProject,
+    RepertoireRow,
+    RepertoireSnapshot,
+)
 from projectflow.ui.controller import ProjectFlowController, _update_prompt_text
 from projectflow.ui.creation_tab import CreationFormData
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
@@ -23,6 +27,9 @@ class FakeProjectService:
     def __init__(self) -> None:
         self.created: list[tuple[ProjectInput, bool, bool]] = []
         self.updated: list[ProjectInput] = []
+        self.deleted: list[
+            tuple[ProjectInput, tuple[ProjectInput, ...], tuple[RepertoireRow, ...]]
+        ] = []
         self.creation_result = ProjectCreationResult(
             project_dir_created=True,
             project_dir="C:/tmp/2026-4995",
@@ -47,6 +54,21 @@ class FakeProjectService:
             fiche_path="C:/tmp/fiche.xlsx",
         )
 
+    async def delete_project(
+        self,
+        project: ProjectInput,
+        *,
+        related_projects: tuple[ProjectInput, ...] | list[ProjectInput],
+        repertoire_rows: tuple[RepertoireRow, ...] | list[RepertoireRow],
+    ) -> ProjectDeletionResult:
+        self.deleted.append((project, tuple(related_projects), tuple(repertoire_rows)))
+        return ProjectDeletionResult(
+            numbers_released=tuple(row.number for row in repertoire_rows),
+            project_path_trashed=True,
+            outlook_folders_deleted=1,
+            planner_tasks_deleted=len(related_projects),
+        )
+
 
 class FakeRepertoireService:
     def __init__(self) -> None:
@@ -55,6 +77,26 @@ class FakeRepertoireService:
     async def next_available(self, *, year: int) -> NextAvailableProject:
         assert year == 2026
         return NextAvailableProject(number=parse_project_number("2026-4995"), row_index=1)
+
+    async def read_snapshot(self, *, year: int) -> RepertoireSnapshot:
+        assert year == 2026
+        return RepertoireSnapshot(
+            year=year,
+            rows=(
+                RepertoireRow(
+                    row_index=0,
+                    values=("2026-4994", "", "Balz Metal SA", "Lionel", "Projet"),
+                ),
+                RepertoireRow(
+                    row_index=1,
+                    values=("2026-4995", "", "", "", ""),
+                ),
+            ),
+            next_available=NextAvailableProject(
+                number=parse_project_number("2026-4995"),
+                row_index=1,
+            ),
+        )
 
     async def update_editable_row(
         self,
@@ -94,6 +136,13 @@ def _window(qtbot: Any, tmp_path: Path) -> tuple[MainWindow, AppConfig, FakeServ
     window.creation_tab.set_project_identity(year="2026", project_id="4995")
     window.creation_tab.designation_edit.setText("Escalier")
     return window, config, services
+
+
+def _completer_values(edit: Any) -> list[str]:
+    completer = edit.completer()
+    assert completer is not None
+    model = completer.model()
+    return [str(model.index(row, 0).data()) for row in range(model.rowCount())]
 
 
 @pytest.fixture(autouse=True)
@@ -219,6 +268,96 @@ async def test_controller_next_available_prefills_identity(qtbot: Any, tmp_path:
 
     assert window.creation_tab.project_id_edit.text() == "4995"
     assert window.creation_tab.subproject_edit.text() == ""
+    assert _completer_values(window.creation_tab.societe_edit) == ["Balz Metal SA"]
+
+
+@pytest.mark.asyncio
+async def test_controller_prepares_subproject_from_selected_repertoire_row(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    snapshot = await services.repertoire_service.read_snapshot(year=2026)
+    window.repertoire_tab.set_snapshot(snapshot)
+    window.repertoire_tab.table.selectRow(0)
+
+    controller.create_subproject_from_repertoire()
+
+    data = window.creation_tab.data()
+    assert data.year == "2026"
+    assert data.project_id == "4994"
+    assert data.subproject_id == "2"
+    assert data.designation == ""
+    assert window.tabs.currentWidget() is window.creation_tab
+
+
+@pytest.mark.asyncio
+async def test_controller_duplicates_selected_project_into_next_available_number(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    project_dir = config.paths.racine_projets / "2026" / "2026-4994"
+    project_dir.mkdir(parents=True)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet["C3"] = "2026-4994"
+    worksheet["D3"] = "Societe : Balz Metal SA"
+    worksheet["D4"] = "Contact : Lionel"
+    worksheet["D5"] = "Projet : Escalier type"
+    workbook.save(project_dir / "2026-4994 - Fiche dossier clients.xlsx")
+    workbook.close()
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    snapshot = await services.repertoire_service.read_snapshot(year=2026)
+    window.repertoire_tab.set_snapshot(snapshot)
+    window.repertoire_tab.table.selectRow(0)
+
+    controller.duplicate_project_from_repertoire()
+
+    data = window.creation_tab.data()
+    assert data.project_id == "4995"
+    assert data.subproject_id == ""
+    assert data.societe == "Balz Metal SA"
+    assert data.contact == "Lionel"
+    assert data.designation == "Escalier type"
+
+
+@pytest.mark.asyncio
+async def test_controller_delete_refreshes_repertoire_and_reports_linked_items(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    project = ProjectInput(number=parse_project_number("2026-4994"))
+    rows = (
+        RepertoireRow(
+            row_index=0,
+            values=("2026-4994", "14.08.2026", "Balz Metal SA", "Lionel", "Projet"),
+        ),
+    )
+
+    await controller._delete_project_and_related(  # noqa: SLF001
+        project=project,
+        related_projects=(project,),
+        rows=rows,
+    )
+
+    assert services.project_service.deleted == [(project, (project,), rows)]
+    assert "numéro(s) libéré(s)" in window.repertoire_tab.status_label.text()
 
 
 @pytest.mark.asyncio

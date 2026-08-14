@@ -9,7 +9,7 @@ import pytest
 
 from projectflow.core.models import ProjectInput
 from projectflow.core.numero import parse_project_number
-from projectflow.core.repertoire_service import RepertoireService
+from projectflow.core.repertoire_service import RepertoireRow, RepertoireService
 from projectflow.exceptions import ProjectCreationError
 
 TODAY = date(2026, 5, 11)
@@ -148,6 +148,44 @@ async def test_update_editable_row_rejects_concurrent_change() -> None:
         )
 
     assert workbook.updated_ranges == []
+
+
+@pytest.mark.asyncio
+async def test_clear_main_project_group_keeps_numbers_and_clears_only_b_to_e() -> None:
+    workbook = FakeWorkbook([
+        ["2026-4995", TODAY, "Balz", "Lionel", "Escalier", "Comptabilite"],
+        ["2026-4995-2", TODAY, "Balz", "Lionel", "Variante", "Montant"],
+        ["2026-5000", "", "", "", "", "Autre"],
+    ])
+    rows = (
+        RepertoireRow(row_index=0, values=tuple(workbook.rows[0][:5])),
+        RepertoireRow(row_index=1, values=tuple(workbook.rows[1][:5])),
+    )
+
+    await RepertoireService(workbook).clear_project_rows(
+        number=parse_project_number("2026-4995"),
+        rows=rows,
+    )
+
+    assert workbook.updated_ranges == [
+        ("2026", "B1:E1", [["", "", "", ""]]),
+        ("2026", "B2:E2", [["", "", "", ""]]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_project_deletion_rejects_new_related_row_added_concurrently() -> None:
+    workbook = FakeWorkbook([
+        ["2026-4995", TODAY, "Balz", "Lionel", "Escalier"],
+        ["2026-4995-2", TODAY, "Balz", "Lionel", "Variante"],
+    ])
+    expected = (RepertoireRow(row_index=0, values=tuple(workbook.rows[0][:5])),)
+
+    with pytest.raises(ProjectCreationError, match="groupe de projet a change"):
+        await RepertoireService(workbook).validate_project_deletion(
+            number=parse_project_number("2026-4995"),
+            rows=expected,
+        )
 
 
 @pytest.mark.asyncio

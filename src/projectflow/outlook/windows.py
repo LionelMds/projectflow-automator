@@ -53,6 +53,9 @@ class WindowsLocalOutlookClient:
     async def ensure_folder_path(self, names: list[str]) -> object:
         return await asyncio.to_thread(self._ensure_folder_path_sync, names)
 
+    async def delete_folder_path(self, names: list[str]) -> bool:
+        return await asyncio.to_thread(self._delete_folder_path_sync, names)
+
     async def validate_target(self) -> None:
         await asyncio.to_thread(self.validate_target_sync)
 
@@ -66,6 +69,29 @@ class WindowsLocalOutlookClient:
         for name in names:
             current = _ensure_child_folder(current, name)
         return current
+
+    def _delete_folder_path_sync(self, names: list[str]) -> bool:
+        if not names:
+            raise ValueError("La liste de dossiers Outlook ne peut pas etre vide.")
+        current = self._base_target_folder()
+        for index, name in enumerate(names):
+            folders = current.Folders
+            child = _find_folder(folders, name)
+            if child is None and index == len(names) - 1:
+                child = _find_project_folder(folders, name)
+            if child is None:
+                return False
+            if index != len(names) - 1:
+                current = child
+                continue
+            try:
+                child.Delete()
+            except (_com_error_type(), AttributeError, RuntimeError, OSError) as exc:
+                raise OutlookError(
+                    f"Impossible de supprimer le dossier Outlook: {name}",
+                ) from exc
+            return True
+        return False
 
     def _base_target_folder(self) -> Any:
         store = self._selected_store()

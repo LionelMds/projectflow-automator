@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.1.35
+
+- Corrige la fiche dossier : `Gere par` est renseigne en `C9`, la date de creation en `B9`,
+  et la date d'atelier en `E2` reste reservee a la copie produite par `Sortie dossier`.
+- Ajoute l'auto-completion des champs `Societe` et `Contact` depuis le repertoire chantier de
+  l'annee selectionnee, dans le formulaire principal comme dans la creation rapide.
+- Normalise les doublons de casse, d'accents et d'espaces, puis filtre les contacts selon la
+  societe reconnue, tout en conservant la saisie libre pour les nouveaux clients.
+- Ajoute dans l'onglet `Repertoire chantier` les actions `Charger le projet`,
+  `Creer sous-projet` et `Dupliquer` vers le prochain numero principal disponible.
+- Ajoute une suppression globale avec confirmation : les informations `B:E` sont effacees sans
+  toucher au numero `A` ni aux colonnes comptables `F:L`, le dossier OneDrive est place dans la
+  corbeille, et les dossiers Outlook et taches Planner correspondants sont supprimes.
+- Lors de la suppression d'un projet principal, traite aussi ses sous-projets lies et refuse
+  l'operation si le repertoire partage a change depuis son chargement.
+
 ## 0.1.34
 
 - Isole les integrations Outlook et Planner lors de la creation ou de la mise a jour d'un projet :

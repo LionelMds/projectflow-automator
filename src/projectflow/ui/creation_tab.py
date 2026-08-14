@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
 )
 
 from projectflow.config import PlannerConfig
+from projectflow.core.client_directory import ClientDirectory
+from projectflow.ui.widgets.client_autocomplete import ClientAutocomplete
 from projectflow.ui.widgets.planner import PlannerSelectionWidget, PlannerTaskFormData
 
 
@@ -45,6 +47,7 @@ class CreationTab(QWidget):
     next_available_requested = Signal()
     settings_requested = Signal()
     planner_options_requested = Signal()
+    client_suggestions_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -110,6 +113,9 @@ class CreationTab(QWidget):
             due_days=planner.due_days,
         )
 
+    def set_client_directory(self, directory: ClientDirectory) -> None:
+        self._client_autocomplete.set_directory(directory)
+
     def _build_ui(self) -> None:
         self.setMinimumWidth(760)
         root_layout = QVBoxLayout(self)
@@ -168,6 +174,16 @@ class CreationTab(QWidget):
         _configure_form_layout(client_layout)
         self.societe_edit = QLineEdit()
         self.contact_edit = QLineEdit()
+        self._client_autocomplete = ClientAutocomplete(
+            societe_edit=self.societe_edit,
+            contact_edit=self.contact_edit,
+        )
+        self.societe_edit.textEdited.connect(
+            lambda _text: self.client_suggestions_requested.emit(),
+        )
+        self.contact_edit.textEdited.connect(
+            lambda _text: self.client_suggestions_requested.emit(),
+        )
         self.localisation_edit = QLineEdit()
         self.gere_par_edit = QLineEdit()
         for edit in [
