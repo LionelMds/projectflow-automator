@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.36
+
+- Republie les changements de `0.1.35` apres l'echec du controle Ruff dans GitHub Actions.
+- Fige la version de Ruff utilisee en developpement et en CI afin d'eviter qu'une nouvelle regle
+  publiee automatiquement bloque les prochaines releases.
+
 ## 0.1.35
 
 - Corrige la fiche dossier : `Gere par` est renseigne en `C9`, la date de creation en `B9`,

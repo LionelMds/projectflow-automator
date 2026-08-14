@@ -155,6 +155,5 @@ def migrate_config(data: dict[str, Any]) -> dict[str, Any]:
     version = data.get("version", 1)
     if version != 1:
         raise ConfigError(f"Version de configuration non supportee: {version}")
-    for key in ("micro" "soft" "_client_id",):
-        data.pop(key, None)
+    data.pop("microsoft_client_id", None)
     return data

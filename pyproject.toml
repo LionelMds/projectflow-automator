@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "projectflow-automator"
-version = "0.1.35"
+version = "0.1.36"
 description = "Application desktop cross-platform pour automatiser la creation des projets Balz Metal Sa."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,7 +30,7 @@ dev = [
   "pytest-asyncio>=0.23",
   "pytest-qt>=4.4",
   "pytest-cov>=5",
-  "ruff>=0.5",
+  "ruff==0.16.3",
   "types-openpyxl>=3.1",
 ]
 packaging = [
@@ -59,6 +59,7 @@ src = ["src", "tests"]
 select = ["ALL"]
 ignore = [
   "COM812",
+  "CPY001",
   "D100",
   "D101",
   "D102",
