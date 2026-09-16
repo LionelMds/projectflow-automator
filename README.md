@@ -6,6 +6,10 @@ ProjectFlow fonctionne principalement en local : dossiers projet, fiche Excel et
 en option. Le repertoire chantier, s'il est place dans OneDrive, est ecrit directement dans le
 classeur cloud pour eviter les copies non fusionnees creees par la synchronisation locale.
 
+En cas de conflit Excel deja present, suivre la [procedure de recuperation](docs/repertoire-recovery.md)
+avant de reprendre les ecritures. Les parametres acceptent aussi le lien OneDrive/SharePoint du
+classeur et proposent une reconnexion sans changer le chemin.
+
 ## Developpement
 
 ```powershell

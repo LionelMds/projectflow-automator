@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
-from projectflow.config import AppConfig
+from projectflow.config import AppConfig, RepertoireChantierConfig
 from projectflow.exceptions import ProjectFlowError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
@@ -40,16 +40,25 @@ class SettingsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Parametres")
+        self._reconnect_repertoire = False
         self._build_ui(config)
 
     def apply_to_config(self, config: AppConfig) -> None:
         config.paths.racine_projets = _optional_path(self.racine_edit.text())
         config.paths.dossier_reference = _optional_path(self.reference_edit.text())
         repertoire_path = native_path_text(self.repertoire_path_edit.text())
-        if repertoire_path != config.paths.repertoire_chantier.display_path:
-            config.paths.repertoire_chantier.drive_id = ""
-            config.paths.repertoire_chantier.item_id = ""
-        config.paths.repertoire_chantier.display_path = repertoire_path
+        previous_repertoire = config.paths.repertoire_chantier
+        keep_target = (
+            repertoire_path == previous_repertoire.display_path and not self._reconnect_repertoire
+        )
+        # An in-flight resolver keeps the old object; it must not restore stale
+        # cloud identifiers into the configuration accepted by this dialog.
+        config.paths.repertoire_chantier = RepertoireChantierConfig(
+            display_path=repertoire_path,
+            drive_id=previous_repertoire.drive_id if keep_target else "",
+            item_id=previous_repertoire.item_id if keep_target else "",
+            cloud_only=self.repertoire_cloud_checkbox.isChecked(),
+        )
 
         config.outlook.enabled = self.outlook_enabled_checkbox.isChecked()
         config.outlook.mailbox_email = self.outlook_account_combo.currentText().strip()
@@ -109,13 +118,33 @@ class SettingsDialog(QDialog):
         self.repertoire_path_edit = QLineEdit(
             native_path_text(config.paths.repertoire_chantier.display_path),
         )
+        self.repertoire_path_edit.setPlaceholderText("Chemin Excel ou lien OneDrive / SharePoint")
         layout.addRow("Racine projets", _browse_row(self.racine_edit, directory=True))
         layout.addRow("Dossier de reference", _browse_row(self.reference_edit, directory=True))
         layout.addRow(
             "Repertoire chantier",
             _browse_row(self.repertoire_path_edit, directory=False),
         )
+        self.repertoire_cloud_checkbox = QCheckBox("Repertoire partage OneDrive / SharePoint")
+        self.repertoire_cloud_checkbox.setChecked(
+            config.paths.repertoire_chantier.cloud_only
+            or config.paths.repertoire_chantier.is_configured,
+        )
+        self.repertoire_cloud_checkbox.setToolTip(
+            "Impose la connexion cloud meme si le dossier synchronise n'est pas reconnu. "
+            "Les dossiers OneDrive et SharePoint detectes utilisent toujours le cloud.",
+        )
+        layout.addRow("", self.repertoire_cloud_checkbox)
+        self.repertoire_reconnect_button = QPushButton("Reconnecter a OneDrive / SharePoint")
+        self.repertoire_reconnect_button.clicked.connect(self._request_repertoire_reconnection)
+        layout.addRow("", self.repertoire_reconnect_button)
         return group
+
+    def _request_repertoire_reconnection(self) -> None:
+        self._reconnect_repertoire = True
+        self.repertoire_cloud_checkbox.setChecked(True)
+        self.repertoire_reconnect_button.setText("Reconnexion apres enregistrement des parametres")
+        self.repertoire_reconnect_button.setEnabled(False)
 
     def _planner_group(self, config: AppConfig) -> QGroupBox:
         group = QGroupBox("Microsoft Planner")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 from datetime import date
 from typing import Any
@@ -85,6 +87,8 @@ async def test_graph_excel_gateway_clears_inserted_subproject_row_before_writing
             )
         elif request.url.path.endswith("/insert"):
             response = httpx.Response(200, json={})
+        elif request.url.path.endswith("/tables"):
+            response = httpx.Response(200, json={"value": []})
         elif request.method == "PATCH":
             patch_bodies.append(_json(request))
             response = httpx.Response(200, json={})
@@ -213,3 +217,254 @@ async def test_graph_client_formats_forbidden_message() -> None:
 
         with pytest.raises(GraphError, match=r"Files\.ReadWrite\.All"):
             await client.get("/me/drive/root")
+
+
+@pytest.mark.asyncio
+async def test_graph_session_close_failure_clears_state_and_allows_new_session() -> None:
+    requests: list[httpx.Request] = []
+    session_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal session_count
+        requests.append(request)
+        if request.url.path.endswith("/createSession"):
+            session_count += 1
+            assert "workbook-session-id" not in request.headers
+            return httpx.Response(200, json={"id": f"session-{session_count}"})
+        if request.url.path.endswith("/closeSession") and session_count == 1:
+            return httpx.Response(503, json={"error": {"message": "close failed"}})
+        return httpx.Response(204)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        gateway = GraphExcelWorkbookGateway(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+            config=RepertoireChantierConfig(drive_id="drive", item_id="item"),
+        )
+        with pytest.raises(GraphError, match="close failed") as caught:
+            async with gateway.session():
+                await gateway.update_range_values("2026", "A1", [["first"]])
+
+        async with gateway.session():
+            await gateway.update_range_values("2026", "A1", [["second"]])
+
+    assert "Des modifications peuvent deja etre enregistrees" in str(caught.value)
+    patches = [request for request in requests if request.method == "PATCH"]
+    assert [request.headers["workbook-session-id"] for request in patches] == [
+        "session-1",
+        "session-2",
+    ]
+    assert session_count == 2
+
+
+@pytest.mark.asyncio
+async def test_graph_session_preserves_operation_error_when_close_also_fails() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/createSession"):
+            return httpx.Response(200, json={"id": "session-id"})
+        return httpx.Response(503, json={"error": {"message": "close failed"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        gateway = GraphExcelWorkbookGateway(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+            config=RepertoireChantierConfig(drive_id="drive", item_id="item"),
+        )
+        with pytest.raises(GraphError, match="original error"):
+            async with gateway.session():
+                raise GraphError("original error", status_code=409)
+
+
+@pytest.mark.asyncio
+async def test_graph_session_serializes_competing_tasks_and_supports_nesting() -> None:
+    requests: list[httpx.Request] = []
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+    session_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal session_count
+        requests.append(request)
+        if request.url.path.endswith("/createSession"):
+            session_count += 1
+            return httpx.Response(200, json={"id": f"session-{session_count}"})
+        return httpx.Response(204)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        gateway = GraphExcelWorkbookGateway(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+            config=RepertoireChantierConfig(drive_id="drive", item_id="item"),
+        )
+
+        async def first_operation() -> None:
+            async with gateway.session(), gateway.session():
+                first_entered.set()
+                await release_first.wait()
+                await gateway.update_range_values("2026", "A1", [["first"]])
+
+        async def second_operation() -> None:
+            second_started.set()
+            async with gateway.session():
+                await gateway.update_range_values("2026", "A2", [["second"]])
+
+        async with asyncio.TaskGroup() as group:
+            group.create_task(first_operation())
+            await first_entered.wait()
+            group.create_task(second_operation())
+            await second_started.wait()
+            assert session_count == 1
+            release_first.set()
+
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == [
+        "createSession",
+        "range(address='A1')",
+        "closeSession",
+        "createSession",
+        "range(address='A2')",
+        "closeSession",
+    ]
+    assert requests[1].headers["workbook-session-id"] == "session-1"
+    assert requests[4].headers["workbook-session-id"] == "session-2"
+
+
+@pytest.mark.asyncio
+async def test_graph_session_cancel_releases_session_for_next_operation() -> None:
+    requests: list[httpx.Request] = []
+    entered = asyncio.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/createSession"):
+            return httpx.Response(200, json={"id": "session-id"})
+        return httpx.Response(204)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        gateway = GraphExcelWorkbookGateway(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+            config=RepertoireChantierConfig(drive_id="drive", item_id="item"),
+        )
+
+        async def operation() -> None:
+            async with gateway.session():
+                entered.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(operation())
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        async with gateway.session():
+            await gateway.update_range_values("2026", "A1", [["recovered"]])
+
+    assert sum(request.url.path.endswith("/closeSession") for request in requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_graph_session_never_reuses_invalid_session_even_for_close() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/createSession"):
+            return httpx.Response(200, json={"id": "session-id"})
+        return httpx.Response(
+            409,
+            json={"error": {"code": "invalidSessionAccessConflict"}},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        gateway = GraphExcelWorkbookGateway(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+            config=RepertoireChantierConfig(drive_id="drive", item_id="item"),
+        )
+        with pytest.raises(GraphError, match="conflit"):
+            async with gateway.session():
+                await gateway.update_range_values("2026", "A1", [["value"]])
+
+    assert not any(request.url.path.endswith("/closeSession") for request in requests)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_id", [None, "", " "])
+async def test_graph_session_refuses_writing_without_valid_session(session_id: str | None) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"id": session_id})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        gateway = GraphExcelWorkbookGateway(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+            config=RepertoireChantierConfig(drive_id="drive", item_id="item"),
+        )
+        with pytest.raises(GraphError, match="session Excel valide"):
+            async with gateway.session():
+                await gateway.update_range_values("2026", "A1", [["must not write"]])
+
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_path", ["/tables", "/tables/table-id/range"])
+async def test_graph_table_detection_failure_prevents_unsafe_range_insertion(
+    failure_path: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/createSession"):
+            return httpx.Response(200, json={"id": "session-id"})
+        if request.url.path.endswith(failure_path):
+            return httpx.Response(409, json={"error": {"code": "accessConflict"}})
+        if request.url.path.endswith("/tables"):
+            return httpx.Response(200, json={"value": [{"id": "table-id"}]})
+        return httpx.Response(204)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        gateway = GraphExcelWorkbookGateway(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+            config=RepertoireChantierConfig(drive_id="drive", item_id="item"),
+        )
+        with pytest.raises(GraphError, match="conflit"):
+            async with gateway.session():
+                await gateway.insert_blank_row("2026", 2)
+
+    assert not any(request.url.path.endswith("/insert") for request in requests)
+    assert not any(request.method == "PATCH" for request in requests)
+
+
+@pytest.mark.asyncio
+async def test_graph_excel_resolves_sharing_url_without_converting_it_to_local_path() -> None:
+    sharing_url = "https://example.sharepoint.com/:x:/s/Projects/SharedFile?e=abc"
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if "/shares/" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "item",
+                    "name": "Repertoire.xlsx",
+                    "parentReference": {"driveId": "drive"},
+                },
+            )
+        if request.url.path.endswith("/createSession"):
+            return httpx.Response(200, json={"id": "session-id"})
+        return httpx.Response(204)
+
+    config = RepertoireChantierConfig(display_path=sharing_url)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        gateway = GraphExcelWorkbookGateway(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+            config=config,
+        )
+        async with gateway.session():
+            await gateway.update_range_values("2026", "A1", [["value"]])
+
+    sharing_token = "u!" + base64.urlsafe_b64encode(sharing_url.encode()).decode().rstrip("=")
+    assert requests[0].url.path == f"/v1.0/shares/{sharing_token}/driveItem"
+    assert config.drive_id == "drive"
+    assert config.item_id == "item"

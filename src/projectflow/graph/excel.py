@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -9,12 +10,14 @@ from typing import Any
 from urllib.parse import quote
 
 from projectflow.config import RepertoireChantierConfig
-from projectflow.core.repertoire_service import REPERTOIRE_TABLE_WIDTH, null_workbook_session
+from projectflow.core.repertoire_service import REPERTOIRE_TABLE_WIDTH
 from projectflow.exceptions import ConfigError, GraphError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.onedrive import OneDriveItemResolver
+from projectflow.logging import get_logger
 
 HTTP_NOT_FOUND = 404
+LOGGER = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -66,38 +69,82 @@ class GraphExcelWorkbookGateway:
         self._graph = graph
         self._config = config
         self._resolver = resolver or OneDriveItemResolver(graph)
-        self._display_path = (
-            Path(config.display_path).expanduser() if config.display_path.strip() else None
+        display_path = config.display_path.strip()
+        self._display_path: Path | str | None = (
+            display_path
+            if "://" in display_path
+            else Path(display_path).expanduser()
+            if display_path
+            else None
         )
         self._target: GraphWorkbookTarget | None = None
         self._session_id: str | None = None
-        self._session_depth = 0
+        self._session_lock = asyncio.Lock()
+        self._session_owner: asyncio.Task[Any] | None = None
 
     def session(self) -> AbstractAsyncContextManager[None]:
-        if self._session_depth > 0:
-            return null_workbook_session()
         return self._session()
 
     @asynccontextmanager
     async def _session(self) -> AsyncIterator[None]:
-        await self._ensure_target()
-        payload = await self._graph.post(
-            f"{self._workbook_path()}/createSession",
-            json={"persistChanges": True},
-        )
-        session_id = payload.get("id")
-        self._session_id = session_id if isinstance(session_id, str) else None
-        self._session_depth += 1
-        try:
+        current_task = asyncio.current_task()
+        if current_task is not None and current_task is self._session_owner:
             yield
-        finally:
-            self._session_depth -= 1
-            if self._session_id is not None:
-                await self._graph.post(
-                    f"{self._workbook_path()}/closeSession",
-                    headers=self._session_headers(),
+            return
+
+        # A session must belong to a single operation, including its reads and close.
+        async with self._session_lock:
+            await self._ensure_target()
+            payload = await self._graph.post(
+                f"{self._workbook_path()}/createSession",
+                json={"persistChanges": True},
+            )
+            session_id = payload.get("id")
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise GraphError(
+                    "Microsoft Graph n'a pas ouvert de session Excel valide. "
+                    "Aucune ecriture n'a ete effectuee.",
                 )
-            self._session_id = None
+            self._session_id = session_id
+            self._session_owner = current_task
+            operation_error: BaseException | None = None
+            try:
+                yield
+            except BaseException as exc:
+                operation_error = exc
+                raise
+            finally:
+                headers = self._session_headers()
+                # Clear state even if closeSession fails or the task is cancelled.
+                self._session_id = None
+                self._session_owner = None
+                invalid_session = (
+                    isinstance(operation_error, GraphError)
+                    and operation_error.invalid_workbook_session
+                )
+                if not invalid_session:
+                    try:
+                        await self._graph.post(
+                            f"{self._workbook_path()}/closeSession",
+                            headers=headers,
+                        )
+                    except GraphError as close_error:
+                        if operation_error is None:
+                            raise GraphError(
+                                "La fermeture de la session Excel a echoue. "
+                                "Des modifications peuvent deja etre enregistrees. "
+                                "Actualisez le repertoire avant de recommencer. "
+                                + str(close_error),
+                                status_code=close_error.status_code,
+                                error_code=close_error.error_code,
+                                inner_error_code=close_error.inner_error_code,
+                            ) from close_error
+                        LOGGER.warning(
+                            "excel_session_close_failed",
+                            status_code=close_error.status_code,
+                            error_code=close_error.error_code,
+                            inner_error_code=close_error.inner_error_code,
+                        )
 
     async def worksheet_exists(self, worksheet_name: str) -> bool:
         try:
@@ -106,7 +153,7 @@ class GraphExcelWorkbookGateway:
                 headers=self._session_headers(),
             )
         except GraphError as exc:
-            if exc.status_code == HTTP_NOT_FOUND:
+            if exc.status_code == HTTP_NOT_FOUND and not exc.invalid_workbook_session:
                 return False
             raise
         return True
@@ -117,9 +164,9 @@ class GraphExcelWorkbookGateway:
             headers=self._session_headers(),
         )
         values = payload.get("values")
-        if not isinstance(values, list):
-            return []
-        return [_row_values(row) for row in values if isinstance(row, list)]
+        if not isinstance(values, list) or any(not isinstance(row, list) for row in values):
+            raise GraphError("Microsoft Graph n'a pas retourne les lignes du repertoire Excel.")
+        return [_row_values(row) for row in values]
 
     async def update_range_values(
         self,
@@ -190,27 +237,22 @@ class GraphExcelWorkbookGateway:
         target_row: int,
         format_width: int,
     ) -> WorkbookTable | None:
-        try:
-            payload = await self._graph.get(
-                f"{self._worksheet_path(worksheet_name)}/tables",
-                headers=self._session_headers(),
-            )
-        except GraphError:
-            return None
+        payload = await self._graph.get(
+            f"{self._worksheet_path(worksheet_name)}/tables",
+            headers=self._session_headers(),
+        )
 
         values = payload.get("value")
         if not isinstance(values, list):
-            return None
+            raise GraphError("Microsoft Graph n'a pas retourne la liste des tableaux Excel.")
 
         for value in values:
             if not isinstance(value, dict):
-                continue
+                raise GraphError("Microsoft Graph a retourne un tableau Excel incomplet.")
             table_id = _table_id(value)
             if table_id is None:
-                continue
+                raise GraphError("Microsoft Graph a retourne un tableau Excel sans identifiant.")
             table = await self._table_details(worksheet_name, table_id, value)
-            if table is None:
-                continue
             if table.column_index != 0 or table.column_count < format_width:
                 continue
             if table.table_row_index_for_sheet_row(target_row) is not None:
@@ -222,27 +264,18 @@ class GraphExcelWorkbookGateway:
         worksheet_name: str,
         table_id: str,
         table_payload: dict[str, Any],
-    ) -> WorkbookTable | None:
-        try:
-            range_payload = await self._graph.get(
-                f"{self._worksheet_path(worksheet_name)}"
-                f"/tables/{_path_segment(table_id)}/range",
-                headers=self._session_headers(),
-            )
-        except GraphError:
-            return None
+    ) -> WorkbookTable:
+        range_payload = await self._graph.get(
+            f"{self._worksheet_path(worksheet_name)}/tables/{_path_segment(table_id)}/range",
+            headers=self._session_headers(),
+        )
 
         row_index = _payload_int(range_payload, "rowIndex")
         row_count = _payload_int(range_payload, "rowCount")
         column_index = _payload_int(range_payload, "columnIndex")
         column_count = _payload_int(range_payload, "columnCount")
-        if (
-            row_index is None
-            or row_count is None
-            or column_index is None
-            or column_count is None
-        ):
-            return None
+        if row_index is None or row_count is None or column_index is None or column_count is None:
+            raise GraphError("Microsoft Graph n'a pas retourne les dimensions du tableau Excel.")
 
         return WorkbookTable(
             table_id=table_id,

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.1.37
+
+- Reconnait les bibliotheques SharePoint synchronisees, les comptes OneDrive deplaces et les
+  liens cloud afin d'eviter toute reecriture locale du repertoire partage.
+- Les lectures du repertoire local n'enregistrent plus le classeur. Les modifications utilisent
+  une sauvegarde atomique avec controle de concurrence et de verrouillage Excel.
+- Isole les sessions Excel cloud concurrentes et nettoie leur etat apres erreur ; les insertions
+  ne sont plus rejouees aveuglement apres une erreur serveur.
+- Ajoute une reconnexion explicite au repertoire dans les parametres et refuse les copies non
+  fusionnees et les recherches cloud ambigues. Avec plusieurs comptes OneDrive sur le poste,
+  un lien explicite est demande lors de la resolution initiale d'un chemin local.
+  Voir `docs/repertoire-recovery.md` pour recuperer
+  les changements deja en conflit ou repartir de l'original sans les recuperer.
+
 ## 0.1.36
 
 - Republie les changements de `0.1.35` apres l'echec du controle Ruff dans GitHub Actions.

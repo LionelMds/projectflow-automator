@@ -15,8 +15,10 @@ from projectflow.exceptions import ConfigError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.excel import GraphExcelWorkbookGateway
 from projectflow.graph.planner import GraphPlannerClient, PlannerTaskResult
+from projectflow.logging import get_logger
 from projectflow.outlook.local import create_local_outlook_client
 from projectflow.platform.filemanager import move_path_to_trash, pin_to_filemanager_favorites
+from projectflow.platform.sync_paths import is_synchronized_path
 
 
 @dataclass(slots=True)
@@ -38,7 +40,12 @@ class ServiceContainer:
         repertoire = self.config.paths.repertoire_chantier
         display_path = repertoire.display_path.strip()
         workbook_path = Path(display_path).expanduser()
-        if repertoire.is_configured or _is_onedrive_path(workbook_path):
+        if (
+            repertoire.is_configured
+            or repertoire.cloud_only
+            or display_path.casefold().startswith("https://")
+            or is_synchronized_path(workbook_path)
+        ):
             settings = self.application_settings or ApplicationSettings.load()
             if not settings.microsoft_client_id.strip():
                 raise ConfigError(
@@ -49,10 +56,11 @@ class ServiceContainer:
             token_provider = MsalAccessTokenProvider(
                 client_id=settings.microsoft_client_id,
             )
-            graph = GraphClient(token_provider=token_provider)
+            graph = GraphClient(token_provider=token_provider, request_timeout=60.0)
             self.repertoire_service = RepertoireService(
                 GraphExcelWorkbookGateway(graph=graph, config=repertoire),
             )
+            get_logger(__name__).info("repertoire.backend", backend="cloud", path=display_path)
             return self.repertoire_service
 
         if not display_path:
@@ -60,6 +68,7 @@ class ServiceContainer:
         if not workbook_path.exists():
             raise ConfigError("Repertoire chantier local non configure.")
         self.repertoire_service = RepertoireService(LocalWorkbookGateway(workbook_path))
+        get_logger(__name__).info("repertoire.backend", backend="local", path=display_path)
         return self.repertoire_service
 
     def project(self) -> ProjectService:
@@ -103,10 +112,6 @@ class ServiceContainer:
 
     async def close(self) -> None:
         return
-
-
-def _is_onedrive_path(path: Path) -> bool:
-    return any("onedrive" in part.casefold() for part in path.parts)
 
 
 @dataclass(slots=True)

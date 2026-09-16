@@ -840,6 +840,28 @@ def test_controller_open_repertoire_uses_default_app(
     assert "Repertoire ouvert" in window.creation_tab.logs.toPlainText()
 
 
+def test_controller_open_repertoire_accepts_cloud_link(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    url = "https://balz.sharepoint.com/:x:/s/site/abc"
+    config.paths.repertoire_chantier.display_path = url
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "projectflow.ui.controller.QDesktopServices.openUrl",
+        lambda target: opened.append(target.toString()) is None,
+    )
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    controller.open_repertoire()
+    assert opened == [url]
+
+
 def test_controller_open_repertoire_reports_missing_path(
     qtbot: Any,
     tmp_path: Path,

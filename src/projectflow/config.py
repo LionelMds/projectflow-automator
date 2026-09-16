@@ -25,6 +25,7 @@ class RepertoireChantierConfig(BaseModel):
     drive_id: str = ""
     item_id: str = ""
     display_path: str = ""
+    cloud_only: bool = False
 
     @property
     def is_configured(self) -> bool:

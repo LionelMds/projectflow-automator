@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+import httpx
+import pytest
 from PySide6.QtWidgets import QDialog
 
 from projectflow.config import AppConfig
+from projectflow.graph.client import GraphClient
+from projectflow.graph.excel import GraphExcelWorkbookGateway
 from projectflow.outlook.models import OutlookAccount
 from projectflow.platform.paths import native_path_text
 from projectflow.ui.dialogs.settings import SettingsDialog
@@ -143,3 +148,121 @@ def test_settings_dialog_refuses_enabled_planner_without_bucket(
 
     assert dialog.result() != QDialog.DialogCode.Accepted
     assert warnings == ["Selectionnez une colonne Planner ou desactivez la creation Planner."]
+
+
+def test_repertoire_reconnection_forgets_stale_ids_even_with_same_path(qtbot) -> None:  # type: ignore[no-untyped-def]
+    config = AppConfig()
+    repertoire = config.paths.repertoire_chantier
+    repertoire.display_path = native_path_text("Entreprise/Rep.xlsx")
+    repertoire.drive_id = "old-drive"
+    repertoire.item_id = "old-item"
+    dialog = SettingsDialog(config)
+    qtbot.addWidget(dialog)
+
+    dialog.repertoire_reconnect_button.click()
+    assert repertoire.item_id == "old-item"  # No mutation before accepting the dialog.
+    dialog.apply_to_config(config)
+
+    current = config.paths.repertoire_chantier
+    assert current is not repertoire
+    assert current.display_path == native_path_text("Entreprise/Rep.xlsx")
+    assert current.drive_id == ""
+    assert current.item_id == ""
+    assert current.cloud_only
+    assert repertoire.drive_id == "old-drive"
+    assert repertoire.item_id == "old-item"
+
+
+def test_settings_preserve_cloud_url_and_explicit_cloud_mode(qtbot) -> None:  # type: ignore[no-untyped-def]
+    config = AppConfig()
+    dialog = SettingsDialog(config)
+    qtbot.addWidget(dialog)
+    url = "https://balz.sharepoint.com/:x:/s/site/abc"
+    dialog.repertoire_path_edit.setText(url)
+    dialog.repertoire_cloud_checkbox.setChecked(True)
+    dialog.apply_to_config(config)
+    assert config.paths.repertoire_chantier.display_path == url
+    assert config.paths.repertoire_chantier.cloud_only
+
+
+def test_unchanged_repertoire_keeps_ids_in_detached_config(qtbot) -> None:  # type: ignore[no-untyped-def]
+    config = AppConfig()
+    previous = config.paths.repertoire_chantier
+    previous.display_path = "https://balz.sharepoint.com/:x:/s/site/original"
+    previous.drive_id = "drive"
+    previous.item_id = "item"
+    dialog = SettingsDialog(config)
+    qtbot.addWidget(dialog)
+
+    dialog.apply_to_config(config)
+
+    current = config.paths.repertoire_chantier
+    assert current is not previous
+    assert current.drive_id == "drive"
+    assert current.item_id == "item"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change_path", [False, True])
+async def test_delayed_resolution_cannot_restore_ids_after_settings_change(
+    qtbot,
+    *,
+    change_path: bool,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    config = AppConfig()
+    previous = config.paths.repertoire_chantier
+    previous.display_path = "https://balz.sharepoint.com/:x:/s/site/original"
+
+    class TokenProvider:
+        async def access_token(self) -> str:
+            return "token"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "/shares/" in request.url.path:
+            entered.set()
+            await release.wait()
+            return httpx.Response(
+                200,
+                json={
+                    "id": "old-item",
+                    "name": "repertoire.xlsx",
+                    "parentReference": {"driveId": "old-drive"},
+                },
+            )
+        if request.url.path.endswith("/createSession"):
+            return httpx.Response(200, json={"id": "session"})
+        return httpx.Response(204)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        gateway = GraphExcelWorkbookGateway(
+            graph=GraphClient(token_provider=TokenProvider(), http_client=http_client),
+            config=previous,
+        )
+
+        async def resolve_old_target() -> None:
+            async with gateway.session():
+                pass
+
+        task = asyncio.create_task(resolve_old_target())
+        await entered.wait()
+        dialog = SettingsDialog(config)
+        qtbot.addWidget(dialog)
+        if change_path:
+            dialog.repertoire_path_edit.setText("https://balz.sharepoint.com/:x:/s/site/new")
+        else:
+            dialog.repertoire_reconnect_button.click()
+        dialog.apply_to_config(config)
+        release.set()
+        await task
+
+    current = config.paths.repertoire_chantier
+    assert current is not previous
+    assert current.drive_id == ""
+    assert current.item_id == ""
+    assert previous.drive_id == "old-drive"
+    assert previous.item_id == "old-item"
+    assert current.display_path == (
+        "https://balz.sharepoint.com/:x:/s/site/new" if change_path else previous.display_path
+    )

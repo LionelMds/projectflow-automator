@@ -8,7 +8,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from projectflow import __version__
@@ -838,6 +839,10 @@ class ProjectFlowController:
         display_path = self._config.paths.repertoire_chantier.display_path.strip()
         if not display_path:
             self._error("Repertoire chantier non configure.")
+            return
+        if display_path.casefold().startswith("https://"):
+            if not QDesktopServices.openUrl(QUrl(display_path)):
+                self._error("Impossible d'ouvrir le repertoire dans le navigateur.")
             return
         repertoire_path = Path(display_path).expanduser()
         if not repertoire_path.exists():

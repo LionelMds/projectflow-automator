@@ -7,6 +7,9 @@ from openpyxl import Workbook
 
 from projectflow.application_settings import ApplicationSettings
 from projectflow.config import AppConfig, RepertoireChantierConfig
+from projectflow.exceptions import ConfigError
+from projectflow.graph.excel import GraphExcelWorkbookGateway
+from projectflow.platform import sync_paths
 from projectflow.services import ServiceContainer
 
 
@@ -116,3 +119,36 @@ def test_service_container_returns_planner_when_enabled() -> None:
     ).planner()
 
     assert service is not None
+
+
+@pytest.mark.parametrize("kind", ["sharepoint", "custom-root", "explicit-cloud", "url"])
+def test_shared_repertoire_never_uses_local_gateway(monkeypatch, tmp_path: Path, kind: str) -> None:
+    path = tmp_path / "Balz Metal Sa" / "Projets - Documents" / "rep.xlsx"
+    config = AppConfig()
+    config.paths.repertoire_chantier.display_path = str(path)
+    if kind == "sharepoint":
+        monkeypatch.setattr(sync_paths, "synchronized_roots", lambda: (path.parent,))
+    elif kind == "custom-root":
+        monkeypatch.setenv("OneDriveCommercial", str(path.parent))
+    elif kind == "explicit-cloud":
+        config.paths.repertoire_chantier.cloud_only = True
+    else:
+        config.paths.repertoire_chantier.display_path = "https://balz.sharepoint.com/:x:/s/site/abc"
+
+    def reject_local(*_args: object) -> None:
+        pytest.fail("Shared workbook must never be opened through the local gateway")
+
+    monkeypatch.setattr("projectflow.services.LocalWorkbookGateway", reject_local)
+    service = ServiceContainer(config).repertoire()
+    assert isinstance(service._workbook, GraphExcelWorkbookGateway)  # noqa: SLF001
+
+
+def test_shared_repertoire_missing_connector_does_not_fall_back_to_disk(tmp_path: Path) -> None:
+    path = tmp_path / "OneDrive - Balz" / "rep.xlsx"
+    config = AppConfig()
+    config.paths.repertoire_chantier.display_path = str(path)
+    with pytest.raises(ConfigError, match="connecteur"):
+        ServiceContainer(
+            config,
+            application_settings=ApplicationSettings(microsoft_client_id=""),
+        ).repertoire()

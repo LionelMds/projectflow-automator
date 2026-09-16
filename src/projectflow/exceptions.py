@@ -16,9 +16,25 @@ class AuthError(ProjectFlowError):
 class GraphError(ProjectFlowError):
     """Raised when Microsoft Graph rejects an operation."""
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_code: str | None = None,
+        inner_error_code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.error_code = error_code
+        self.inner_error_code = inner_error_code
+
+    @property
+    def invalid_workbook_session(self) -> bool:
+        return any(
+            code is not None and code.lower().startswith("invalidsession")
+            for code in (self.error_code, self.inner_error_code)
+        )
 
 
 class LockError(ProjectFlowError):

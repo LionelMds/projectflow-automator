@@ -66,6 +66,7 @@ class PathsPage(QWizardPage):
         self.repertoire_edit = QLineEdit(
             native_path_text(config.paths.repertoire_chantier.display_path),
         )
+        self.repertoire_edit.setPlaceholderText("Chemin Excel ou lien OneDrive / SharePoint")
         layout.addRow("Racine projets", _browse_row(self.racine_edit, directory=True))
         layout.addRow("Dossier de reference", _browse_row(self.reference_edit, directory=True))
         layout.addRow("Repertoire chantier", _browse_row(self.repertoire_edit, directory=False))
