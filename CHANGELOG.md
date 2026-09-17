@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.39
+
+- Inscrit en B9 la date de creation du dossier au format JJ.MM.AAAA, meme lorsque le
+  modele contient deja une ancienne date ou un libelle. Cette date reste conservee lors
+  des mises a jour et des sorties dossier. E2 reste reservee a la date de sortie.
+
 ## 0.1.38
 
 - Separe l'ouverture du repertoire dans Excel de ses modifications cloud : un fichier

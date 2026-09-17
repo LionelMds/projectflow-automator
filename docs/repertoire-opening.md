@@ -35,7 +35,9 @@ paramètres. Une détection ne les efface plus si la liste est vide ou indisponi
 Changer volontairement de plan remet la colonne à choisir pour ce nouveau plan.
 Fermer avec **Annuler** conserve les derniers paramètres enregistrés.
 
-La date de création du projet reste en **B9**. **E2** est réservé à la sortie dossier :
+La date de création du dossier est inscrite en **B9** au format **JJ.MM.AAAA**, même si
+le modèle contient déjà une date ou un libellé (depuis la version 0.1.39). Cette date
+reste conservée lors des mises à jour. **E2** est réservé à la sortie dossier :
 la copie de sortie reçoit la date du jour, tandis que la fiche source reste inchangée.
 À la création d'une nouvelle fiche, une ancienne date dans le libellé reconnu
 « fiche d'atelier le » du modèle est retirée. Aucun nettoyage global des fiches existantes

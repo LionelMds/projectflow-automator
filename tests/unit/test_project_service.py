@@ -290,6 +290,59 @@ async def test_update_project_preserves_existing_initials_when_settings_are_empt
     workbook.close()
 
 
+@pytest.mark.parametrize("number", ["2026-4995", "2026-4995-2"])
+@pytest.mark.parametrize("template_date", [date(2020, 2, 1), "Date de creation"])
+@pytest.mark.asyncio
+async def test_fiche_creation_date_replaces_template_and_survives_update_and_recreation(
+    tmp_path: Path,
+    number: str,
+    template_date: date | str,
+) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir()
+    template_path = config.paths.dossier_reference / "modele fiche.xlsx"
+    workbook = Workbook()
+    workbook.active["B9"] = template_date
+    workbook.active["E2"] = "fiche d'atelier le"
+    workbook.save(template_path)
+    project = ProjectInput(number=parse_project_number(number))
+    if project.is_subproject:
+        project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+        project_dir.mkdir(parents=True)
+        workbook.save(project_dir / "2026-4995 - Fiche dossier clients.xlsx")
+    workbook.close()
+    template_bytes = template_path.read_bytes()
+    current_day = date(2026, 7, 15)
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(today=lambda: current_day),
+        repertoire_service=FakeRepertoireService(),  # type: ignore[arg-type]
+    )
+
+    result = await service.create_project(project)
+
+    assert result.fiche_path is not None
+    workbook = load_workbook(result.fiche_path)
+    assert workbook.active["B9"].value.date() == date(2026, 7, 15)
+    assert workbook.active["B9"].number_format == "DD.MM.YYYY"
+    assert workbook.active["E2"].value == "fiche d'atelier le"
+    workbook.close()
+
+    current_day = date(2026, 7, 16)
+    for action in (service.update_project, service.create_project):
+        updated = await action(project)
+        assert updated.fiche_path == result.fiche_path
+        workbook = load_workbook(result.fiche_path)
+        assert workbook.active["B9"].value.date() == date(2026, 7, 15)
+        assert workbook.active["B9"].number_format == "DD.MM.YYYY"
+        assert workbook.active["E2"].value == "fiche d'atelier le"
+        workbook.close()
+
+    assert template_path.read_bytes() == template_bytes
+
+
 @pytest.mark.asyncio
 async def test_new_fiche_discards_inherited_date_when_another_workbook_already_exists(
     tmp_path: Path,

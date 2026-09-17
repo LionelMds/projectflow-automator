@@ -112,7 +112,7 @@ class FicheService:
             _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
             if project.gere_par.strip():
                 worksheet["C9"] = project.gere_par.strip()
-            self._write_creation_date(worksheet)
+            self._write_creation_date(worksheet, overwrite=new_fiche)
             if new_fiche:
                 _clear_inherited_atelier_date(worksheet)
             workbook.save(fiche_path)
