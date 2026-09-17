@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.1.38
+
+- Separe l'ouverture du repertoire dans Excel de ses modifications cloud : un fichier
+  OneDrive synchronise peut etre choisi pour le bouton d'ouverture, sans changer la cible
+  Microsoft Graph. Les liens cloud sont resolus vers le document puis ouverts dans Excel.
+- Conserve la boite mail Outlook, le plan et la colonne Planner a la reouverture des
+  parametres, y compris apres une detection vide, partielle ou en erreur.
+- Ajoute les initiales utilisateur dans les parametres et les inscrit en C9 lors de la
+  creation ou de la mise a jour d'une fiche, y compris pour les sous-projets.
+- Reserve E2 a la date de sortie dossier : une nouvelle fiche ne reprend pas une ancienne
+  date d'atelier du modele, et seule la copie de sortie recoit la date du jour.
+- Masque les liens de partage et leurs identifiants encodes dans les nouveaux journaux.
+  Voir `docs/repertoire-opening.md` pour l'ouverture Excel et le choix des droits du lien.
+
 ## 0.1.37
 
 - Reconnait les bibliotheques SharePoint synchronisees, les comptes OneDrive deplaces et les

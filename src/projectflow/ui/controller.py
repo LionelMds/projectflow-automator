@@ -8,14 +8,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from PySide6.QtCore import QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
-from projectflow.config import AppConfig
+from projectflow.config import AppConfig, RepertoireChantierConfig
 from projectflow.core.client_directory import ClientDirectory
 from projectflow.core.duplication import PROJECT_WRITABLE_WIDTH
 from projectflow.core.fiche_service import FicheService, standard_fiche_path
@@ -32,8 +31,11 @@ from projectflow.core.sortie_service import SortieDossierService
 from projectflow.exceptions import ProjectFlowError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
-from projectflow.platform.filemanager import open_file_default_app, open_path
-from projectflow.services import ServiceContainer
+from projectflow.graph.workbook_opening import excel_document_uri
+from projectflow.logging import redact_sensitive_links
+from projectflow.platform.filemanager import open_excel_uri, open_file_default_app, open_path
+from projectflow.platform.sync_paths import is_excel_recovery_copy
+from projectflow.services import ServiceContainer, resolve_repertoire_open_url
 from projectflow.ui.creation_tab import CreationFormData
 from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
 from projectflow.ui.dialogs.quick_confirmation import QuickCreationConfirmationDialog
@@ -162,6 +164,7 @@ class ProjectFlowController:
             return
         dialog = QuickCreateDialog(parent=self._window)
         self._quick_dialog = dialog
+        dialog.set_user_initials(self._config.user.initials)
         dialog.apply_planner_config(
             enabled=self._config.planner.enabled,
             bucket_id=self._config.planner.bucket_id,
@@ -796,7 +799,7 @@ class ProjectFlowController:
         self._window.creation_tab.societe_edit.setText(data.societe)
         self._window.creation_tab.contact_edit.setText(data.contact)
         self._window.creation_tab.localisation_edit.setText(data.localisation)
-        self._window.creation_tab.gere_par_edit.setText(data.gere_par)
+        self._window.creation_tab.set_user_initials(self._config.user.initials)
         if data.number and data.number != str(number):
             self._log(f"! C3 contient {data.number}, attendu {number}")
         self._log(f"+ Fiche chargee: {fiche_path.name}")
@@ -836,15 +839,18 @@ class ProjectFlowController:
         self._log(f"+ Dossier projet ouvert: {project_dir}")
 
     def open_repertoire(self) -> None:
-        display_path = self._config.paths.repertoire_chantier.display_path.strip()
-        if not display_path:
+        repertoire = self._config.paths.repertoire_chantier
+        display_path = repertoire.open_path.strip() or repertoire.display_path.strip()
+        if not display_path and not repertoire.is_configured:
             self._error("Repertoire chantier non configure.")
             return
-        if display_path.casefold().startswith("https://"):
-            if not QDesktopServices.openUrl(QUrl(display_path)):
-                self._error("Impossible d'ouvrir le repertoire dans le navigateur.")
+        if not display_path or "://" in display_path:
+            self._schedule_task(self._open_cloud_repertoire(repertoire.model_copy(deep=True)))
             return
         repertoire_path = Path(display_path).expanduser()
+        if is_excel_recovery_copy(repertoire_path):
+            self._error("Selectionnez le repertoire d'origine, pas sa copie non fusionnee.")
+            return
         if not repertoire_path.exists():
             self._error(f"Repertoire chantier introuvable: {repertoire_path}")
             return
@@ -858,6 +864,31 @@ class ProjectFlowController:
             return
         self._log(f"+ Repertoire ouvert: {repertoire_path.name}")
 
+    async def _open_cloud_repertoire(self, repertoire: RepertoireChantierConfig) -> None:
+        try:
+            url = await resolve_repertoire_open_url(repertoire)
+            current = self._config.paths.repertoire_chantier
+            if (repertoire.display_path, repertoire.open_path, repertoire.cloud_only) != (
+                current.display_path,
+                current.open_path,
+                current.cloud_only,
+            ) or (
+                repertoire.is_configured
+                and (repertoire.drive_id, repertoire.item_id) != (current.drive_id, current.item_id)
+            ):
+                return
+            opened = open_excel_uri(excel_document_uri(url))
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            self._error(str(exc))
+            return
+        if not opened:
+            self._error(
+                "Impossible de lancer Excel. Verifiez son installation ou selectionnez "
+                "le fichier synchronise pour ouverture Excel dans les parametres.",
+            )
+            return
+        self._log("+ Ouverture du repertoire demandee dans Excel.")
+
     def open_settings(self) -> None:
         dialog = SettingsDialog(self._config, parent=self._window)
         if dialog.exec() != dialog.DialogCode.Accepted:
@@ -869,6 +900,8 @@ class ProjectFlowController:
         self._planner_bucket_options = []
         self._planner_member_options = []
         self._window.apply_config_labels()
+        if self._quick_dialog is not None:
+            self._quick_dialog.set_user_initials(self._config.user.initials)
         self._save_config_if_available()
         self._log("+ Parametres enregistres")
         if self._config.outlook.enabled:
@@ -962,7 +995,7 @@ class ProjectFlowController:
             societe="",
             contact="",
             localisation="",
-            gere_par="",
+            gere_par=self._config.user.initials,
         )
 
     def _number_from_form(self) -> str:
@@ -1191,10 +1224,12 @@ class ProjectFlowController:
         task.add_done_callback(self._background_tasks.discard)
 
     def _error(self, message: str) -> None:
+        message = redact_sensitive_links(message)
         self._window.creation_tab.append_log(f"! {message}")
         QMessageBox.critical(self._window, "ProjectFlow", message)
 
     def _output_error(self, message: str) -> None:
+        message = redact_sensitive_links(message)
         self._window.sortie_tab.append_log(f"! {message}")
         QMessageBox.critical(self._window, "Sortie dossier", message)
 

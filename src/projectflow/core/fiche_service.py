@@ -93,7 +93,13 @@ class FicheService:
         source_path.rename(standard_path)
         return standard_path
 
-    def fill_fiche(self, project_dir: Path, project: ProjectInput) -> Path:
+    def fill_fiche(
+        self,
+        project_dir: Path,
+        project: ProjectInput,
+        *,
+        new_fiche: bool = False,
+    ) -> Path:
         fiche_path = self.standardize_fiche_name(project_dir, project.number)
 
         workbook = load_workbook(fiche_path)
@@ -107,20 +113,20 @@ class FicheService:
             if project.gere_par.strip():
                 worksheet["C9"] = project.gere_par.strip()
             self._write_creation_date(worksheet)
+            if new_fiche:
+                _clear_inherited_atelier_date(worksheet)
             workbook.save(fiche_path)
         finally:
             workbook.close()
         return fiche_path
 
     def ensure_atelier_date(self, fiche_path: Path) -> Path:
-        """Complete E2 without changing the rest of an existing fiche."""
+        """Date a copied fiche for a new dossier output, leaving other fields intact."""
         workbook = load_workbook(fiche_path)
         try:
             worksheet = _active_worksheet(workbook)
-            current = "" if worksheet["E2"].value is None else str(worksheet["E2"].value).strip()
-            if not ATELIER_DATE_RE.search(current):
-                self._write_atelier_date(worksheet)
-                workbook.save(fiche_path)
+            self._write_atelier_date(worksheet)
+            workbook.save(fiche_path)
         finally:
             workbook.close()
         return fiche_path
@@ -152,6 +158,8 @@ class FicheService:
             if project.gere_par.strip():
                 worksheet["C9"] = project.gere_par.strip()
             self._write_creation_date(worksheet, overwrite=fiche_created)
+            if fiche_created:
+                _clear_inherited_atelier_date(worksheet)
             workbook.save(target_path)
         finally:
             workbook.close()
@@ -182,13 +190,20 @@ class FicheService:
     def _write_atelier_date(self, worksheet: Worksheet) -> None:
         cell = worksheet["E2"]
         current = "" if cell.value is None else str(cell.value).strip()
-        if ATELIER_DATE_RE.search(current):
-            return
+        current = ATELIER_DATE_RE.sub("", current).rstrip()
         today = self._today().strftime("%d.%m.%Y")
         if not current or ATELIER_PREFIX_RE.fullmatch(current):
             cell.value = f"fiche d'atelier le {today}"
             return
         cell.value = f"{current.rstrip()} {today}"
+
+
+def _clear_inherited_atelier_date(worksheet: Worksheet) -> None:
+    cell = worksheet["E2"]
+    current = "" if cell.value is None else str(cell.value).strip()
+    prefix = ATELIER_DATE_RE.sub("", current).rstrip()
+    if ATELIER_DATE_RE.search(current) and ATELIER_PREFIX_RE.fullmatch(prefix):
+        cell.value = prefix
 
 
 def standard_fiche_path(project_dir: Path, number: ProjectNumber) -> Path:

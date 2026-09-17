@@ -205,6 +205,123 @@ async def test_create_project_creates_folder_copies_reference_and_calls_integrat
     assert pinned == [project_dir]
 
 
+@pytest.mark.parametrize(
+    "operation",
+    ["create", "recreate", "update", "create_subproject", "update_subproject"],
+)
+@pytest.mark.asyncio
+async def test_project_writes_configured_initials_and_reserves_e2_for_output(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    config = AppConfig()
+    config.user.initials = "LM"
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir()
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    number = "2026-4995-2" if operation.endswith("subproject") else "2026-4995"
+    workbook = Workbook()
+    workbook.active["E2"] = "fiche d'atelier le 01.02.2020"
+    workbook.active["C9"] = "OLD"
+    workbook.save(config.paths.dossier_reference / "modele fiche.xlsx")
+    if operation != "create":
+        project_dir.mkdir(parents=True)
+        workbook.save(project_dir / "2026-4995 - Fiche dossier clients.xlsx")
+    if operation == "update_subproject":
+        workbook.save(project_dir / f"{number} - Fiche dossier clients.xlsx")
+    workbook.close()
+    repertoire = FakeRepertoireService()
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(today=lambda: date(2026, 7, 15)),
+        repertoire_service=repertoire,  # type: ignore[arg-type]
+    )
+    project = ProjectInput(number=parse_project_number(number), gere_par="OTHER")
+
+    result = (
+        await service.update_project(project)
+        if operation.startswith("update")
+        else await service.create_project(project)
+    )
+
+    assert result.fiche_path is not None
+    workbook = load_workbook(result.fiche_path)
+    assert workbook.active["C9"].value == "LM"
+    expected_e2 = (
+        "fiche d'atelier le"
+        if operation in {"create", "create_subproject"}
+        else "fiche d'atelier le 01.02.2020"
+    )
+    assert workbook.active["E2"].value == expected_e2
+    assert workbook.active["B9"].value.date() == date(2026, 7, 15)
+    workbook.close()
+    assert repertoire.calls[0][0] == project
+    assert project.gere_par == "OTHER"
+
+
+@pytest.mark.parametrize("number", ["2026-4995", "2026-4995-2"])
+@pytest.mark.asyncio
+async def test_update_project_preserves_existing_initials_when_settings_are_empty(
+    tmp_path: Path,
+    number: str,
+) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    fiche_path = project_dir / f"{number} - Fiche dossier clients.xlsx"
+    workbook = Workbook()
+    workbook.active["C9"] = "OLD"
+    workbook.save(fiche_path)
+    workbook.close()
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=FakeRepertoireService(),  # type: ignore[arg-type]
+    )
+
+    await service.update_project(
+        ProjectInput(number=parse_project_number(number), gere_par="OTHER"),
+    )
+
+    workbook = load_workbook(fiche_path)
+    assert workbook.active["C9"].value == "OLD"
+    workbook.close()
+
+
+@pytest.mark.asyncio
+async def test_new_fiche_discards_inherited_date_when_another_workbook_already_exists(
+    tmp_path: Path,
+) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir()
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    workbook = Workbook()
+    workbook.active["E2"] = "fiche d'atelier le 01.02.2020"
+    workbook.save(config.paths.dossier_reference / "modele fiche.xlsx")
+    workbook.active["E2"] = "Devis existant"
+    workbook.save(project_dir / "Devis.xlsx")
+    workbook.close()
+    original_quote = (project_dir / "Devis.xlsx").read_bytes()
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(today=lambda: date(2026, 7, 15)),
+        repertoire_service=FakeRepertoireService(),  # type: ignore[arg-type]
+    )
+
+    result = await service.create_project(ProjectInput(number=parse_project_number("2026-4995")))
+
+    assert result.fiche_path == str(project_dir / "2026-4995 - Fiche dossier clients.xlsx")
+    workbook = load_workbook(result.fiche_path)
+    assert workbook.active["E2"].value == "fiche d'atelier le"
+    workbook.close()
+    assert (project_dir / "Devis.xlsx").read_bytes() == original_quote
+
+
 @pytest.mark.asyncio
 async def test_create_project_still_creates_planner_task_when_outlook_fails(
     tmp_path: Path,
@@ -257,10 +374,12 @@ async def test_recreate_existing_project_reapplies_integrations_without_updating
     workbook.active["D3"] = "Societe : Information conservee"
     workbook.active["E2"] = "fiche d'atelier le"
     workbook.active["B9"] = date(2024, 3, 4)
+    workbook.active["C9"] = "OLD"
     workbook.save(fiche_path)
     workbook.close()
     config.outlook.enabled = True
     config.planner.enabled = True
+    config.user.initials = "LM"
 
     repertoire = FakeRepertoireService()
     outlook = FakeOutlook()
@@ -290,6 +409,7 @@ async def test_recreate_existing_project_reapplies_integrations_without_updating
     assert workbook.active["D3"].value == "Societe : Information conservee"
     assert workbook.active["B9"].value.date() == date(2024, 3, 4)
     assert workbook.active["E2"].value == "fiche d'atelier le"
+    assert workbook.active["C9"].value == "OLD"
     workbook.close()
     assert repertoire.calls == []
     assert outlook.paths == [["2026", "2026-4995 (Nouveau texte)"]]

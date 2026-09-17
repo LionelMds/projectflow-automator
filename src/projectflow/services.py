@@ -5,7 +5,7 @@ from pathlib import Path
 
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
-from projectflow.config import AppConfig
+from projectflow.config import AppConfig, RepertoireChantierConfig
 from projectflow.core.fiche_service import FicheService
 from projectflow.core.local_repertoire import LocalWorkbookGateway
 from projectflow.core.models import ProjectInput
@@ -15,6 +15,7 @@ from projectflow.exceptions import ConfigError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.excel import GraphExcelWorkbookGateway
 from projectflow.graph.planner import GraphPlannerClient, PlannerTaskResult
+from projectflow.graph.workbook_opening import resolve_workbook_open_url
 from projectflow.logging import get_logger
 from projectflow.outlook.local import create_local_outlook_client
 from projectflow.platform.filemanager import move_path_to_trash, pin_to_filemanager_favorites
@@ -60,7 +61,7 @@ class ServiceContainer:
             self.repertoire_service = RepertoireService(
                 GraphExcelWorkbookGateway(graph=graph, config=repertoire),
             )
-            get_logger(__name__).info("repertoire.backend", backend="cloud", path=display_path)
+            get_logger(__name__).info("repertoire.backend", backend="cloud")
             return self.repertoire_service
 
         if not display_path:
@@ -124,3 +125,15 @@ class ConfiguredPlannerGateway:
 
     async def delete_project_tasks(self, project: ProjectInput) -> int:
         return await self.client.delete_project_tasks(project, self.config.planner)
+
+
+async def resolve_repertoire_open_url(config: RepertoireChantierConfig) -> str:
+    settings = ApplicationSettings.load()
+    graph = GraphClient(
+        token_provider=MsalAccessTokenProvider(client_id=settings.microsoft_client_id),
+        request_timeout=60.0,
+    )
+    try:
+        return await resolve_workbook_open_url(graph, config)
+    finally:
+        await graph.aclose()

@@ -11,12 +11,18 @@ from projectflow.platform.paths import config_file, expand_user_path
 
 
 class UserConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     tenant_id: str = ""
     user_id: str = ""
     display_name: str = ""
     email: str = ""
+    initials: str = ""
+
+    @field_validator("initials")
+    @classmethod
+    def normalize_initials(cls, value: str) -> str:
+        return value.strip().upper()
 
 
 class RepertoireChantierConfig(BaseModel):
@@ -25,6 +31,7 @@ class RepertoireChantierConfig(BaseModel):
     drive_id: str = ""
     item_id: str = ""
     display_path: str = ""
+    open_path: str = ""
     cloud_only: bool = False
 
     @property

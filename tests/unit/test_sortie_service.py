@@ -70,8 +70,10 @@ def test_selection_rejects_missing_files(tmp_path: Path) -> None:
     SortieSelection(fiche_path=fiche).validate()
 
 
+@pytest.mark.parametrize("e2", ["fiche d'atelier le", "fiche d'atelier le 01.02.2020"])
 def test_create_output_folder_copies_documents_without_modifying_sources(
     tmp_path: Path,
+    e2: str,
 ) -> None:
     project_dir = tmp_path / "2026" / "2026-5093"
     project_dir.mkdir(parents=True)
@@ -83,12 +85,13 @@ def test_create_output_folder_copies_documents_without_modifying_sources(
     for path in (mesure, photo, photo_without_rotation, plan):
         path.write_bytes(path.name.encode())
     workbook = Workbook()
-    workbook.active["E2"] = "fiche d'atelier le"
+    workbook.active["E2"] = e2
     workbook.active["B9"] = date(2024, 3, 4)
     workbook.active["C9"] = "LM"
     workbook.save(fiche)
     workbook.close()
     original_photo = photo.read_bytes()
+    original_fiche = fiche.read_bytes()
 
     selection = SortieSelection(
         fiche_path=fiche,
@@ -116,10 +119,11 @@ def test_create_output_folder_copies_documents_without_modifying_sources(
     assert output_workbook.active["C9"].value == "LM"
     output_workbook.close()
     source_workbook = load_workbook(fiche)
-    assert source_workbook.active["E2"].value == "fiche d'atelier le"
+    assert source_workbook.active["E2"].value == e2
     assert source_workbook.active["B9"].value.date() == date(2024, 3, 4)
     assert source_workbook.active["C9"].value == "LM"
     source_workbook.close()
+    assert fiche.read_bytes() == original_fiche
     assert (output_dir / "02 - Prise de cote" / mesure.name).exists()
     copied_photo = output_dir / "03 - Photos" / photo.name
     assert copied_photo.read_bytes() == original_photo

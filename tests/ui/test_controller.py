@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -490,6 +492,8 @@ def test_controller_quick_confirmation_modifier_opens_loaded_main_window(
     tmp_path: Path,
 ) -> None:
     window, config, services = _window(qtbot, tmp_path)
+    config.user.initials = "LM"
+    window.apply_config_labels()
     controller = ProjectFlowController(
         window=window,
         config=config,
@@ -840,7 +844,8 @@ def test_controller_open_repertoire_uses_default_app(
     assert "Repertoire ouvert" in window.creation_tab.logs.toPlainText()
 
 
-def test_controller_open_repertoire_accepts_cloud_link(
+@pytest.mark.asyncio
+async def test_controller_open_repertoire_accepts_cloud_link(
     qtbot: Any,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -848,10 +853,20 @@ def test_controller_open_repertoire_accepts_cloud_link(
     window, config, services = _window(qtbot, tmp_path)
     url = "https://balz.sharepoint.com/:x:/s/site/abc"
     config.paths.repertoire_chantier.display_path = url
+    document_url = "https://balz.sharepoint.com/sites/site/Documents/repertoire.xlsx"
+
+    async def resolve(_config: object) -> str:
+        # A concurrent repertoire read can initialize these without changing
+        # the file selected by the user. Opening must still finish.
+        config.paths.repertoire_chantier.drive_id = "resolved-drive"
+        config.paths.repertoire_chantier.item_id = "resolved-item"
+        return document_url
+
+    monkeypatch.setattr("projectflow.ui.controller.resolve_repertoire_open_url", resolve)
     opened: list[str] = []
     monkeypatch.setattr(
-        "projectflow.ui.controller.QDesktopServices.openUrl",
-        lambda target: opened.append(target.toString()) is None,
+        "projectflow.ui.controller.open_excel_uri",
+        lambda target: opened.append(target) is None,
     )
     controller = ProjectFlowController(
         window=window,
@@ -859,7 +874,111 @@ def test_controller_open_repertoire_accepts_cloud_link(
         services=services,  # type: ignore[arg-type]
     )
     controller.open_repertoire()
-    assert opened == [url]
+    await asyncio.gather(*controller._background_tasks)  # noqa: SLF001
+    assert opened == ["ms-excel:ofe|u|" + document_url]
+
+
+def test_open_repertoire_prefers_separate_sync_file_without_changing_cloud_target(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    cloud = config.paths.repertoire_chantier
+    cloud.display_path = "https://balz.sharepoint.com/:x:/s/site/secret"
+    cloud.drive_id, cloud.item_id = "original-drive", "original-item"
+    local = tmp_path / "OneDrive" / "repertoire.xlsx"
+    local.parent.mkdir()
+    local.touch()
+    cloud.open_path = str(local)
+    before = cloud.model_dump()
+    opened: list[Path] = []
+    monkeypatch.setattr(
+        "projectflow.ui.controller.open_file_default_app",
+        lambda path: opened.append(path) is None,
+    )
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    controller.open_repertoire()
+    assert opened == [local]
+    assert cloud.model_dump() == before
+    assert not controller._background_tasks  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_open_repertoire_ignores_outdated_cloud_resolution(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    config.paths.repertoire_chantier.display_path = "https://1drv.ms/x/old"
+    opened: list[object] = []
+
+    async def resolve(_config: object) -> str:
+        config.paths.repertoire_chantier.display_path = "https://1drv.ms/x/new"
+        return "https://balz.sharepoint.com/Documents/old.xlsx"
+
+    monkeypatch.setattr("projectflow.ui.controller.resolve_repertoire_open_url", resolve)
+    monkeypatch.setattr(
+        "projectflow.ui.controller.open_excel_uri",
+        lambda target: opened.append(target) is None,
+    )
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    controller.open_repertoire()
+    await asyncio.gather(*controller._background_tasks)  # noqa: SLF001
+    assert not opened
+
+
+@pytest.mark.asyncio
+async def test_open_repertoire_reports_missing_excel_handler(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    config.paths.repertoire_chantier.display_path = "https://1drv.ms/x/original"
+
+    async def resolve(_config: object) -> str:
+        return "https://balz.sharepoint.com/Documents/original.xlsx"
+
+    monkeypatch.setattr("projectflow.ui.controller.resolve_repertoire_open_url", resolve)
+    monkeypatch.setattr("projectflow.ui.controller.open_excel_uri", lambda _url: False)
+    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.critical", lambda *_args: None)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    controller.open_repertoire()
+    await asyncio.gather(*controller._background_tasks)  # noqa: SLF001
+    assert "Impossible de lancer Excel" in window.creation_tab.logs.toPlainText()
+
+
+def test_configured_initials_survive_form_reset_and_quick_dialog(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, _services = _window(qtbot, tmp_path)
+    config.user.initials = " ab "
+    window.apply_config_labels()
+    tab = window.creation_tab
+    tab.reset_form_fields()
+    assert tab.gere_par_edit.isReadOnly()
+    assert tab.data().gere_par == "AB"
+    dialog = QuickCreateDialog(parent=window)
+    qtbot.addWidget(dialog)
+    dialog.set_user_initials(config.user.initials)
+    data = replace(tab.data(), gere_par="OTHER")
+    dialog.set_data(data)
+    assert dialog.data().gere_par == "AB"
 
 
 def test_controller_open_repertoire_reports_missing_path(

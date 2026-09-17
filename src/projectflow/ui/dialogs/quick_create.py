@@ -62,7 +62,8 @@ class QuickCreateDialog(QDialog):
         self.societe_edit.setText(data.societe)
         self.contact_edit.setText(data.contact)
         self.localisation_edit.setText(data.localisation)
-        self.gere_par_edit.setText(data.gere_par)
+        if not self.gere_par_edit.isReadOnly():
+            self.gere_par_edit.setText(data.gere_par)
         self.planner_widget.set_data(data.planner)
 
     def set_project_identity(
@@ -80,6 +81,11 @@ class QuickCreateDialog(QDialog):
             self.year_combo.setCurrentText(year)
         self.project_id_edit.setText(project_id)
         self.subproject_edit.setText(subproject_id)
+
+    def set_user_initials(self, initials: str) -> None:
+        self.gere_par_edit.setReadOnly(True)
+        self.gere_par_edit.setText(initials)
+        self.gere_par_edit.setPlaceholderText("A renseigner dans les parametres")
 
     def apply_planner_config(
         self,
@@ -159,7 +165,7 @@ class QuickCreateDialog(QDialog):
         form.addRow("Societe", self.societe_edit)
         form.addRow("Contact", self.contact_edit)
         form.addRow("Localisation", self.localisation_edit)
-        form.addRow("Gere par", self.gere_par_edit)
+        form.addRow("Initiales utilisateur", self.gere_par_edit)
         layout.addLayout(form)
 
         self.planner_widget = PlannerSelectionWidget()

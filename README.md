@@ -10,6 +10,11 @@ En cas de conflit Excel deja present, suivre la [procedure de recuperation](docs
 avant de reprendre les ecritures. Les parametres acceptent aussi le lien OneDrive/SharePoint du
 classeur et proposent une reconnexion sans changer le chemin.
 
+Le bouton **Ouvrir repertoire** peut utiliser un fichier OneDrive synchronise distinct du
+lien utilise pour l'ecriture cloud. Les parametres memorisent les initiales utilisateur,
+la boite mail, le plan et la colonne Planner. Voir le [guide des parametres et de l'ouverture
+Excel](docs/repertoire-opening.md), qui explique aussi les droits des liens de partage.
+
 ## Developpement
 
 ```powershell
@@ -189,7 +194,8 @@ Le MVP couvre :
   de colonne, de membres assignes et d'echeance par projet,
 - blocage de l'ecriture locale dans un fichier OneDrive synchronise pour eviter les copies non
   fusionnees,
-- conservation de la colonne F du repertoire, le champ `Gere par` restant limite a la fiche,
+- conservation de la colonne F du repertoire, les initiales utilisateur restant limitees a C9
+  de la fiche,
 - bouton `Suivant disponible` base sur une ligne projet principal dont B, C, D et E sont vides,
 - onglet `Repertoire chantier` avec recherche, positionnement pres de la prochaine ligne
   disponible, defilement vers les anciennes lignes et edition sure de `A:E` uniquement,

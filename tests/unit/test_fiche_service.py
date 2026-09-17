@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook, load_workbook
 
 from projectflow.core.fiche_service import FicheService, standard_fiche_path
@@ -101,13 +102,18 @@ def test_fill_fiche_keeps_existing_atelier_date(tmp_path: Path) -> None:
     loaded.close()
 
 
-def test_ensure_atelier_date_repairs_existing_fiche_without_overwriting_fields(
+@pytest.mark.parametrize(
+    "initial_value",
+    [None, "fiche d'atelier le", "fiche d'atelier le 01.02.2020"],
+)
+def test_ensure_atelier_date_dates_output_without_overwriting_other_fields(
     tmp_path: Path,
+    initial_value: str | None,
 ) -> None:
     path = tmp_path / "fiche.xlsx"
     workbook = Workbook()
     workbook.active["D3"] = "Societe : Information conservee"
-    workbook.active["E2"] = "fiche d'atelier le"
+    workbook.active["E2"] = initial_value
     workbook.active["B9"] = date(2024, 3, 4)
     workbook.save(path)
     workbook.close()
@@ -119,6 +125,36 @@ def test_ensure_atelier_date_repairs_existing_fiche_without_overwriting_fields(
     assert loaded.active["B9"].value.date() == date(2024, 3, 4)
     assert loaded.active["E2"].value == "fiche d'atelier le 15.07.2026"
     loaded.close()
+
+
+@pytest.mark.parametrize(
+    ("original", "expected"),
+    [
+        ("fiche d'atelier le 01.02.2020", "fiche d'atelier le"),
+        ("Fiche d\u2019atelier le : 01.02.2020", "Fiche d\u2019atelier le :"),
+        ("Texte libre 01.02.2020", "Texte libre 01.02.2020"),
+    ],
+)
+def test_new_fiche_discards_only_recognized_inherited_output_date(
+    tmp_path: Path,
+    original: str,
+    expected: str,
+) -> None:
+    template_path = tmp_path / "modele fiche.xlsx"
+    workbook = Workbook()
+    workbook.active["E2"] = original
+    workbook.save(template_path)
+    workbook.close()
+
+    fiche_path = FicheService().fill_fiche(
+        tmp_path,
+        ProjectInput(number=parse_project_number("2026-4995")),
+        new_fiche=True,
+    )
+
+    workbook = load_workbook(fiche_path)
+    assert workbook.active["E2"].value == expected
+    workbook.close()
 
 
 def test_read_fiche_strips_prefixes_case_insensitively(tmp_path: Path) -> None:

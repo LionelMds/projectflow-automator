@@ -51,7 +51,12 @@ class CreationTab(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
+        self._user_initials: str | None = None
         self._build_ui()
+
+    def set_user_initials(self, initials: str) -> None:
+        self._user_initials = initials
+        self.gere_par_edit.setText(initials)
 
     def data(self) -> CreationFormData:
         return CreationFormData(
@@ -86,7 +91,9 @@ class CreationTab(QWidget):
         self.societe_edit.setText(data.societe)
         self.contact_edit.setText(data.contact)
         self.localisation_edit.setText(data.localisation)
-        self.gere_par_edit.setText(data.gere_par)
+        self.gere_par_edit.setText(
+            data.gere_par if self._user_initials is None else self._user_initials,
+        )
         self.planner_widget.set_data(data.planner)
 
     def append_log(self, message: str) -> None:
@@ -104,6 +111,8 @@ class CreationTab(QWidget):
         ]:
             edit.clear()
         self.planner_widget.reset_fields()
+        if self._user_initials is not None:
+            self.gere_par_edit.setText(self._user_initials)
 
     def apply_planner_config(self, planner: PlannerConfig) -> None:
         self.planner_widget.set_config_defaults(
@@ -186,6 +195,10 @@ class CreationTab(QWidget):
         )
         self.localisation_edit = QLineEdit()
         self.gere_par_edit = QLineEdit()
+        self.gere_par_edit.setReadOnly(True)
+        self.gere_par_edit.setPlaceholderText(
+            "A renseigner dans Parametres > Initiales utilisateur"
+        )
         for edit in [
             self.designation_edit,
             self.societe_edit,
@@ -197,7 +210,7 @@ class CreationTab(QWidget):
         client_layout.addRow("Societe", self.societe_edit)
         client_layout.addRow("Contact", self.contact_edit)
         client_layout.addRow("Localisation", self.localisation_edit)
-        client_layout.addRow("Gere par", self.gere_par_edit)
+        client_layout.addRow("Initiales utilisateur", self.gere_par_edit)
         root_layout.addWidget(client_frame)
 
         self.planner_widget = PlannerSelectionWidget()

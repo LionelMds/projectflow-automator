@@ -4,6 +4,7 @@ import asyncio
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -44,6 +45,7 @@ class SettingsDialog(QDialog):
         self._build_ui(config)
 
     def apply_to_config(self, config: AppConfig) -> None:
+        config.user.initials = self.user_initials_edit.text()
         config.paths.racine_projets = _optional_path(self.racine_edit.text())
         config.paths.dossier_reference = _optional_path(self.reference_edit.text())
         repertoire_path = native_path_text(self.repertoire_path_edit.text())
@@ -55,6 +57,7 @@ class SettingsDialog(QDialog):
         # cloud identifiers into the configuration accepted by this dialog.
         config.paths.repertoire_chantier = RepertoireChantierConfig(
             display_path=repertoire_path,
+            open_path=native_path_text(self.repertoire_open_path_edit.text()),
             drive_id=previous_repertoire.drive_id if keep_target else "",
             item_id=previous_repertoire.item_id if keep_target else "",
             cloud_only=self.repertoire_cloud_checkbox.isChecked(),
@@ -73,6 +76,14 @@ class SettingsDialog(QDialog):
         config.planner.due_days = self.planner_due_days_spin.value()
 
     def accept(self) -> None:
+        if "://" in self.repertoire_open_path_edit.text():
+            QMessageBox.warning(
+                self,
+                "Repertoire chantier",
+                "Selectionnez un fichier synchronise sur ce poste pour l'ouverture Excel. "
+                "Les liens OneDrive / SharePoint vont dans le champ Repertoire chantier.",
+            )
+            return
         account_text = self.outlook_account_combo.currentText().strip()
         if self.outlook_enabled_checkbox.isChecked() and not account_text:
             QMessageBox.warning(
@@ -99,6 +110,11 @@ class SettingsDialog(QDialog):
 
     def _build_ui(self, config: AppConfig) -> None:
         root = QVBoxLayout(self)
+        user_group = QGroupBox("Utilisateur")
+        user_layout = QFormLayout(user_group)
+        self.user_initials_edit = QLineEdit(config.user.initials)
+        user_layout.addRow("Initiales utilisateur", self.user_initials_edit)
+        root.addWidget(user_group)
         root.addWidget(self._paths_group(config))
         root.addWidget(self._outlook_group(config))
         root.addWidget(self._planner_group(config))
@@ -124,6 +140,18 @@ class SettingsDialog(QDialog):
         layout.addRow(
             "Repertoire chantier",
             _browse_row(self.repertoire_path_edit, directory=False),
+        )
+        self.repertoire_open_path_edit = QLineEdit(
+            native_path_text(config.paths.repertoire_chantier.open_path),
+        )
+        self.repertoire_open_path_edit.setPlaceholderText("Facultatif : fichier Excel sur ce poste")
+        self.repertoire_open_path_edit.setToolTip(
+            "Fichier synchronise a ouvrir dans Excel. "
+            "Le repertoire chantier ci-dessus reste utilise pour les modifications partagees.",
+        )
+        layout.addRow(
+            "Fichier synchronise pour ouverture Excel",
+            _browse_row(self.repertoire_open_path_edit, directory=False),
         )
         self.repertoire_cloud_checkbox = QCheckBox("Repertoire partage OneDrive / SharePoint")
         self.repertoire_cloud_checkbox.setChecked(
@@ -159,6 +187,7 @@ class SettingsDialog(QDialog):
                 config.planner.plan_name or config.planner.plan_id,
                 config.planner.plan_id,
             )
+            self.planner_plan_combo.setCurrentIndex(0)
         self.planner_bucket_combo = QComboBox()
         self.planner_bucket_combo.setEditable(True)
         self.planner_bucket_combo.setPlaceholderText("colonne Planner")
@@ -167,6 +196,8 @@ class SettingsDialog(QDialog):
                 config.planner.bucket_name or config.planner.bucket_id,
                 config.planner.bucket_id,
             )
+            self.planner_bucket_combo.setCurrentIndex(0)
+        self._planner_bucket_plan_id = self._selected_planner_plan_id()
         self.planner_due_days_spin = QSpinBox()
         self.planner_due_days_spin.setRange(0, 365)
         self.planner_due_days_spin.setValue(config.planner.due_days)
@@ -189,9 +220,8 @@ class SettingsDialog(QDialog):
         self.planner_test_button.clicked.connect(
             lambda: asyncio.create_task(self._test_planner()),
         )
-        self.planner_plan_combo.currentIndexChanged.connect(
-            lambda _index: self.planner_bucket_combo.clear(),
-        )
+        self.planner_plan_combo.currentIndexChanged.connect(self._planner_plan_changed)
+        self.planner_plan_combo.currentTextChanged.connect(self._planner_plan_changed)
         layout.addWidget(self.planner_plan_combo, 1)
         layout.addWidget(self.planner_refresh_button)
         layout.addWidget(self.planner_test_button)
@@ -209,6 +239,12 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.planner_bucket_refresh_button)
         return widget
 
+    def _planner_plan_changed(self) -> None:
+        plan_id = self._selected_planner_plan_id()
+        if plan_id != self._planner_bucket_plan_id:
+            self.planner_bucket_combo.clear()
+            self._planner_bucket_plan_id = plan_id
+
     def _outlook_group(self, config: AppConfig) -> QGroupBox:
         group = QGroupBox(_mail_group_title())
         layout = QFormLayout(group)
@@ -220,6 +256,7 @@ class SettingsDialog(QDialog):
         if config.outlook.mailbox_email or config.outlook.mailbox_store_id:
             label = config.outlook.mailbox_email or "Compte Outlook configure"
             self.outlook_account_combo.addItem(label, config.outlook.mailbox_store_id)
+            self.outlook_account_combo.setCurrentIndex(0)
         self.outlook_base_folder_combo = QComboBox()
         self.outlook_base_folder_combo.addItem("Racine du compte", "root")
         self.outlook_base_folder_combo.addItem("Boite de reception", "inbox")
@@ -249,16 +286,11 @@ class SettingsDialog(QDialog):
         except ProjectFlowError as exc:
             QMessageBox.warning(self, "Outlook", str(exc))
             return
-        current_store_id = self._selected_outlook_store_id()
-        self.outlook_account_combo.clear()
-        for account in accounts:
-            self.outlook_account_combo.addItem(account.label, account.id)
-        if current_store_id:
-            index = self.outlook_account_combo.findData(current_store_id)
-            if index >= 0:
-                self.outlook_account_combo.setCurrentIndex(index)
-        elif self.outlook_account_combo.count():
-            self.outlook_account_combo.setCurrentIndex(0)
+        _refresh_combo(
+            self.outlook_account_combo,
+            [(account.label, account.id) for account in accounts],
+            selected_id=self._selected_outlook_store_id(),
+        )
 
     def _test_outlook_account(self) -> None:
         try:
@@ -297,17 +329,14 @@ class SettingsDialog(QDialog):
         except ProjectFlowError as exc:
             QMessageBox.warning(self, "Planner", str(exc))
             return
-        current_plan_id = self._selected_planner_plan_id()
-        self.planner_plan_combo.clear()
-        for plan in plans:
-            self.planner_plan_combo.addItem(plan.title, plan.id)
-        if current_plan_id:
-            index = self.planner_plan_combo.findData(current_plan_id)
-            if index >= 0:
-                self.planner_plan_combo.setCurrentIndex(index)
-        elif self.planner_plan_combo.count():
-            self.planner_plan_combo.setCurrentIndex(0)
-        await self._load_planner_buckets()
+        _refresh_combo(
+            self.planner_plan_combo,
+            [(plan.title, plan.id) for plan in plans],
+            selected_id=self._selected_planner_plan_id(),
+        )
+        self._planner_plan_changed()
+        if self._selected_planner_plan_id():
+            await self._load_planner_buckets()
 
     async def _load_planner_buckets(self) -> None:
         plan_id = self._selected_planner_plan_id()
@@ -319,16 +348,13 @@ class SettingsDialog(QDialog):
         except ProjectFlowError as exc:
             QMessageBox.warning(self, "Planner", str(exc))
             return
-        current_bucket_id = self._selected_planner_bucket_id()
-        self.planner_bucket_combo.clear()
-        for bucket in buckets:
-            self.planner_bucket_combo.addItem(bucket.name, bucket.id)
-        if current_bucket_id:
-            index = self.planner_bucket_combo.findData(current_bucket_id)
-            if index >= 0:
-                self.planner_bucket_combo.setCurrentIndex(index)
-        elif self.planner_bucket_combo.count():
-            self.planner_bucket_combo.setCurrentIndex(0)
+        if plan_id != self._selected_planner_plan_id():
+            return
+        _refresh_combo(
+            self.planner_bucket_combo,
+            [(bucket.name, bucket.id) for bucket in buckets],
+            selected_id=self._selected_planner_bucket_id(),
+        )
 
     async def _test_planner(self) -> None:
         plan_id = self._selected_planner_plan_id()
@@ -341,6 +367,11 @@ class SettingsDialog(QDialog):
             bucket_ids = {bucket.id for bucket in buckets}
         except ProjectFlowError as exc:
             QMessageBox.warning(self, "Planner", str(exc))
+            return
+        if (plan_id, bucket_id) != (
+            self._selected_planner_plan_id(),
+            self._selected_planner_bucket_id(),
+        ):
             return
         if bucket_id not in bucket_ids:
             QMessageBox.warning(self, "Planner", "La colonne selectionnee est introuvable.")
@@ -355,9 +386,30 @@ class SettingsDialog(QDialog):
         return _selected_combo_id(self.planner_bucket_combo)
 
 
+def _refresh_combo(
+    combo: QComboBox,
+    items: list[tuple[str, str]],
+    *,
+    selected_id: str,
+) -> None:
+    selected_text = combo.currentText().strip()
+    with QSignalBlocker(combo):
+        combo.clear()
+        for label, item_id in items:
+            combo.addItem(label, item_id)
+        index = combo.findData(selected_id) if selected_id else -1
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        elif selected_id or selected_text:
+            combo.addItem(selected_text or selected_id, selected_id)
+            combo.setCurrentIndex(combo.count() - 1)
+        elif combo.count():
+            combo.setCurrentIndex(0)
+
+
 def _browse_row(edit: QLineEdit, *, directory: bool) -> QWidget:
     widget = QWidget()
-    layout = QVBoxLayout(widget)
+    layout = QHBoxLayout(widget)
     layout.setContentsMargins(0, 0, 0, 0)
     button = QPushButton("Parcourir")
 
@@ -374,7 +426,7 @@ def _browse_row(edit: QLineEdit, *, directory: bool) -> QWidget:
             edit.setText(native_path_text(selected))
 
     button.clicked.connect(browse)
-    layout.addWidget(edit)
+    layout.addWidget(edit, 1)
     layout.addWidget(button)
     return widget
 
@@ -389,7 +441,7 @@ def _optional_path(value: str) -> Path | None:
 def _selected_combo_id(combo: QComboBox) -> str:
     index = combo.currentIndex()
     if index < 0:
-        return ""
+        return combo.currentText().strip()
     data = combo.currentData()
     if isinstance(data, str):
         current_text = combo.currentText().strip()

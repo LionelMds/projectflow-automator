@@ -23,6 +23,21 @@ def open_file_default_app(path: Path) -> bool:
     return QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
 
+def open_excel_uri(uri: str) -> bool:
+    """Keep Office's literal command separators when handing the URI to the OS."""
+    if not uri.startswith("ms-excel:ofe|u|https://"):
+        raise ProjectCreationError("Lien d'ouverture Excel invalide.")
+    if platform.system() == "Windows":
+        startfile = getattr(os, "startfile", None)
+        if not callable(startfile):
+            raise ProjectCreationError("Ouverture Excel indisponible sur cette plateforme.")
+        startfile(uri)
+        return True
+    opener = "open" if platform.system() == "Darwin" else "xdg-open"
+    completed = subprocess.run([opener, uri], check=False, capture_output=True)
+    return completed.returncode == 0
+
+
 def pin_to_filemanager_favorites(path: Path) -> None:
     system = platform.system()
     if system == "Windows":

@@ -152,3 +152,15 @@ def test_shared_repertoire_missing_connector_does_not_fall_back_to_disk(tmp_path
             config,
             application_settings=ApplicationSettings(microsoft_client_id=""),
         ).repertoire()
+
+
+def test_opening_file_does_not_change_cloud_write_backend(tmp_path: Path) -> None:
+    config = AppConfig()
+    config.paths.repertoire_chantier = RepertoireChantierConfig(
+        display_path="https://balz.sharepoint.com/:x:/s/team/share-token",
+        open_path=str(tmp_path / "repertoire.xlsx"),
+        drive_id="cloud-drive",
+        item_id="cloud-item",
+    )
+    service = ServiceContainer(config).repertoire()
+    assert isinstance(service._workbook, GraphExcelWorkbookGateway)  # noqa: SLF001

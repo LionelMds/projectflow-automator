@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
@@ -75,12 +76,18 @@ class ProjectService:
 
         fiche_path: Path | None = None
         if project_dir_created or update_existing_info:
+            existing_fiche_paths = {
+                candidate.path
+                for candidate in self._fiche_service.list_candidates(project_dir, project.number)
+            }
             reference = self._required_path(
                 self._config.paths.dossier_reference,
                 "dossier de reference",
             )
             copy_reference_tree(reference, project_dir)
-            fiche_path = self._fiche_service.fill_fiche(project_dir, project)
+            selected_fiche = self._fiche_service.locate_fiche(project_dir, project.number)
+            new_fiche = selected_fiche not in existing_fiche_paths
+            fiche_path = self._fill_project_fiche(project_dir, project, new_fiche=new_fiche)
             await self._repertoire_service.upsert_project(
                 project,
                 force_overwrite=force_overwrite,
@@ -129,7 +136,7 @@ class ProjectService:
             raise ProjectCreationError(f"Dossier du projet parent introuvable: {project_dir}")
 
         planner = self._validated_planner() if project.planner.enabled else None
-        fiche_path = self._fiche_service.fill_subproject_fiche(project_dir, project)
+        fiche_path = self._fill_project_fiche(project_dir, project)
         await self._repertoire_service.upsert_project(project)
         (
             planner_task_id,
@@ -155,11 +162,7 @@ class ProjectService:
 
         outlook = None if project.is_subproject else await self._validated_outlook()
         planner = self._validated_planner() if project.planner.enabled else None
-        fiche_path = (
-            self._fiche_service.fill_subproject_fiche(project_dir, project)
-            if project.is_subproject
-            else self._fiche_service.fill_fiche(project_dir, project)
-        )
+        fiche_path = self._fill_project_fiche(project_dir, project)
         await self._repertoire_service.upsert_project(project, force_overwrite=True)
         outlook_created, outlook_error = await self._apply_outlook(project, outlook)
         (
@@ -181,6 +184,18 @@ class ProjectService:
             outlook_error=outlook_error,
             planner_error=planner_error,
         )
+
+    def _fill_project_fiche(
+        self,
+        project_dir: Path,
+        project: ProjectInput,
+        *,
+        new_fiche: bool = False,
+    ) -> Path:
+        fiche_project = replace(project, gere_par=self._config.user.initials)
+        if project.is_subproject:
+            return self._fiche_service.fill_subproject_fiche(project_dir, fiche_project)
+        return self._fiche_service.fill_fiche(project_dir, fiche_project, new_fiche=new_fiche)
 
     async def delete_project(
         self,

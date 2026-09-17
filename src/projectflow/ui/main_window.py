@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
             native_path_text(paths.repertoire_chantier.display_path) or "Non configure",
         )
         self.creation_tab.apply_planner_config(self._config.planner)
+        self.creation_tab.set_user_initials(self._config.user.initials)
 
     def set_background_mode_enabled(self, *, enabled: bool) -> None:
         self._background_mode_enabled = enabled
