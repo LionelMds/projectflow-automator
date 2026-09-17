@@ -19,6 +19,19 @@ class FakeTokenProvider:
         return "token"
 
 
+@pytest.mark.asyncio
+async def test_graph_planner_aclose_releases_http_client() -> None:
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200)))
+    client = GraphPlannerClient(
+        graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+    )
+
+    await client.aclose()
+    await client.aclose()
+
+    assert http_client.is_closed
+
+
 def _json(request: httpx.Request) -> dict[str, Any]:
     payload = json.loads(request.content.decode("utf-8"))
     assert isinstance(payload, dict)

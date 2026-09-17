@@ -39,7 +39,6 @@ def run(argv: Sequence[str]) -> int:
     if not single_instance.listen():
         logger.info("app.single_instance.forwarded")
         return 0
-    app.aboutToQuit.connect(single_instance.release)
 
     event_loop = QEventLoop(app)
     asyncio.set_event_loop(event_loop)
@@ -63,6 +62,7 @@ def run(argv: Sequence[str]) -> int:
             QTimer.singleShot(smoke_delay_ms, wizard.reject)
         if wizard.exec() != wizard.DialogCode.Accepted:
             logger.info("app.onboarding.cancelled")
+            single_instance.release()
             return 0
         config = wizard.config
         config.save()
@@ -85,13 +85,19 @@ def run(argv: Sequence[str]) -> int:
     if not demo_mode:
         QTimer.singleShot(
             0,
-            lambda: asyncio.create_task(controller.check_updates(show_no_update=False)),
+            lambda: controller.request_update_check(show_no_update=False),
         )
     _schedule_smoke_exit(app, logger, smoke_delay_ms)
 
     with event_loop:
-        result = event_loop.run_forever()
-        return result if isinstance(result, int) else 0
+        try:
+            result = event_loop.run_forever()
+            return result if isinstance(result, int) else 0
+        finally:
+            try:
+                event_loop.run_until_complete(controller.aclose())
+            finally:
+                single_instance.release()
 
 
 def _configure_tray(
@@ -111,7 +117,7 @@ def _configure_tray(
     tray.show_requested.connect(controller.show_window)
     tray.quick_create_requested.connect(controller.show_quick_create)
     tray.open_repertoire_requested.connect(controller.open_repertoire)
-    tray.update_check_requested.connect(lambda: asyncio.create_task(controller.check_updates()))
+    tray.update_check_requested.connect(controller.request_update_check)
     tray.quit_requested.connect(lambda: _quit_from_tray(app, window))
     window.hidden_to_background.connect(
         lambda: tray.show_message(

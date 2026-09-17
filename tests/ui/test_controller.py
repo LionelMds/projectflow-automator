@@ -1002,7 +1002,8 @@ def test_controller_open_repertoire_reports_missing_path(
     assert "Repertoire chantier non configure" in window.creation_tab.logs.toPlainText()
 
 
-def test_controller_load_sortie_dossier_repertories_project_files(
+@pytest.mark.asyncio
+async def test_controller_load_sortie_dossier_repertories_project_files(
     qtbot: Any,
     tmp_path: Path,
 ) -> None:
@@ -1021,7 +1022,7 @@ def test_controller_load_sortie_dossier_repertories_project_files(
         services=services,  # type: ignore[arg-type]
     )
 
-    controller.load_sortie_dossier()
+    await controller.load_sortie_dossier()
 
     assert window.sortie_tab.fiche_list.count() == 1
     assert window.sortie_tab.mesure_list.count() == 1
@@ -1032,7 +1033,8 @@ def test_controller_load_sortie_dossier_repertories_project_files(
     assert "Projet charge" in window.sortie_tab.logs.text()
 
 
-def test_controller_create_sortie_dossier_logs_success(
+@pytest.mark.asyncio
+async def test_controller_create_sortie_dossier_logs_success(
     qtbot: Any,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1058,8 +1060,8 @@ def test_controller_create_sortie_dossier_logs_success(
         services=services,  # type: ignore[arg-type]
     )
 
-    controller.load_sortie_dossier()
-    controller.create_sortie_dossier()
+    await controller.load_sortie_dossier()
+    await controller.create_sortie_dossier()
 
     assert "Dossier de sortie cree" in window.sortie_tab.logs.text()
     output_dir = next((project_dir / "Sorties dossier").iterdir())

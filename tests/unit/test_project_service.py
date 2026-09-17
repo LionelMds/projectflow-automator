@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from pathlib import Path
+from threading import Event, get_ident
 
 import pytest
 from openpyxl import Workbook, load_workbook
 
 from projectflow.config import AppConfig, OutlookFolderConfig
+from projectflow.core import project_service
+from projectflow.core.background_io import file_io_lock
 from projectflow.core.fiche_service import FicheService
 from projectflow.core.models import PlannerTaskInput, ProjectInput
 from projectflow.core.numero import parse_project_number
@@ -123,6 +127,161 @@ def test_copy_reference_tree_does_not_overwrite_existing_files(tmp_path: Path) -
     copy_reference_tree(reference, project)
 
     assert (project / "a.txt").read_text(encoding="utf-8") == "existing"
+
+
+@pytest.mark.asyncio
+async def test_project_copy_keeps_event_loop_responsive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir()
+    workbook = Workbook()
+    workbook.save(config.paths.dossier_reference / "modele fiche.xlsx")
+    workbook.close()
+    loop = asyncio.get_running_loop()
+    heartbeat = Event()
+    original_copy = project_service.copy_reference_tree
+    responsive: list[bool] = []
+
+    def slow_copy(reference_dir: Path, project_dir: Path) -> None:
+        loop.call_soon_threadsafe(heartbeat.set)
+        responsive.append(heartbeat.wait(timeout=1))
+        original_copy(reference_dir, project_dir)
+
+    monkeypatch.setattr(project_service, "copy_reference_tree", slow_copy)
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=FakeRepertoireService(),  # type: ignore[arg-type]
+    )
+
+    await service.create_project(ProjectInput(number=parse_project_number("2026-4995")))
+
+    assert responsive == [True]
+
+
+@pytest.mark.parametrize("operation", ["create", "update", "subproject"])
+@pytest.mark.asyncio
+async def test_project_fiche_writes_keep_event_loop_responsive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir()
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    workbook = Workbook()
+    workbook.save(config.paths.dossier_reference / "modele fiche.xlsx")
+    workbook.save(project_dir / "2026-4995 - Fiche dossier clients.xlsx")
+    workbook.close()
+    fiche_service = FicheService()
+    method_name = "fill_subproject_fiche" if operation == "subproject" else "fill_fiche"
+    original_fill = getattr(fiche_service, method_name)
+    loop = asyncio.get_running_loop()
+    heartbeat = Event()
+    responsive: list[bool] = []
+
+    def slow_fill(project_dir: Path, project: ProjectInput, **kwargs: bool) -> Path:
+        loop.call_soon_threadsafe(heartbeat.set)
+        responsive.append(heartbeat.wait(timeout=1))
+        return original_fill(project_dir, project, **kwargs)
+
+    monkeypatch.setattr(fiche_service, method_name, slow_fill)
+    service = ProjectService(
+        config=config,
+        fiche_service=fiche_service,
+        repertoire_service=FakeRepertoireService(),  # type: ignore[arg-type]
+    )
+    number = "2026-4995-2" if operation == "subproject" else "2026-4995"
+    project = ProjectInput(number=parse_project_number(number))
+
+    if operation == "update":
+        await service.update_project(project)
+    else:
+        await service.create_project(project)
+
+    assert responsive == [True]
+
+
+@pytest.mark.asyncio
+async def test_services_serialize_fiche_writes_even_when_first_operation_is_cancelled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path / "clients"
+    config.paths.dossier_reference = tmp_path / "reference"
+    config.paths.dossier_reference.mkdir()
+    workbook = Workbook()
+    workbook.save(config.paths.dossier_reference / "modele fiche.xlsx")
+    workbook.close()
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = Event()
+    effects: list[str] = []
+    first_fiche = FicheService()
+    original_fill = first_fiche.fill_fiche
+
+    def slow_fill(project_dir: Path, project: ProjectInput, *, new_fiche: bool = False) -> Path:
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(timeout=5)
+        path = original_fill(project_dir, project, new_fiche=new_fiche)
+        effects.append("first finished")
+        return path
+
+    monkeypatch.setattr(first_fiche, "fill_fiche", slow_fill)
+    first_repertoire = FakeRepertoireService()
+    first_service = ProjectService(
+        config=config,
+        fiche_service=first_fiche,
+        repertoire_service=first_repertoire,  # type: ignore[arg-type]
+    )
+    pin_threads: list[int] = []
+    second_service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=FakeRepertoireService(),  # type: ignore[arg-type]
+        pin_path=lambda _path: pin_threads.append(get_ident()),
+    )
+    first = asyncio.create_task(
+        first_service.create_project(
+            ProjectInput(number=parse_project_number("2026-4995"), designation="First"),
+        ),
+    )
+    second = None
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        first.cancel()
+        second = asyncio.create_task(
+            second_service.update_project(
+                ProjectInput(number=parse_project_number("2026-4995"), designation="Second"),
+            ),
+        )
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not first.done()
+        assert not second.done()
+        assert effects == []
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        result = await second
+        assert result.fiche_path is not None
+        assert FicheService().read_fiche(Path(result.fiche_path)).designation == "Second"
+        assert first_repertoire.calls == []
+        assert pin_threads == [get_ident()]
+    finally:
+        release.set()
+        await asyncio.gather(
+            first, *([second] if second is not None else []), return_exceptions=True
+        )
 
 
 def test_outlook_folder_templates_render_project_placeholders() -> None:
@@ -886,3 +1045,33 @@ async def test_delete_subproject_trashes_only_its_nested_folder(tmp_path: Path) 
     assert trashed == [nested_dir]
     assert project_dir.exists()
     assert result.project_path_trashed is True
+
+
+@pytest.mark.asyncio
+async def test_delete_waits_for_file_io_and_trashes_on_calling_thread(tmp_path: Path) -> None:
+    config = AppConfig()
+    config.paths.racine_projets = tmp_path
+    project = ProjectInput(number=parse_project_number("2026-4995"))
+    trash_threads: list[int] = []
+
+    def trash_path(_path: Path) -> bool:
+        trash_threads.append(get_ident())
+        return True
+
+    service = ProjectService(
+        config=config,
+        fiche_service=FicheService(),
+        repertoire_service=FakeRepertoireService(),  # type: ignore[arg-type]
+        trash_path=trash_path,
+    )
+    async with file_io_lock():
+        deletion = asyncio.create_task(
+            service.delete_project(project, related_projects=(project,), repertoire_rows=()),
+        )
+        await asyncio.sleep(0)
+        assert not deletion.done()
+        assert trash_threads == []
+
+    result = await deletion
+    assert result.project_path_trashed is True
+    assert trash_threads == [get_ident()]

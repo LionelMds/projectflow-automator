@@ -5,8 +5,9 @@ import os
 import sys
 from collections.abc import Callable, Coroutine, Sequence
 from datetime import date
+from functools import wraps
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Concatenate, Literal, ParamSpec, Protocol, TypeVar
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -15,6 +16,7 @@ from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.config import AppConfig, RepertoireChantierConfig
+from projectflow.core.background_io import run_file_io
 from projectflow.core.client_directory import ClientDirectory
 from projectflow.core.duplication import PROJECT_WRITABLE_WIDTH
 from projectflow.core.fiche_service import FicheService, standard_fiche_path
@@ -26,7 +28,7 @@ from projectflow.core.numero import (
     project_folder_name,
 )
 from projectflow.core.project_service import ProjectService
-from projectflow.core.repertoire_service import RepertoireRow, RepertoireService
+from projectflow.core.repertoire_service import RepertoireRow, RepertoireService, RepertoireSnapshot
 from projectflow.core.sortie_service import SortieDossierService
 from projectflow.exceptions import ProjectFlowError
 from projectflow.graph.client import GraphClient
@@ -57,6 +59,39 @@ from projectflow.updates import (
 )
 
 QuickCreationAction = Literal["open_fiche", "open_repertoire", "edit", "next"]
+PlannerOptions = tuple[list[PlannerBucketOption], list[PlannerMemberOption]]
+ActionArgs = ParamSpec("ActionArgs")
+ReadKey = TypeVar("ReadKey")
+ReadResult = TypeVar("ReadResult")
+
+
+def _exclusive_action(
+    action: Callable[Concatenate[ProjectFlowController, ActionArgs], Coroutine[Any, Any, None]],
+) -> Callable[Concatenate[ProjectFlowController, ActionArgs], Coroutine[Any, Any, None]]:
+    @wraps(action)
+    async def guarded(
+        controller: ProjectFlowController,
+        /,
+        *args: ActionArgs.args,
+        **kwargs: ActionArgs.kwargs,
+    ) -> None:
+        if controller._mutation_busy or controller._closing:  # noqa: SLF001
+            controller._log("-> Une operation est deja en cours. Patientez avant de recommencer.")  # noqa: SLF001
+            return
+        controller._set_mutation_busy(busy=True)  # noqa: SLF001
+        controller._invalidate_repertoire_data()  # noqa: SLF001
+        task = asyncio.current_task()
+        if task is not None:
+            controller._mutation_tasks.add(task)  # noqa: SLF001
+        try:
+            await action(controller, *args, **kwargs)
+        finally:
+            controller._invalidate_repertoire_data()  # noqa: SLF001
+            controller._set_mutation_busy(busy=False)  # noqa: SLF001
+            if task is not None:
+                controller._mutation_tasks.discard(task)  # noqa: SLF001
+
+    return guarded
 
 
 class ClientSuggestionsTarget(Protocol):
@@ -92,6 +127,14 @@ class ProjectFlowController:
         self._services = services or ServiceContainer(config)
         self._save_config = save_config
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._mutation_tasks: set[asyncio.Task[Any]] = set()
+        self._closing = False
+        self._mutation_busy = False
+        self._repertoire_generation = 0
+        self._snapshot_tasks: dict[tuple[int, int], asyncio.Task[RepertoireSnapshot]] = {}
+        self._planner_tasks: dict[tuple[int, str], asyncio.Task[PlannerOptions]] = {}
+        self._planner_generation = 0
+        self._planner_cache_plan = ""
         self._quick_dialog: QuickCreateDialog | None = None
         self._planner_bucket_options: list[PlannerBucketOption] = []
         self._planner_member_options: list[PlannerMemberOption] = []
@@ -106,15 +149,19 @@ class ProjectFlowController:
 
     def _connect(self) -> None:
         tab = self._window.creation_tab
-        tab.create_requested.connect(lambda: asyncio.create_task(self.create_project()))
-        self._window.update_confirmed.connect(lambda: asyncio.create_task(self.update_project()))
+        tab.create_requested.connect(lambda: self._schedule_task(self.create_project()))
+        self._window.update_confirmed.connect(lambda: self._schedule_task(self.update_project()))
         tab.load_requested.connect(self.load_project)
         tab.open_folder_requested.connect(self.open_folder)
         tab.open_fiche_requested.connect(self.open_fiche)
         tab.open_repertoire_requested.connect(self.open_repertoire)
-        tab.next_available_requested.connect(lambda: asyncio.create_task(self.next_available()))
-        self._window.sortie_tab.load_requested.connect(self.load_sortie_dossier)
-        self._window.sortie_tab.create_output_requested.connect(self.create_sortie_dossier)
+        tab.next_available_requested.connect(lambda: self._schedule_task(self.next_available()))
+        self._window.sortie_tab.load_requested.connect(
+            lambda: self._schedule_task(self.load_sortie_dossier()),
+        )
+        self._window.sortie_tab.create_output_requested.connect(
+            lambda: self._schedule_task(self.create_sortie_dossier()),
+        )
         self._window.repertoire_tab.load_requested.connect(
             lambda: self._schedule_task(self.load_repertoire()),
         )
@@ -150,11 +197,58 @@ class ProjectFlowController:
         )
         self._window.settings_requested.connect(self.open_settings)
         self._window.update_check_requested.connect(
-            lambda: asyncio.create_task(self.check_updates()),
+            self.request_update_check,
         )
 
     def show_window(self) -> None:
         self._window.show_and_raise()
+
+    def request_update_check(self, *, show_no_update: bool = True) -> None:
+        self._schedule_task(self.check_updates(show_no_update=show_no_update))
+
+    async def _read_snapshot(self, year: int) -> RepertoireSnapshot:
+        key = (self._repertoire_generation, year)
+        task = self._snapshot_tasks.get(key)
+        if task is None:
+            task = asyncio.create_task(self._services.repertoire().read_snapshot(year=year))
+            self._snapshot_tasks[key] = task
+            task.add_done_callback(
+                lambda completed: self._finish_read(self._snapshot_tasks, key, completed),
+            )
+        return await asyncio.shield(task)
+
+    @staticmethod
+    def _finish_read(
+        requests: dict[ReadKey, asyncio.Task[ReadResult]],
+        key: ReadKey,
+        task: asyncio.Task[ReadResult],
+    ) -> None:
+        if requests.get(key) is task:
+            del requests[key]
+        if not task.cancelled():
+            # A consumer can disappear while a shared request completes.
+            # Awaiters still receive the exception; this avoids orphan warnings.
+            task.exception()
+
+    def _invalidate_repertoire_data(self) -> None:
+        self._repertoire_generation += 1
+        self._client_directories.clear()
+        self._client_directory_loading.clear()
+        self._client_directory_failed.clear()
+        empty = ClientDirectory.from_repertoire_rows(())
+        self._window.creation_tab.set_client_directory(empty)
+        if self._quick_dialog is not None:
+            self._quick_dialog.set_client_directory(empty)
+
+    def _set_mutation_busy(self, *, busy: bool) -> None:
+        self._mutation_busy = busy
+        tab = self._window.creation_tab
+        tab.create_button.setEnabled(not busy)
+        tab.update_button.setEnabled(not busy)
+        tab.reset_button.setEnabled(not busy)
+        tab.load_button.setEnabled(not busy)
+        tab.open_button.setEnabled(not busy)
+        tab.create_button.setText("Operation en cours..." if busy else "Creer")
 
     def show_quick_create(self, *, reset: bool = False) -> None:
         if self._quick_dialog is not None:
@@ -198,11 +292,20 @@ class ProjectFlowController:
         self._window.show_and_raise()
 
     async def _quick_next_available(self, dialog: QuickCreateDialog) -> None:
+        generation = self._repertoire_generation
+        requested_year = dialog.data().year
+        active_dialog = self._quick_dialog
         try:
-            year = int(dialog.data().year)
-            snapshot = await self._services.repertoire().read_snapshot(year=year)
+            year = int(requested_year)
+            snapshot = await self._read_snapshot(year)
         except (ProjectFlowError, ValueError) as exc:
             self._error(str(exc))
+            return
+        if (
+            generation != self._repertoire_generation
+            or requested_year != dialog.data().year
+            or (active_dialog is dialog and self._quick_dialog is not dialog)
+        ):
             return
         self._remember_client_directory(snapshot.year, snapshot.rows)
         result = snapshot.next_available
@@ -221,7 +324,9 @@ class ProjectFlowController:
         self._log(f"+ Numero disponible: {result.number}")
 
     async def _load_planner_options(self, target: PlannerSelectionWidget) -> None:
-        if self._planner_bucket_options or self._planner_member_options:
+        plan_id = self._config.planner.target_plan_id
+        generation = self._planner_generation
+        if self._config.planner.enabled and plan_id and self._planner_cache_plan == plan_id:
             target.set_options(
                 buckets=self._planner_bucket_options,
                 members=self._planner_member_options,
@@ -231,33 +336,65 @@ class ProjectFlowController:
             target.set_options_error()
             self._error("Planner n'est pas active dans les parametres.")
             return
-        plan_id = self._config.planner.target_plan_id
         if not plan_id:
             target.set_options_error()
             self._error("Selectionnez d'abord un plan Planner dans les parametres.")
             return
         try:
-            client = _planner_client()
-            buckets, members = await asyncio.gather(
-                client.list_buckets(plan_id=plan_id),
-                client.list_members(plan_id=plan_id),
-            )
+            key = (generation, plan_id)
+            task = self._planner_tasks.get(key)
+            if task is None:
+                task = asyncio.create_task(self._fetch_planner_options(plan_id))
+                self._planner_tasks[key] = task
+                task.add_done_callback(
+                    lambda completed: self._finish_read(self._planner_tasks, key, completed)
+                )
+            buckets, members = await asyncio.shield(task)
         except (ProjectFlowError, ValueError) as exc:
+            if (
+                generation != self._planner_generation
+                or plan_id != self._config.planner.target_plan_id
+                or not self._config.planner.enabled
+            ):
+                return
             target.set_options_error()
             self._error(str(exc))
             return
-        self._planner_bucket_options = [
-            PlannerBucketOption(id=bucket.id, name=bucket.name) for bucket in buckets
-        ]
-        self._planner_member_options = [
-            PlannerMemberOption(id=member.id, label=member.label) for member in members
-        ]
+        if (
+            generation != self._planner_generation
+            or plan_id != self._config.planner.target_plan_id
+            or not self._config.planner.enabled
+        ):
+            return
+        self._planner_bucket_options = buckets
+        self._planner_member_options = members
+        self._planner_cache_plan = plan_id
         target.set_options(
             buckets=self._planner_bucket_options,
             members=self._planner_member_options,
         )
         self._log("+ Options Planner chargees")
 
+    async def _fetch_planner_options(self, plan_id: str) -> PlannerOptions:
+        client = _planner_client()
+        try:
+            buckets, members = await asyncio.gather(
+                client.list_buckets(plan_id=plan_id),
+                client.list_members(plan_id=plan_id),
+                return_exceptions=True,
+            )
+            if isinstance(buckets, BaseException):
+                raise buckets
+            if isinstance(members, BaseException):
+                raise members
+            return (
+                [PlannerBucketOption(id=bucket.id, name=bucket.name) for bucket in buckets],
+                [PlannerMemberOption(id=member.id, label=member.label) for member in members],
+            )
+        finally:
+            await client.aclose()
+
+    @_exclusive_action
     async def create_project(self) -> None:
         try:
             project = self._project_from_form()
@@ -274,6 +411,7 @@ class ProjectFlowController:
         self._open_project_folder(result)
         self._show_creation_confirmation(result)
 
+    @_exclusive_action
     async def _create_project_from_quick(self, data: CreationFormData) -> None:
         try:
             project = self._project_from_data(data)
@@ -305,6 +443,7 @@ class ProjectFlowController:
         )
         return result, existing_update
 
+    @_exclusive_action
     async def update_project(self) -> None:
         try:
             project = self._project_from_form()
@@ -317,11 +456,18 @@ class ProjectFlowController:
         self._log_creation_integrations(result)
 
     async def next_available(self) -> None:
+        generation = self._repertoire_generation
+        requested_year = self._window.creation_tab.data().year
         try:
-            year = int(self._window.creation_tab.data().year)
-            snapshot = await self._services.repertoire().read_snapshot(year=year)
+            year = int(requested_year)
+            snapshot = await self._read_snapshot(year)
         except (ProjectFlowError, ValueError) as exc:
             self._error(str(exc))
+            return
+        if (
+            generation != self._repertoire_generation
+            or requested_year != self._window.creation_tab.data().year
+        ):
             return
         self._remember_client_directory(snapshot.year, snapshot.rows)
         result = snapshot.next_available
@@ -341,7 +487,7 @@ class ProjectFlowController:
         self._schedule_task(self.load_repertoire())
 
     async def load_repertoire(self) -> None:
-        if self._repertoire_loading:
+        if self._repertoire_loading or self._closing:
             return
         tab = self._window.repertoire_tab
         try:
@@ -350,14 +496,17 @@ class ProjectFlowController:
             tab.set_error("L'année doit être un nombre valide.")
             return
         self._repertoire_loading = True
+        generation = self._repertoire_generation
         tab.set_loading(loading=True)
         try:
-            snapshot = await self._services.repertoire().read_snapshot(year=year)
+            snapshot = await self._read_snapshot(year)
         except (ProjectFlowError, ValueError, OSError) as exc:
-            tab.set_error(str(exc))
+            if generation == self._repertoire_generation:
+                tab.set_error(redact_sensitive_links(str(exc)))
         else:
-            tab.set_snapshot(snapshot)
-            self._remember_client_directory(snapshot.year, snapshot.rows)
+            if generation == self._repertoire_generation and year == tab.year():
+                tab.set_snapshot(snapshot)
+                self._remember_client_directory(snapshot.year, snapshot.rows)
         finally:
             self._repertoire_loading = False
             tab.set_loading(loading=False)
@@ -373,21 +522,27 @@ class ProjectFlowController:
             return
         if year in self._client_directory_loading or year in self._client_directory_failed:
             return
+        self._client_directory_loading.add(year)
         self._schedule_task(self._load_client_suggestions(year))
 
     async def _load_client_suggestions(self, year: int) -> None:
         self._client_directory_loading.add(year)
+        generation = self._repertoire_generation
         try:
-            snapshot = await self._services.repertoire().read_snapshot(year=year)
+            snapshot = await self._read_snapshot(year)
         except (ProjectFlowError, ValueError, OSError) as exc:
+            if generation != self._repertoire_generation:
+                return
             self._client_directory_failed.add(year)
             self._window.creation_tab.append_log(
-                f"! Suggestions Societe/Contact indisponibles: {exc}",
+                redact_sensitive_links(f"! Suggestions Societe/Contact indisponibles: {exc}"),
             )
         else:
-            self._remember_client_directory(snapshot.year, snapshot.rows)
+            if generation == self._repertoire_generation:
+                self._remember_client_directory(snapshot.year, snapshot.rows)
         finally:
-            self._client_directory_loading.discard(year)
+            if generation == self._repertoire_generation:
+                self._client_directory_loading.discard(year)
 
     def _remember_client_directory(self, year: int, rows: Sequence[RepertoireRow]) -> None:
         directory = ClientDirectory.from_repertoire_rows(row.values for row in rows)
@@ -402,10 +557,10 @@ class ProjectFlowController:
             year = int(target.data().year)
         except ValueError:
             return
-        directory = self._client_directories.get(year)
-        if directory is not None:
-            target.set_client_directory(directory)
+        directory = self._client_directories.get(year, ClientDirectory.from_repertoire_rows(()))
+        target.set_client_directory(directory)
 
+    @_exclusive_action
     async def save_repertoire_row(
         self,
         row_index: int,
@@ -476,6 +631,7 @@ class ProjectFlowController:
             ),
         )
 
+    @_exclusive_action
     async def _sync_project_from_repertoire(
         self,
         *,
@@ -658,6 +814,7 @@ class ProjectFlowController:
             )
         )
 
+    @_exclusive_action
     async def _delete_project_and_related(
         self,
         *,
@@ -691,7 +848,8 @@ class ProjectFlowController:
         message = f"Projet {project.number} supprimé : {', '.join(details)}."
         tab.set_status_message(message)
         self._window.creation_tab.append_log(f"+ {message}")
-        QMessageBox.information(self._window, "Projet supprimé", message)
+        if not self._closing:
+            QMessageBox.information(self._window, "Projet supprimé", message)
 
     def _selected_repertoire_project(
         self,
@@ -711,8 +869,12 @@ class ProjectFlowController:
             return None
         return row_index, number, values, original
 
-    def load_sortie_dossier(self) -> None:
+    async def load_sortie_dossier(self) -> None:
         tab = self._window.sortie_tab
+        if tab.is_loading:
+            return
+        requested_identity = tab.project_identity()
+        tab.set_loading(loading=True)
         try:
             year, project_id = tab.project_identity()
             number = _parse_sortie_number(year, project_id)
@@ -721,9 +883,16 @@ class ProjectFlowController:
                 self._output_error("Racine projets non configuree.")
                 return
             project_dir = root / str(number.year) / project_folder_name(number)
-            inventory = self._sortie_service.discover(project_dir, number)
+            inventory = await run_file_io(self._sortie_service.discover, project_dir, number)
         except (ProjectFlowError, OSError, ValueError) as exc:
             self._output_error(str(exc))
+            return
+        finally:
+            tab.set_loading(loading=False)
+        if (
+            requested_identity != tab.project_identity()
+            or root != self._config.paths.racine_projets
+        ):
             return
         tab.set_project_identity(year=str(number.year), project_id=str(number))
         tab.set_project_directory(project_dir)
@@ -732,7 +901,8 @@ class ProjectFlowController:
         self._sortie_number = number
         tab.append_log(f"+ Projet charge: {project_dir}")
 
-    def create_sortie_dossier(self) -> None:
+    @_exclusive_action
+    async def create_sortie_dossier(self) -> None:
         tab = self._window.sortie_tab
         year, project_id = tab.project_identity()
         try:
@@ -744,9 +914,11 @@ class ProjectFlowController:
             self._output_error("Chargez le projet avant de creer le dossier de sortie.")
             return
         project_dir = self._sortie_project_dir
+        tab.set_loading(loading=True)
         try:
             selection = tab.data()
-            output_dir = self._sortie_service.create_output_folder(
+            output_dir = await run_file_io(
+                self._sortie_service.create_output_folder,
                 project_dir,
                 number,
                 selection,
@@ -754,7 +926,11 @@ class ProjectFlowController:
         except (ProjectFlowError, OSError, ValueError) as exc:
             self._output_error(str(exc))
             return
+        finally:
+            tab.set_loading(loading=False)
         tab.append_log(f"+ Dossier de sortie cree: {output_dir}")
+        if self._closing:
+            return
         answer = QMessageBox.question(
             self._window,
             "Sortie dossier",
@@ -782,6 +958,9 @@ class ProjectFlowController:
         self._load_project_number(number)
 
     def _load_project_number(self, number: ProjectNumber) -> bool:
+        if self._mutation_busy:
+            self._log("-> Patientez jusqu'a la fin de l'operation avant de charger la fiche.")
+            return False
         try:
             project_dir = self._project_dir(number)
             fiche_path = self._choose_fiche(project_dir, number)
@@ -806,6 +985,9 @@ class ProjectFlowController:
         return True
 
     def open_fiche(self) -> None:
+        if self._mutation_busy:
+            self._log("-> Patientez jusqu'a la fin de l'operation avant d'ouvrir la fiche.")
+            return
         try:
             number = parse_project_number(self._number_from_form())
             project_dir = self._project_dir(number)
@@ -890,18 +1072,38 @@ class ProjectFlowController:
         self._log("+ Ouverture du repertoire demandee dans Excel.")
 
     def open_settings(self) -> None:
+        if self._mutation_busy:
+            self._log("-> Attendez la fin de l'operation avant de modifier les parametres.")
+            return
         dialog = SettingsDialog(self._config, parent=self._window)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
+        previous_repertoire = self._config.paths.repertoire_chantier.model_copy(deep=True)
+        previous_planner = self._config.planner.model_copy(deep=True)
         dialog.apply_to_config(self._config)
-        if isinstance(self._services, ServiceContainer):
-            self._services.reset_repertoire()
-            self._services.reset_planner()
-        self._planner_bucket_options = []
-        self._planner_member_options = []
+        current_repertoire = self._config.paths.repertoire_chantier
+        # Opening a different local copy or changing initials does not require
+        # reconnecting the cloud workbook or throwing away its client directory.
+        repertoire_changed = previous_repertoire.model_dump(
+            exclude={"open_path"}
+        ) != current_repertoire.model_dump(exclude={"open_path"})
+        planner_changed = (previous_planner.enabled, previous_planner.target_plan_id) != (
+            self._config.planner.enabled,
+            self._config.planner.target_plan_id,
+        )
+        if repertoire_changed:
+            if isinstance(self._services, ServiceContainer):
+                self._services.reset_repertoire()
+            self._invalidate_repertoire_data()
+        if planner_changed:
+            if isinstance(self._services, ServiceContainer):
+                self._services.reset_planner()
+            self._planner_generation += 1
+            self._planner_cache_plan = ""
+            self._planner_bucket_options = []
+            self._planner_member_options = []
         self._window.apply_config_labels()
-        if self._quick_dialog is not None:
-            self._quick_dialog.set_user_initials(self._config.user.initials)
+        self._apply_quick_config(planner_changed=previous_planner != self._config.planner)
         self._save_config_if_available()
         self._log("+ Parametres enregistres")
         if self._config.outlook.enabled:
@@ -915,6 +1117,18 @@ class ProjectFlowController:
             self._log(f"+ Planner active: {plan} / {bucket}")
         else:
             self._log("-> Planner desactive")
+
+    def _apply_quick_config(self, *, planner_changed: bool) -> None:
+        if self._quick_dialog is None:
+            return
+        self._quick_dialog.set_user_initials(self._config.user.initials)
+        if planner_changed:
+            self._quick_dialog.apply_planner_config(
+                enabled=self._config.planner.enabled,
+                bucket_id=self._config.planner.bucket_id,
+                bucket_name=self._config.planner.bucket_name,
+                due_days=self._config.planner.due_days,
+            )
 
     async def check_updates(self, *, show_no_update: bool = True) -> None:
         try:
@@ -1081,7 +1295,7 @@ class ProjectFlowController:
             return None
 
     def _log(self, message: str) -> None:
-        self._window.creation_tab.append_log(message)
+        self._window.creation_tab.append_log(redact_sensitive_links(message))
 
     def _log_creation_result(
         self,
@@ -1117,6 +1331,8 @@ class ProjectFlowController:
             self._log("! Planner actif mais aucune tache n'a ete associee a ce projet")
 
     def _open_project_folder(self, result: ProjectCreationResult) -> None:
+        if self._closing:
+            return
         try:
             open_path(Path(result.project_dir))
         except (ProjectFlowError, OSError) as exc:
@@ -1125,6 +1341,8 @@ class ProjectFlowController:
         self._log("+ Dossier projet ouvert")
 
     def _show_creation_confirmation(self, result: ProjectCreationResult) -> None:
+        if self._closing:
+            return
         title = "Projet cree" if result.project_dir_created else "Projet pret"
         message = (
             "Le projet a ete cree avec succes."
@@ -1143,6 +1361,8 @@ class ProjectFlowController:
         data: CreationFormData,
         project: ProjectInput,
     ) -> None:
+        if self._closing:
+            return
         title = "Projet cree" if result.project_dir_created else "Projet pret"
         message = (
             "Le projet a ete cree avec succes."
@@ -1219,19 +1439,51 @@ class ProjectFlowController:
             self._save_config()
 
     def _schedule_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        if self._closing:
+            coroutine.close()
+            return
         task = asyncio.create_task(coroutine)
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._task_finished)
+
+    def _task_finished(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            self._error(f"L'operation n'a pas pu etre terminee : {error}")
+
+    async def aclose(self) -> None:
+        self._closing = True
+        tasks = {
+            *self._background_tasks,
+            *self._mutation_tasks,
+            *self._snapshot_tasks.values(),
+            *self._planner_tasks.values(),
+        }
+        # Finish committed user actions, including their repertoire/integration writes.
+        # Cancelling between the local save and these writes would leave a partial project.
+        for task in tasks - self._mutation_tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        for dialog in self._window.findChildren(SettingsDialog):
+            await dialog.aclose()
+        if isinstance(self._services, ServiceContainer):
+            await self._services.close()
 
     def _error(self, message: str) -> None:
         message = redact_sensitive_links(message)
         self._window.creation_tab.append_log(f"! {message}")
-        QMessageBox.critical(self._window, "ProjectFlow", message)
+        if not self._closing:
+            QMessageBox.critical(self._window, "ProjectFlow", message)
 
     def _output_error(self, message: str) -> None:
         message = redact_sensitive_links(message)
         self._window.sortie_tab.append_log(f"! {message}")
-        QMessageBox.critical(self._window, "Sortie dossier", message)
+        if not self._closing:
+            QMessageBox.critical(self._window, "Sortie dossier", message)
 
 
 def _non_empty_changed(current: str, existing: str) -> bool:

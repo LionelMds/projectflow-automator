@@ -53,6 +53,13 @@ quitter vraiment l'application.
 ProjectFlow fonctionne en instance unique : relancer l'application quand elle est deja ouverte
 ramene simplement la fenetre existante au premier plan.
 
+Les copies de dossiers et les ecritures des fiches Excel s'effectuent en arriere-plan. Pendant
+une operation, les actions de creation, de mise a jour et de chargement de fiche sont suspendues
+pour eviter les doublons et les lectures d'un fichier en cours d'ecriture. Si vous quittez
+l'application, elle attend la fin de l'operation engagee avant de se fermer completement.
+Les lectures simultanees du repertoire et les chargements Planner sont regroupes ; modifier
+les initiales ou le chemin d'ouverture Excel conserve les autres choix du formulaire.
+
 Smoke test non bloquant :
 
 ```powershell

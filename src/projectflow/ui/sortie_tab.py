@@ -30,9 +30,16 @@ class SortieDossierTab(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._inventory = OutputInventory()
+        self.is_loading = False
         self._photo_directory: Path | None = None
         self._plan_directory: Path | None = None
         self._build_ui()
+
+    def set_loading(self, *, loading: bool) -> None:
+        self.is_loading = loading
+        self.load_button.setEnabled(not loading)
+        self.load_button.setText("Chargement..." if loading else "Charger")
+        self.create_output_button.setEnabled(not loading and bool(self._inventory.fiches))
 
     def set_project_identity(self, *, year: str, project_id: str) -> None:
         index = self.year_combo.findText(year)

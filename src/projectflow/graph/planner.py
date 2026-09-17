@@ -59,6 +59,10 @@ class GraphPlannerClient:
         self._graph = graph
         self._current_user_id: str = ""
 
+    async def aclose(self) -> None:
+        """Release the HTTP connection pool owned by this Planner client."""
+        await self._graph.aclose()
+
     async def list_plans(self) -> list[PlannerPlan]:
         payloads = await self._collect_pages("/me/planner/plans")
         return [

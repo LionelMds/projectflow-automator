@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from projectflow.application_settings import ApplicationSettings
@@ -29,6 +30,7 @@ class ServiceContainer:
     fiche_service: FicheService | None = None
     repertoire_service: RepertoireService | None = None
     planner_service: ConfiguredPlannerGateway | None = None
+    _graph_clients: list[GraphClient] = field(default_factory=list, init=False, repr=False)
 
     def fiche(self) -> FicheService:
         if self.fiche_service is None:
@@ -58,6 +60,7 @@ class ServiceContainer:
                 client_id=settings.microsoft_client_id,
             )
             graph = GraphClient(token_provider=token_provider, request_timeout=60.0)
+            self._graph_clients.append(graph)
             self.repertoire_service = RepertoireService(
                 GraphExcelWorkbookGateway(graph=graph, config=repertoire),
             )
@@ -99,6 +102,7 @@ class ServiceContainer:
             scopes=PLANNER_GRAPH_SCOPES,
         )
         graph = GraphClient(token_provider=token_provider)
+        self._graph_clients.append(graph)
         self.planner_service = ConfiguredPlannerGateway(
             client=GraphPlannerClient(graph=graph),
             config=self.config,
@@ -106,13 +110,22 @@ class ServiceContainer:
         return self.planner_service
 
     def reset_repertoire(self) -> None:
+        # Existing operations may still use the retired service. Its client
+        # remains owned until shutdown, after those operations have settled.
         self.repertoire_service = None
 
     def reset_planner(self) -> None:
         self.planner_service = None
 
     async def close(self) -> None:
-        return
+        """Close owned clients after the controller has settled its running tasks."""
+        clients, self._graph_clients = self._graph_clients, []
+        results = await asyncio.gather(
+            *(client.aclose() for client in clients), return_exceptions=True
+        )
+        errors = [result for result in results if isinstance(result, BaseException)]
+        if errors:
+            raise BaseExceptionGroup("Impossible de fermer les connexions Microsoft.", errors)
 
 
 @dataclass(slots=True)

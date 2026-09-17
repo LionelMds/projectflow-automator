@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from PySide6.QtCore import QSignalBlocker
@@ -28,6 +30,7 @@ from projectflow.config import AppConfig, RepertoireChantierConfig
 from projectflow.exceptions import ProjectFlowError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
+from projectflow.logging import redact_sensitive_links
 from projectflow.outlook.local import detect_local_outlook_accounts, validate_local_outlook_account
 from projectflow.platform.paths import native_path_text
 
@@ -42,7 +45,10 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Parametres")
         self._reconnect_repertoire = False
+        self._planner_task: asyncio.Task[None] | None = None
+        self._finished = False
         self._build_ui(config)
+        self.finished.connect(self._cancel_planner_action)
 
     def apply_to_config(self, config: AppConfig) -> None:
         config.user.initials = self.user_initials_edit.text()
@@ -214,11 +220,13 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         self.planner_refresh_button = QPushButton("Detecter")
         self.planner_refresh_button.clicked.connect(
-            lambda: asyncio.create_task(self._load_planner_plans()),
+            lambda: self._start_planner_action(
+                self._load_planner_plans, self.planner_refresh_button
+            ),
         )
         self.planner_test_button = QPushButton("Tester")
         self.planner_test_button.clicked.connect(
-            lambda: asyncio.create_task(self._test_planner()),
+            lambda: self._start_planner_action(self._test_planner, self.planner_test_button),
         )
         self.planner_plan_combo.currentIndexChanged.connect(self._planner_plan_changed)
         self.planner_plan_combo.currentTextChanged.connect(self._planner_plan_changed)
@@ -233,7 +241,10 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         self.planner_bucket_refresh_button = QPushButton("Detecter colonnes")
         self.planner_bucket_refresh_button.clicked.connect(
-            lambda: asyncio.create_task(self._load_planner_buckets()),
+            lambda: self._start_planner_action(
+                self._load_planner_buckets,
+                self.planner_bucket_refresh_button,
+            ),
         )
         layout.addWidget(self.planner_bucket_combo, 1)
         layout.addWidget(self.planner_bucket_refresh_button)
@@ -244,6 +255,63 @@ class SettingsDialog(QDialog):
         if plan_id != self._planner_bucket_plan_id:
             self.planner_bucket_combo.clear()
             self._planner_bucket_plan_id = plan_id
+
+    def _start_planner_action(
+        self,
+        action: Callable[[], Awaitable[None]],
+        button: QPushButton,
+    ) -> None:
+        if self._finished or self._planner_task is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._show_error("Planner", "Detection indisponible. Rouvrez les parametres.")
+            return
+        button_text = button.text()
+        for control in self._planner_action_buttons():
+            control.setEnabled(False)
+        button.setText("Chargement...")
+        self._planner_task = loop.create_task(self._run_planner_action(action, button, button_text))
+
+    async def _run_planner_action(
+        self,
+        action: Callable[[], Awaitable[None]],
+        button: QPushButton,
+        button_text: str,
+    ) -> None:
+        try:
+            await action()
+        except Exception as exc:  # noqa: BLE001 - UI task boundary must consume failures.
+            if not self._finished:
+                self._show_error("Planner", str(exc) or "Operation Planner impossible.")
+        finally:
+            self._planner_task = None
+            if not self._finished:
+                button.setText(button_text)
+                for control in self._planner_action_buttons():
+                    control.setEnabled(True)
+
+    def _planner_action_buttons(self) -> tuple[QPushButton, ...]:
+        return (
+            self.planner_refresh_button,
+            self.planner_bucket_refresh_button,
+            self.planner_test_button,
+        )
+
+    def _cancel_planner_action(self) -> None:
+        self._finished = True
+        if self._planner_task is not None and not self._planner_task.cancelling():
+            self._planner_task.cancel()
+
+    async def aclose(self) -> None:
+        self._cancel_planner_action()
+        if self._planner_task is not None:
+            await asyncio.gather(self._planner_task, return_exceptions=True)
+
+    def _show_error(self, title: str, message: str) -> None:
+        if not self._finished:
+            QMessageBox.warning(self, title, redact_sensitive_links(message))
 
     def _outlook_group(self, config: AppConfig) -> QGroupBox:
         group = QGroupBox(_mail_group_title())
@@ -284,7 +352,7 @@ class SettingsDialog(QDialog):
         try:
             accounts = detect_local_outlook_accounts()
         except ProjectFlowError as exc:
-            QMessageBox.warning(self, "Outlook", str(exc))
+            self._show_error("Outlook", str(exc))
             return
         _refresh_combo(
             self.outlook_account_combo,
@@ -300,7 +368,7 @@ class SettingsDialog(QDialog):
                 base_folder=self._selected_outlook_base_folder(),
             )
         except ProjectFlowError as exc:
-            QMessageBox.warning(self, "Outlook", str(exc))
+            self._show_error("Outlook", str(exc))
             return
         self.outlook_enabled_checkbox.setChecked(True)
         QMessageBox.information(self, "Outlook", "Compte Outlook accessible.")
@@ -325,29 +393,32 @@ class SettingsDialog(QDialog):
 
     async def _load_planner_plans(self) -> None:
         try:
-            plans = await _planner_client().list_plans()
+            async with _planner_session() as client:
+                plans = await client.list_plans()
+                _refresh_combo(
+                    self.planner_plan_combo,
+                    [(plan.title, plan.id) for plan in plans],
+                    selected_id=self._selected_planner_plan_id(),
+                )
+                self._planner_plan_changed()
+                if self._selected_planner_plan_id():
+                    await self._refresh_planner_buckets(client)
         except ProjectFlowError as exc:
-            QMessageBox.warning(self, "Planner", str(exc))
-            return
-        _refresh_combo(
-            self.planner_plan_combo,
-            [(plan.title, plan.id) for plan in plans],
-            selected_id=self._selected_planner_plan_id(),
-        )
-        self._planner_plan_changed()
-        if self._selected_planner_plan_id():
-            await self._load_planner_buckets()
+            self._show_error("Planner", str(exc))
 
     async def _load_planner_buckets(self) -> None:
+        try:
+            async with _planner_session() as client:
+                await self._refresh_planner_buckets(client)
+        except ProjectFlowError as exc:
+            self._show_error("Planner", str(exc))
+
+    async def _refresh_planner_buckets(self, client: GraphPlannerClient) -> None:
         plan_id = self._selected_planner_plan_id()
         if not plan_id:
             QMessageBox.warning(self, "Planner", "Selectionnez d'abord un plan Planner.")
             return
-        try:
-            buckets = await _planner_client().list_buckets(plan_id=plan_id)
-        except ProjectFlowError as exc:
-            QMessageBox.warning(self, "Planner", str(exc))
-            return
+        buckets = await client.list_buckets(plan_id=plan_id)
         if plan_id != self._selected_planner_plan_id():
             return
         _refresh_combo(
@@ -363,10 +434,11 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "Planner", "Selectionnez un plan et une colonne Planner.")
             return
         try:
-            buckets = await _planner_client().list_buckets(plan_id=plan_id)
+            async with _planner_session() as client:
+                buckets = await client.list_buckets(plan_id=plan_id)
             bucket_ids = {bucket.id for bucket in buckets}
         except ProjectFlowError as exc:
-            QMessageBox.warning(self, "Planner", str(exc))
+            self._show_error("Planner", str(exc))
             return
         if (plan_id, bucket_id) != (
             self._selected_planner_plan_id(),
@@ -464,6 +536,15 @@ def _mail_account_placeholder() -> str:
     if sys.platform == "darwin":
         return "compte Mail local"
     return "compte Outlook local"
+
+
+@asynccontextmanager
+async def _planner_session() -> AsyncIterator[GraphPlannerClient]:
+    client = _planner_client()
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 def _planner_client() -> GraphPlannerClient:

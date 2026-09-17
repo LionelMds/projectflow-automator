@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.1.40
+
+- Execute les copies de dossiers et les operations sur les fiches Excel en arriere-plan
+  pour garder l'interface reactive, y compris dans Sortie dossier. Les acces aux fichiers
+  sont serialises pour eviter les ecritures concurrentes.
+- Regroupe les lectures simultanees du repertoire pour le tableau, le prochain numero et
+  les suggestions clients. Ignore les reponses devenues obsoletes apres un changement de
+  configuration ou de projet, sans conserver un ancien repertoire pour les lectures suivantes.
+- Mutualise les chargements Planner entre le formulaire principal et la creation rapide,
+  empeche les detections en double et ferme les connexions Microsoft apres utilisation.
+- Conserve les choix Planner et les suggestions lors d'un changement de parametres sans
+  rapport avec eux. Applique les nouveaux parametres Planner aux deux formulaires.
+- Empeche les doubles creations et les lectures d'une fiche pendant son ecriture. A la
+  fermeture, laisse finir les operations engagees avant de liberer les connexions et le
+  verrou d'instance, sans rouvrir de dialogue de confirmation.
+
 ## 0.1.39
 
 - Inscrit en B9 la date de creation du dossier au format JJ.MM.AAAA, meme lorsque le

@@ -370,6 +370,9 @@ async def test_planner_detection_preserves_plan_and_bucket(qtbot, monkeypatch, r
     qtbot.addWidget(dialog)
 
     class PlannerClient:
+        async def aclose(self) -> None:
+            pass
+
         async def list_plans(self) -> list[PlannerPlan]:
             if result == "plan-error":
                 raise ConfigError("Plans indisponibles")
@@ -405,6 +408,9 @@ async def test_delayed_buckets_do_not_replace_selection_for_new_plan(qtbot, monk
     release = asyncio.Event()
 
     class PlannerClient:
+        async def aclose(self) -> None:
+            pass
+
         async def list_buckets(self, *, plan_id: str) -> list[PlannerBucket]:
             entered.set()
             await release.wait()
@@ -463,3 +469,172 @@ def test_excel_open_path_rejects_web_link(qtbot, monkeypatch) -> None:
     assert dialog.result() != QDialog.DialogCode.Accepted
     assert len(warnings) == 1
     assert "fichier synchronise" in warnings[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["plans", "buckets", "test"])
+@pytest.mark.parametrize("outcome", ["success", "error"])
+async def test_planner_buttons_prevent_duplicate_requests_and_restore_after_completion(
+    qtbot,
+    monkeypatch,
+    action: str,
+    outcome: str,
+) -> None:
+    config = _configured_settings()
+    expected = config.planner.model_dump()
+    dialog = SettingsDialog(config)
+    qtbot.addWidget(dialog)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    requests: list[str] = []
+    closed: list[object] = []
+    clients: list[object] = []
+    warnings: list[str] = []
+
+    class PlannerClient:
+        def __init__(self) -> None:
+            clients.append(self)
+
+        async def aclose(self) -> None:
+            closed.append(self)
+
+        async def request(self, operation: str) -> None:
+            requests.append(operation)
+            entered.set()
+            await release.wait()
+            if outcome == "error":
+                raise ConfigError("Erreur https://1drv.ms/x/private-sharing-key?e=secret")
+
+        async def list_plans(self) -> list[PlannerPlan]:
+            await self.request("plans")
+            return [PlannerPlan(id="saved-plan", title="Plan projets")]
+
+        async def list_buckets(self, *, plan_id: str) -> list[PlannerBucket]:
+            await self.request("buckets")
+            return [PlannerBucket(id="saved-bucket", name="En cours", plan_id=plan_id)]
+
+    monkeypatch.setattr("projectflow.ui.dialogs.settings._planner_client", PlannerClient)
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QMessageBox.warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.information", lambda *_args: None)
+    buttons = {
+        "plans": dialog.planner_refresh_button,
+        "buckets": dialog.planner_bucket_refresh_button,
+        "test": dialog.planner_test_button,
+    }
+    labels = {name: button.text() for name, button in buttons.items()}
+
+    buttons[action].click()
+    task = dialog._planner_task  # noqa: SLF001
+    assert task is not None
+    for button in buttons.values():
+        assert not button.isEnabled()
+        button.click()
+    assert buttons[action].text() == "Chargement..."
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    assert len(clients) == 1
+    assert len(requests) == 1
+    release.set()
+    await task
+
+    assert closed == clients
+    assert dialog._planner_task is None  # noqa: SLF001
+    for name, button in buttons.items():
+        assert button.isEnabled()
+        assert button.text() == labels[name]
+    assert requests == (
+        ["plans", "buckets"]
+        if action == "plans" and outcome == "success"
+        else ["plans" if action == "plans" else "buckets"]
+    )
+    assert len(warnings) == (1 if outcome == "error" else 0)
+    assert all(
+        "private-sharing-key" not in message and "secret" not in message for message in warnings
+    )
+    dialog.apply_to_config(config)
+    assert config.planner.model_dump() == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_at", ["request", "close"])
+async def test_unexpected_planner_failure_is_consumed_and_controls_restored(
+    qtbot,
+    monkeypatch,
+    failure_at: str,
+) -> None:
+    dialog = SettingsDialog(_configured_settings())
+    qtbot.addWidget(dialog)
+    closed: list[bool] = []
+    warnings: list[str] = []
+
+    class PlannerClient:
+        async def aclose(self) -> None:
+            closed.append(True)
+            if failure_at == "close":
+                raise RuntimeError("Fermeture https://1drv.ms/x/private-token")
+
+        async def list_plans(self) -> list[PlannerPlan]:
+            if failure_at == "request":
+                raise RuntimeError("Requete https://1drv.ms/x/private-token")
+            return [PlannerPlan(id="saved-plan", title="Plan projets")]
+
+        async def list_buckets(self, *, plan_id: str) -> list[PlannerBucket]:
+            return [PlannerBucket(id="saved-bucket", name="En cours", plan_id=plan_id)]
+
+    monkeypatch.setattr("projectflow.ui.dialogs.settings._planner_client", PlannerClient)
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QMessageBox.warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+    dialog.planner_refresh_button.click()
+    task = dialog._planner_task  # noqa: SLF001
+    assert task is not None
+
+    await task
+
+    assert closed == [True]
+    assert len(warnings) == 1
+    assert "private-token" not in warnings[0]
+    assert dialog.planner_refresh_button.isEnabled()
+    assert dialog.planner_bucket_refresh_button.isEnabled()
+    assert dialog.planner_test_button.isEnabled()
+    assert dialog.planner_refresh_button.text() == "Detecter"
+
+
+@pytest.mark.asyncio
+async def test_closing_settings_cancels_detection_and_closes_planner_client(
+    qtbot, monkeypatch
+) -> None:
+    dialog = SettingsDialog(_configured_settings())
+    qtbot.addWidget(dialog)
+    entered = asyncio.Event()
+    closed: list[bool] = []
+    warnings: list[str] = []
+
+    class PlannerClient:
+        async def aclose(self) -> None:
+            closed.append(True)
+
+        async def list_plans(self) -> list[PlannerPlan]:
+            entered.set()
+            await asyncio.Event().wait()
+            return []
+
+    monkeypatch.setattr("projectflow.ui.dialogs.settings._planner_client", PlannerClient)
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QMessageBox.warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+    dialog.planner_refresh_button.click()
+    task = dialog._planner_task  # noqa: SLF001
+    assert task is not None
+    await asyncio.wait_for(entered.wait(), timeout=2)
+
+    dialog.reject()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert closed == [True]
+    assert not warnings
