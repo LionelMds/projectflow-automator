@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import Callable, Sequence
-from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
@@ -218,10 +217,18 @@ class ProjectService:
         initials: str,
         new_fiche: bool = False,
     ) -> Path:
-        fiche_project = replace(project, gere_par=initials)
         if project.is_subproject:
-            return self._fiche_service.fill_subproject_fiche(project_dir, fiche_project)
-        return self._fiche_service.fill_fiche(project_dir, fiche_project, new_fiche=new_fiche)
+            return self._fiche_service.fill_subproject_fiche(
+                project_dir,
+                project,
+                user_initials=initials,
+            )
+        return self._fiche_service.fill_fiche(
+            project_dir,
+            project,
+            new_fiche=new_fiche,
+            user_initials=initials,
+        )
 
     async def delete_project(
         self,

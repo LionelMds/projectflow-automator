@@ -187,7 +187,7 @@ async def test_project_fiche_writes_keep_event_loop_responsive(
     heartbeat = Event()
     responsive: list[bool] = []
 
-    def slow_fill(project_dir: Path, project: ProjectInput, **kwargs: bool) -> Path:
+    def slow_fill(project_dir: Path, project: ProjectInput, **kwargs: bool | str) -> Path:
         loop.call_soon_threadsafe(heartbeat.set)
         responsive.append(heartbeat.wait(timeout=1))
         return original_fill(project_dir, project, **kwargs)
@@ -228,10 +228,21 @@ async def test_services_serialize_fiche_writes_even_when_first_operation_is_canc
     first_fiche = FicheService()
     original_fill = first_fiche.fill_fiche
 
-    def slow_fill(project_dir: Path, project: ProjectInput, *, new_fiche: bool = False) -> Path:
+    def slow_fill(
+        project_dir: Path,
+        project: ProjectInput,
+        *,
+        new_fiche: bool = False,
+        user_initials: str = "",
+    ) -> Path:
         loop.call_soon_threadsafe(started.set)
         assert release.wait(timeout=5)
-        path = original_fill(project_dir, project, new_fiche=new_fiche)
+        path = original_fill(
+            project_dir,
+            project,
+            new_fiche=new_fiche,
+            user_initials=user_initials,
+        )
         effects.append("first finished")
         return path
 
@@ -369,7 +380,7 @@ async def test_create_project_creates_folder_copies_reference_and_calls_integrat
     ["create", "recreate", "update", "create_subproject", "update_subproject"],
 )
 @pytest.mark.asyncio
-async def test_project_writes_configured_initials_and_reserves_e2_for_output(
+async def test_project_writes_manager_and_user_initials_independently_and_reserves_e2(
     tmp_path: Path,
     operation: str,
 ) -> None:
@@ -382,6 +393,7 @@ async def test_project_writes_configured_initials_and_reserves_e2_for_output(
     number = "2026-4995-2" if operation.endswith("subproject") else "2026-4995"
     workbook = Workbook()
     workbook.active["E2"] = "fiche d'atelier le 01.02.2020"
+    workbook.active["C6"] = "Previous manager"
     workbook.active["C9"] = "OLD"
     workbook.save(config.paths.dossier_reference / "modele fiche.xlsx")
     if operation != "create":
@@ -396,7 +408,7 @@ async def test_project_writes_configured_initials_and_reserves_e2_for_output(
         fiche_service=FicheService(today=lambda: date(2026, 7, 15)),
         repertoire_service=repertoire,  # type: ignore[arg-type]
     )
-    project = ProjectInput(number=parse_project_number(number), gere_par="OTHER")
+    project = ProjectInput(number=parse_project_number(number), gere_par="Claire Martin")
 
     result = (
         await service.update_project(project)
@@ -406,6 +418,7 @@ async def test_project_writes_configured_initials_and_reserves_e2_for_output(
 
     assert result.fiche_path is not None
     workbook = load_workbook(result.fiche_path)
+    assert workbook.active["C6"].value == "Claire Martin"
     assert workbook.active["C9"].value == "LM"
     expected_e2 = (
         "fiche d'atelier le"
@@ -416,7 +429,7 @@ async def test_project_writes_configured_initials_and_reserves_e2_for_output(
     assert workbook.active["B9"].value.date() == date(2026, 7, 15)
     workbook.close()
     assert repertoire.calls[0][0] == project
-    assert project.gere_par == "OTHER"
+    assert project.gere_par == "Claire Martin"
 
 
 @pytest.mark.parametrize("number", ["2026-4995", "2026-4995-2"])
@@ -431,6 +444,7 @@ async def test_update_project_preserves_existing_initials_when_settings_are_empt
     project_dir.mkdir(parents=True)
     fiche_path = project_dir / f"{number} - Fiche dossier clients.xlsx"
     workbook = Workbook()
+    workbook.active["C6"] = "Previous manager"
     workbook.active["C9"] = "OLD"
     workbook.save(fiche_path)
     workbook.close()
@@ -441,10 +455,11 @@ async def test_update_project_preserves_existing_initials_when_settings_are_empt
     )
 
     await service.update_project(
-        ProjectInput(number=parse_project_number(number), gere_par="OTHER"),
+        ProjectInput(number=parse_project_number(number), gere_par="Claire Martin"),
     )
 
     workbook = load_workbook(fiche_path)
+    assert workbook.active["C6"].value == "Claire Martin"
     assert workbook.active["C9"].value == "OLD"
     workbook.close()
 

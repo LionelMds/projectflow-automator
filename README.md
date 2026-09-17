@@ -15,6 +15,9 @@ lien utilise pour l'ecriture cloud. Les parametres memorisent les initiales util
 la boite mail, le plan et la colonne Planner. Voir le [guide des parametres et de l'ouverture
 Excel](docs/repertoire-opening.md), qui explique aussi les droits des liens de partage.
 
+Le responsable saisi dans **Gere par** est inscrit en **C6**. Les **Initiales utilisateur**,
+definies dans les parametres et affichees a cote, sont inscrites separement en **C9**.
+
 ## Developpement
 
 ```powershell

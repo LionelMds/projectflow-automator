@@ -182,11 +182,16 @@ async def test_controller_create_project_reads_form(
         config=_config,
         services=services,  # type: ignore[arg-type]
     )
+    _config.user.initials = "LM"
+    window.apply_config_labels()
+    window.creation_tab.gere_par_edit.setText("Alice Martin")
 
     await controller.create_project()
 
     assert str(services.project_service.created[0][0].number) == "2026-4995"
     assert services.project_service.created[0][0].designation == "Escalier"
+    assert services.project_service.created[0][0].gere_par == "Alice Martin"
+    assert window.creation_tab.user_initials_edit.text() == "LM"
     assert services.project_service.created[0][1:] == (False, True)
     assert "Projet cree" in window.creation_tab.logs.toPlainText()
     assert project_creation_post_actions["opened"] == [Path("C:/tmp/2026-4995")]
@@ -378,7 +383,8 @@ async def test_controller_repertoire_sync_updates_full_project(
     worksheet["D4"] = "Contact : Ancien contact"
     worksheet["D5"] = "Projet : Ancienne designation"
     worksheet["D6"] = "Localisation : Geneve"
-    worksheet["C6"] = "LM"
+    worksheet["C6"] = "Alice Martin"
+    worksheet["C9"] = "LM"
     workbook.save(fiche_path)
     workbook.close()
     controller = ProjectFlowController(
@@ -416,7 +422,7 @@ async def test_controller_repertoire_sync_updates_full_project(
     assert project.societe == "Nouveau client"
     assert project.contact == "Nouveau contact"
     assert project.localisation == "Geneve"
-    assert project.gere_par == "LM"
+    assert project.gere_par == "Alice Martin"
     assert project.planner.enabled is False
 
 
@@ -590,6 +596,7 @@ def test_controller_reuses_existing_quick_dialog(
 
 def test_controller_load_project_reads_existing_fiche(qtbot: Any, tmp_path: Path) -> None:
     window, config, services = _window(qtbot, tmp_path)
+    config.user.initials = "AB"
     project_dir = config.paths.racine_projets / "2026" / "2026-4995"
     project_dir.mkdir(parents=True)
     workbook = Workbook()
@@ -597,7 +604,10 @@ def test_controller_load_project_reads_existing_fiche(qtbot: Any, tmp_path: Path
     worksheet["C3"] = "2026-4995"
     worksheet["D3"] = "Societe : Balz"
     worksheet["D5"] = "Projet : Escalier charge"
+    worksheet["C6"] = "Alice Martin"
+    worksheet["C9"] = "LM"
     workbook.save(project_dir / "2026-4995 - Fiche dossier clients.xlsx")
+    workbook.close()
     controller = ProjectFlowController(
         window=window,
         config=config,
@@ -608,6 +618,8 @@ def test_controller_load_project_reads_existing_fiche(qtbot: Any, tmp_path: Path
 
     assert window.creation_tab.societe_edit.text() == "Balz"
     assert window.creation_tab.designation_edit.text() == "Escalier charge"
+    assert window.creation_tab.gere_par_edit.text() == "Alice Martin"
+    assert window.creation_tab.user_initials_edit.text() == "AB"
 
 
 def test_controller_load_project_reads_fiche_from_numbered_subfolder(
@@ -970,15 +982,21 @@ def test_configured_initials_survive_form_reset_and_quick_dialog(
     config.user.initials = " ab "
     window.apply_config_labels()
     tab = window.creation_tab
+    tab.gere_par_edit.setText("Alice Martin")
     tab.reset_form_fields()
-    assert tab.gere_par_edit.isReadOnly()
-    assert tab.data().gere_par == "AB"
+    assert not tab.gere_par_edit.isReadOnly()
+    assert tab.data().gere_par == ""
+    assert tab.user_initials_edit.isReadOnly()
+    assert tab.user_initials_edit.text() == "AB"
     dialog = QuickCreateDialog(parent=window)
     qtbot.addWidget(dialog)
     dialog.set_user_initials(config.user.initials)
     data = replace(tab.data(), gere_par="OTHER")
     dialog.set_data(data)
-    assert dialog.data().gere_par == "AB"
+    assert dialog.data().gere_par == "OTHER"
+    assert not dialog.gere_par_edit.isReadOnly()
+    assert dialog.user_initials_edit.isReadOnly()
+    assert dialog.user_initials_edit.text() == "AB"
 
 
 def test_controller_open_repertoire_reports_missing_path(

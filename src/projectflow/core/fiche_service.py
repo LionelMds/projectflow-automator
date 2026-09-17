@@ -35,6 +35,7 @@ class FicheData:
     designation: str = ""
     localisation: str = ""
     gere_par: str = ""
+    user_initials: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +100,7 @@ class FicheService:
         project: ProjectInput,
         *,
         new_fiche: bool = False,
+        user_initials: str = "",
     ) -> Path:
         fiche_path = self.standardize_fiche_name(project_dir, project.number)
 
@@ -111,7 +113,9 @@ class FicheService:
             _write_prefixed(worksheet, "D5", "Projet", project.designation)
             _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
             if project.gere_par.strip():
-                worksheet["C9"] = project.gere_par.strip()
+                worksheet["C6"] = project.gere_par.strip()
+            if user_initials.strip():
+                worksheet["C9"] = user_initials.strip()
             self._write_creation_date(worksheet, overwrite=new_fiche)
             if new_fiche:
                 _clear_inherited_atelier_date(worksheet)
@@ -131,9 +135,15 @@ class FicheService:
             workbook.close()
         return fiche_path
 
-    def fill_subproject_fiche(self, project_dir: Path, project: ProjectInput) -> Path:
+    def fill_subproject_fiche(
+        self,
+        project_dir: Path,
+        project: ProjectInput,
+        *,
+        user_initials: str = "",
+    ) -> Path:
         if not project.number.is_subproject:
-            return self.fill_fiche(project_dir, project)
+            return self.fill_fiche(project_dir, project, user_initials=user_initials)
 
         target_path = _preferred_standard_fiche_path(project_dir, project.number)
         fiche_created = not target_path.exists()
@@ -156,7 +166,9 @@ class FicheService:
             _write_prefixed(worksheet, "D5", "Projet", project.designation)
             _write_prefixed(worksheet, "D6", "Localisation", project.localisation)
             if project.gere_par.strip():
-                worksheet["C9"] = project.gere_par.strip()
+                worksheet["C6"] = project.gere_par.strip()
+            if user_initials.strip():
+                worksheet["C9"] = user_initials.strip()
             self._write_creation_date(worksheet, overwrite=fiche_created)
             if fiche_created:
                 _clear_inherited_atelier_date(worksheet)
@@ -175,7 +187,8 @@ class FicheService:
                 contact=_strip_prefix(_cell_text(worksheet["D4"].value)),
                 designation=_strip_prefix(_cell_text(worksheet["D5"].value)),
                 localisation=_strip_prefix(_cell_text(worksheet["D6"].value)),
-                gere_par=_cell_text(worksheet["C9"].value) or _cell_text(worksheet["C6"].value),
+                gere_par=_cell_text(worksheet["C6"].value),
+                user_initials=_cell_text(worksheet["C9"].value),
             )
         finally:
             workbook.close()

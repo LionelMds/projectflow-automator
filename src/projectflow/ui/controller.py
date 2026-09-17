@@ -978,6 +978,7 @@ class ProjectFlowController:
         self._window.creation_tab.societe_edit.setText(data.societe)
         self._window.creation_tab.contact_edit.setText(data.contact)
         self._window.creation_tab.localisation_edit.setText(data.localisation)
+        self._window.creation_tab.gere_par_edit.setText(data.gere_par)
         self._window.creation_tab.set_user_initials(self._config.user.initials)
         if data.number and data.number != str(number):
             self._log(f"! C3 contient {data.number}, attendu {number}")
@@ -1209,7 +1210,7 @@ class ProjectFlowController:
             societe="",
             contact="",
             localisation="",
-            gere_par=self._config.user.initials,
+            gere_par="",
         )
 
     def _number_from_form(self) -> str:

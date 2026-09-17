@@ -8,6 +8,12 @@
 - La fiche contient `fiche d'atelier le JJ.MM.AAAA` dans `E2` et `B9` reste intacte.
 - Le repertoire chantier local ouvert dans Excel accepte une mise a jour apres sauvegarde.
 - La colonne F du repertoire n'est pas modifiee par le champ `Gere par`.
+- Saisir `Alice Martin` dans `Gere par` et `LM` dans les initiales utilisateur : creation,
+  mise a jour et sous-projet inscrivent respectivement `Alice Martin` en C6 et `LM` en C9.
+- `Charger` relit le responsable depuis C6. Modifier les initiales dans les parametres ne
+  remplace pas le responsable saisi dans le formulaire principal ou la creation rapide.
+- `Reinitialiser` vide `Gere par` et conserve les initiales utilisateur. La sortie dossier
+  conserve les deux valeurs C6/C9 dans la source et dans la copie.
 - `Suivant disponible` ignore les lignes dont une cellule B, C, D ou E est deja remplie.
 - `Charger` lit une fiche existante sans renommer ni creer une fiche standard vierge.
 - `Charger` retrouve aussi une fiche rangee dans un sous-dossier numerote du projet ou du

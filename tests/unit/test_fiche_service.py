@@ -23,10 +23,14 @@ def test_fill_fiche_prefers_fiche_candidate_and_renames_to_standard(tmp_path: Pa
         societe="Balz",
         contact="Lionel",
         localisation="Zurich",
-        gere_par="LM",
+        gere_par="Claire Martin",
     )
 
-    fiche_path = FicheService(today=lambda: date(2026, 5, 6)).fill_fiche(project_dir, project)
+    fiche_path = FicheService(today=lambda: date(2026, 5, 6)).fill_fiche(
+        project_dir,
+        project,
+        user_initials=" LM ",
+    )
 
     assert fiche_path == standard_fiche_path(project_dir, project.number)
     loaded = FicheService().read_fiche(fiche_path)
@@ -35,10 +39,12 @@ def test_fill_fiche_prefers_fiche_candidate_and_renames_to_standard(tmp_path: Pa
     assert loaded.contact == "Lionel"
     assert loaded.designation == "Escalier"
     assert loaded.localisation == "Zurich"
-    assert loaded.gere_par == "LM"
+    assert loaded.gere_par == "Claire Martin"
+    assert loaded.user_initials == "LM"
     workbook = load_workbook(fiche_path)
     assert workbook.active["B9"].value.date() == date(2026, 5, 6)
     assert workbook.active["B9"].number_format == "DD.MM.YYYY"
+    assert workbook.active["C6"].value == "Claire Martin"
     assert workbook.active["C9"].value == "LM"
     assert workbook.active["E2"].value is None
     workbook.close()
@@ -166,6 +172,7 @@ def test_read_fiche_strips_prefixes_case_insensitively(tmp_path: Path) -> None:
     worksheet["D4"] = "CONTACT : Lionel"
     worksheet["D5"] = "Projet : Escalier"
     worksheet["D6"] = "Localisation : Zurich"
+    worksheet["C6"] = "Claire Martin"
     worksheet["C9"] = "LM"
     workbook.save(path)
     workbook.close()
@@ -174,19 +181,26 @@ def test_read_fiche_strips_prefixes_case_insensitively(tmp_path: Path) -> None:
 
     assert loaded.societe == "Balz"
     assert loaded.contact == "Lionel"
-    assert loaded.gere_par == "LM"
+    assert loaded.gere_par == "Claire Martin"
+    assert loaded.user_initials == "LM"
 
 
-def test_read_fiche_supports_legacy_gere_par_cell(tmp_path: Path) -> None:
+@pytest.mark.parametrize("manager", ["Claire Martin", None])
+def test_read_fiche_never_uses_user_initials_as_project_manager(
+    tmp_path: Path,
+    manager: str | None,
+) -> None:
     path = tmp_path / "fiche.xlsx"
     workbook = Workbook()
-    workbook.active["C6"] = "LM"
+    workbook.active["C6"] = manager
+    workbook.active["C9"] = "LM"
     workbook.save(path)
     workbook.close()
 
     loaded = FicheService().read_fiche(path)
 
-    assert loaded.gere_par == "LM"
+    assert loaded.gere_par == (manager or "")
+    assert loaded.user_initials == "LM"
 
 
 def test_standardize_fiche_name_renames_selected_file(tmp_path: Path) -> None:
@@ -218,12 +232,13 @@ def test_fill_subproject_updates_existing_nested_fiche(tmp_path: Path) -> None:
     project = ProjectInput(
         number=parse_project_number("2026-5093-2"),
         designation="Sous-projet charge",
-        gere_par="AB",
+        gere_par="Alex Bernard",
     )
 
     updated_path = FicheService(today=lambda: date(2026, 5, 6)).fill_subproject_fiche(
         project_dir,
         project,
+        user_initials="AB",
     )
 
     assert updated_path == fiche_path
@@ -231,10 +246,54 @@ def test_fill_subproject_updates_existing_nested_fiche(tmp_path: Path) -> None:
     loaded = FicheService().read_fiche(fiche_path)
     assert loaded.number == "2026-5093-2"
     assert loaded.designation == "Sous-projet charge"
+    assert loaded.gere_par == "Alex Bernard"
+    assert loaded.user_initials == "AB"
     workbook = load_workbook(fiche_path)
     assert workbook.active["B9"].value.date() == date(2026, 5, 6)
+    assert workbook.active["C6"].value == "Alex Bernard"
     assert workbook.active["C9"].value == "AB"
     assert workbook.active["E2"].value is None
+    workbook.close()
+
+
+@pytest.mark.parametrize("number", ["2026-4995", "2026-4995-2"])
+@pytest.mark.parametrize(
+    ("manager", "initials", "expected_manager", "expected_initials"),
+    [
+        ("", "LM", "Previous manager", "LM"),
+        ("Claire Martin", "", "Claire Martin", "OLD"),
+        ("  ", "  ", "Previous manager", "OLD"),
+    ],
+)
+def test_fiche_preserves_each_identity_cell_when_its_input_is_empty(
+    tmp_path: Path,
+    *,
+    number: str,
+    manager: str,
+    initials: str,
+    expected_manager: str,
+    expected_initials: str,
+) -> None:
+    path = tmp_path / f"{number} - Fiche dossier clients.xlsx"
+    workbook = Workbook()
+    workbook.active["C6"] = "Previous manager"
+    workbook.active["C9"] = "OLD"
+    workbook.active["B9"] = date(2020, 2, 1)
+    workbook.active["E2"] = "fiche d'atelier le 03.04.2021"
+    workbook.save(path)
+    workbook.close()
+
+    FicheService().fill_subproject_fiche(
+        tmp_path,
+        ProjectInput(number=parse_project_number(number), gere_par=manager),
+        user_initials=initials,
+    )
+
+    workbook = load_workbook(path)
+    assert workbook.active["C6"].value == expected_manager
+    assert workbook.active["C9"].value == expected_initials
+    assert workbook.active["B9"].value.date() == date(2020, 2, 1)
+    assert workbook.active["E2"].value == "fiche d'atelier le 03.04.2021"
     workbook.close()
 
 

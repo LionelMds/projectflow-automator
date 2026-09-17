@@ -239,7 +239,8 @@ def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # ty
     tab.societe_edit.setText("Balz")
     tab.contact_edit.setText("Lionel")
     tab.localisation_edit.setText("Zurich")
-    tab.gere_par_edit.setText("LM")
+    tab.gere_par_edit.setText("Lionel Martin")
+    tab.set_user_initials("AB")
     tab.append_log("+ Log conserve")
 
     tab.reset_button.click()
@@ -252,12 +253,14 @@ def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # ty
     assert tab.contact_edit.text() == ""
     assert tab.localisation_edit.text() == ""
     assert tab.gere_par_edit.text() == ""
+    assert tab.user_initials_edit.text() == "AB"
     assert "+ Log conserve" in tab.logs.toPlainText()
 
 
 def test_creation_tab_can_apply_quick_form_data(qtbot) -> None:  # type: ignore[no-untyped-def]
     tab = CreationTab()
     qtbot.addWidget(tab)
+    tab.set_user_initials("AB")
 
     tab.set_form_data(
         CreationFormData(
@@ -268,7 +271,7 @@ def test_creation_tab_can_apply_quick_form_data(qtbot) -> None:  # type: ignore[
             societe="Balz",
             contact="Lionel",
             localisation="Geneve",
-            gere_par="LM",
+            gere_par="Lionel Martin",
         ),
     )
 
@@ -279,7 +282,11 @@ def test_creation_tab_can_apply_quick_form_data(qtbot) -> None:  # type: ignore[
     assert tab.societe_edit.text() == "Balz"
     assert tab.contact_edit.text() == "Lionel"
     assert tab.localisation_edit.text() == "Geneve"
-    assert tab.gere_par_edit.text() == "LM"
+    assert tab.gere_par_edit.text() == "Lionel Martin"
+    assert tab.data().gere_par == "Lionel Martin"
+    assert not tab.gere_par_edit.isReadOnly()
+    assert tab.user_initials_edit.isReadOnly()
+    assert tab.user_initials_edit.text() == "AB"
 
 
 def test_creation_tab_round_trips_planner_options(qtbot) -> None:  # type: ignore[no-untyped-def]
@@ -319,6 +326,7 @@ def test_creation_tab_round_trips_planner_options(qtbot) -> None:  # type: ignor
 def test_quick_create_dialog_round_trips_form_data(qtbot) -> None:  # type: ignore[no-untyped-def]
     dialog = QuickCreateDialog()
     qtbot.addWidget(dialog)
+    dialog.set_user_initials("LM")
 
     dialog.set_data(
         CreationFormData(
@@ -343,6 +351,37 @@ def test_quick_create_dialog_round_trips_form_data(qtbot) -> None:  # type: igno
         localisation="Lausanne",
         gere_par="AB",
     )
+    assert not dialog.gere_par_edit.isReadOnly()
+    assert dialog.user_initials_edit.isReadOnly()
+    assert dialog.user_initials_edit.text() == "LM"
+
+
+def test_responsible_round_trips_between_forms_independently_of_user_initials(qtbot) -> None:
+    tab = CreationTab()
+    dialog = QuickCreateDialog()
+    qtbot.addWidget(tab)
+    qtbot.addWidget(dialog)
+    tab.set_project_identity(year="2026", project_id="4995")
+    tab.gere_par_edit.setText("Responsable du chantier")
+    tab.set_user_initials("AB")
+    dialog.set_user_initials("AB")
+
+    dialog.set_data(tab.data())
+    dialog.gere_par_edit.setText("Autre responsable")
+    dialog.set_user_initials("CD")
+    tab.set_user_initials("CD")
+    tab.set_form_data(dialog.data())
+
+    assert tab.data().gere_par == "Autre responsable"
+    assert dialog.data().gere_par == "Autre responsable"
+    assert tab.user_initials_edit.text() == "CD"
+    assert dialog.user_initials_edit.text() == "CD"
+    tab.reset_form_fields()
+    dialog.set_data(tab.data())
+    assert tab.data().gere_par == ""
+    assert dialog.data().gere_par == ""
+    assert tab.user_initials_edit.text() == "CD"
+    assert dialog.user_initials_edit.text() == "CD"
 
 
 def test_quick_create_dialog_round_trips_planner_options(qtbot) -> None:  # type: ignore[no-untyped-def]

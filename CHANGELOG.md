@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.41
+
+- Retablit le champ modifiable `Gere par` dans le formulaire principal et la creation rapide,
+  a cote des initiales utilisateur. Le responsable est ecrit et relu en C6 ; les initiales
+  des parametres restent en C9, pour les projets comme pour les sous-projets.
+- Conserve le responsable saisi lors d'un changement d'initiales, et les initiales utilisateur
+  lors de la reinitialisation du formulaire. Les dates B9/E2 gardent leur fonctionnement.
+
 ## 0.1.40
 
 - Execute les copies de dossiers et les operations sur les fiches Excel en arriere-plan

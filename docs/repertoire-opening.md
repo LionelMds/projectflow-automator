@@ -30,6 +30,10 @@ sont enregistrées en majuscules et utilisées dans **C9** lors de la création 
 jour des fiches et sous-projets. Le formulaire affiche les initiales des paramètres.
 Si elles sont vides, une valeur C9 déjà présente est conservée.
 
+Le champ **Géré par** est indépendant : saisir le responsable du dossier dans le formulaire
+principal ou la création rapide. Il est inscrit en **C6** et relu depuis cette cellule lors
+du chargement d'une fiche. Modifier les initiales utilisateur ne change pas ce responsable.
+
 La boîte mail, le plan Planner et sa colonne sont sélectionnés à la réouverture des
 paramètres. Une détection ne les efface plus si la liste est vide ou indisponible.
 Changer volontairement de plan remet la colonne à choisir pour ce nouveau plan.

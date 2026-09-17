@@ -430,6 +430,8 @@ def test_settings_preserve_unrelated_state_and_apply_changed_planner_to_both_for
     quick.set_data(window.creation_tab.data())
     controller._quick_dialog = quick  # noqa: SLF001
     buckets = [PlannerBucketOption(id="chosen-bucket", name="Choix formulaire")]
+    window.creation_tab.gere_par_edit.setText("Alice Martin")
+    quick.gere_par_edit.setText("Bob Dupont")
     members = [PlannerMemberOption(id="chosen-member", label="Alice")]
     chosen = PlannerTaskFormData(
         enabled=True,
@@ -475,8 +477,10 @@ def test_settings_preserve_unrelated_state_and_apply_changed_planner_to_both_for
     assert config.paths.repertoire_chantier.open_path == native_path_text(
         "C:/Synthetic/Repertoire.xlsx",
     )
-    assert window.creation_tab.gere_par_edit.text() == "CD"
-    assert quick.gere_par_edit.text() == "CD"
+    assert window.creation_tab.user_initials_edit.text() == "CD"
+    assert quick.user_initials_edit.text() == "CD"
+    assert window.creation_tab.gere_par_edit.text() == "Alice Martin"
+    assert quick.gere_par_edit.text() == "Bob Dupont"
     assert services.repertoire_service is backend
     assert controller._client_directories[2026] is directory  # noqa: SLF001
     assert _company_suggestions(window) == ["Societe gardee"]

@@ -62,8 +62,7 @@ class QuickCreateDialog(QDialog):
         self.societe_edit.setText(data.societe)
         self.contact_edit.setText(data.contact)
         self.localisation_edit.setText(data.localisation)
-        if not self.gere_par_edit.isReadOnly():
-            self.gere_par_edit.setText(data.gere_par)
+        self.gere_par_edit.setText(data.gere_par)
         self.planner_widget.set_data(data.planner)
 
     def set_project_identity(
@@ -83,9 +82,7 @@ class QuickCreateDialog(QDialog):
         self.subproject_edit.setText(subproject_id)
 
     def set_user_initials(self, initials: str) -> None:
-        self.gere_par_edit.setReadOnly(True)
-        self.gere_par_edit.setText(initials)
-        self.gere_par_edit.setPlaceholderText("A renseigner dans les parametres")
+        self.user_initials_edit.setText(initials)
 
     def apply_planner_config(
         self,
@@ -161,11 +158,25 @@ class QuickCreateDialog(QDialog):
         )
         self.localisation_edit = QLineEdit()
         self.gere_par_edit = QLineEdit()
+        self.user_initials_edit = QLineEdit()
+        self.user_initials_edit.setReadOnly(True)
+        self.user_initials_edit.setPlaceholderText("Parametres")
+        self.user_initials_edit.setToolTip(
+            "Initiales de l'utilisateur definies dans les parametres."
+        )
+        self.user_initials_edit.setFixedWidth(
+            self.user_initials_edit.fontMetrics().horizontalAdvance("MMMMMM") + 24,
+        )
         form.addRow("Designation", self.designation_edit)
         form.addRow("Societe", self.societe_edit)
         form.addRow("Contact", self.contact_edit)
         form.addRow("Localisation", self.localisation_edit)
-        form.addRow("Initiales utilisateur", self.gere_par_edit)
+        responsibility = QHBoxLayout()
+        responsibility.setSpacing(8)
+        responsibility.addWidget(self.gere_par_edit, 1)
+        responsibility.addWidget(QLabel("Initiales utilisateur"))
+        responsibility.addWidget(self.user_initials_edit)
+        form.addRow("Géré par", _wrap_layout(responsibility))
         layout.addLayout(form)
 
         self.planner_widget = PlannerSelectionWidget()
