@@ -14,7 +14,11 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
-from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
+from projectflow.auth.msal_client import (
+    PLANNER_GRAPH_SCOPES,
+    MsalAccessTokenProvider,
+    sign_out_microsoft,
+)
 from projectflow.config import AppConfig, RepertoireChantierConfig
 from projectflow.core.background_io import run_file_io
 from projectflow.core.client_directory import ClientDirectory
@@ -1092,11 +1096,14 @@ class ProjectFlowController:
             self._config.planner.enabled,
             self._config.planner.target_plan_id,
         )
-        if repertoire_changed:
+        microsoft_sign_in = dialog.microsoft_sign_in_requested
+        if microsoft_sign_in:
+            self._sign_out_microsoft()
+        if repertoire_changed or microsoft_sign_in:
             if isinstance(self._services, ServiceContainer):
                 self._services.reset_repertoire()
             self._invalidate_repertoire_data()
-        if planner_changed:
+        if planner_changed or microsoft_sign_in:
             if isinstance(self._services, ServiceContainer):
                 self._services.reset_planner()
             self._planner_generation += 1
@@ -1107,6 +1114,13 @@ class ProjectFlowController:
         self._apply_quick_config(planner_changed=previous_planner != self._config.planner)
         self._save_config_if_available()
         self._log("+ Parametres enregistres")
+        self._log_integration_settings()
+        if microsoft_sign_in:
+            self._log("+ Connexion Microsoft reinitialisee: connectez-vous dans le navigateur.")
+            self._window.tabs.setCurrentWidget(self._window.repertoire_tab)
+            self._schedule_task(self.load_repertoire())
+
+    def _log_integration_settings(self) -> None:
         if self._config.outlook.enabled:
             target = self._config.outlook.target_mailbox or "compte Outlook selectionne"
             self._log(f"+ Outlook active: {target}")
@@ -1118,6 +1132,12 @@ class ProjectFlowController:
             self._log(f"+ Planner active: {plan} / {bucket}")
         else:
             self._log("-> Planner desactive")
+
+    def _sign_out_microsoft(self) -> None:
+        try:
+            sign_out_microsoft()
+        except OSError as exc:
+            self._error(f"Impossible d'effacer la connexion Microsoft: {exc}")
 
     def _apply_quick_config(self, *, planner_changed: bool) -> None:
         if self._quick_dialog is None:

@@ -503,3 +503,36 @@ def test_settings_preserve_unrelated_state_and_apply_changed_planner_to_both_for
         assert controller._planner_cache_plan == "saved-plan"  # noqa: SLF001
         assert controller._planner_bucket_options == buckets  # noqa: SLF001
         assert controller._planner_member_options == members  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_microsoft_sign_in_forgets_account_and_reconnects_services(
+    qtbot,
+    monkeypatch,
+) -> None:
+    config = AppConfig()
+    window = MainWindow(config)
+    qtbot.addWidget(window)
+    services = ServiceContainer(config, repertoire_service=ControlledRepertoire())  # type: ignore[arg-type]
+    services.planner_service = object()  # type: ignore[assignment]
+    controller = ProjectFlowController(window=window, config=config, services=services)
+    signed_out: list[bool] = []
+    monkeypatch.setattr(
+        "projectflow.ui.controller.sign_out_microsoft",
+        lambda: signed_out.append(True),
+    )
+
+    class AcceptedSettings(SettingsDialog):
+        def exec(self) -> int:
+            self.microsoft_sign_in_button.click()
+            return self.DialogCode.Accepted
+
+    monkeypatch.setattr("projectflow.ui.controller.SettingsDialog", AcceptedSettings)
+
+    controller.open_settings()
+
+    assert signed_out == [True]
+    assert services.repertoire_service is None
+    assert services.planner_service is None
+    assert window.tabs.currentWidget() is window.repertoire_tab
+    await controller.aclose()

@@ -100,6 +100,11 @@ Si la selection des membres affiche uniquement des identifiants techniques ou re
 les noms, l'administrateur Microsoft doit autoriser `User.ReadBasic.All` pour ProjectFlow, puis
 l'utilisateur doit se reconnecter a Microsoft depuis l'application.
 
+Si le repertoire ne charge plus ou si Microsoft refuse la connexion, ouvrir `Parametres`,
+cliquer sur `Se reconnecter au compte Microsoft` puis `OK`. La connexion enregistree sur le
+poste est effacee et le navigateur s'ouvre pour choisir le compte. Pour aussi retrouver le
+classeur partage, cliquer egalement sur `Reconnecter a OneDrive / SharePoint` avant `OK`.
+
 ## Creer un projet
 
 1. Saisir l'annee et l'ID projet, par exemple `2026` et `4995`.

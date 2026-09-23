@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 
 from projectflow.auth import msal_client
-from projectflow.auth.msal_client import GRAPH_SCOPES, PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
+from projectflow.auth.msal_client import (
+    GRAPH_SCOPES,
+    INTERACTIVE_TIMEOUT_SECONDS,
+    PLANNER_GRAPH_SCOPES,
+    MsalAccessTokenProvider,
+    sign_out_microsoft,
+)
 from projectflow.exceptions import AuthError
 
 
@@ -47,7 +53,7 @@ def test_msal_provider_reuses_in_memory_token_and_saves_cache(
     assert fake_module.app.interactive_scopes == [
         ["Files.ReadWrite.All"],
     ]
-    assert fake_module.app.interactive_timeouts == [None]
+    assert fake_module.app.interactive_timeouts == [INTERACTIVE_TIMEOUT_SECONDS]
 
 
 def test_msal_provider_passes_list_scopes_to_silent_flow(
@@ -80,15 +86,81 @@ def test_msal_provider_wraps_msal_parameter_errors(
         provider._access_token_sync()  # noqa: SLF001
 
 
+def test_msal_provider_refreshes_token_before_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [0.0]
+    fake_module = FakeMsalModule(accounts=[object()], silent_token="silent-token")
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+        clock=lambda: now[0],
+    )
+
+    provider._access_token_sync()  # noqa: SLF001
+    now[0] = 3000.0  # Still valid: one hour minus the refresh margin.
+    provider._access_token_sync()  # noqa: SLF001
+    assert len(fake_module.app.silent_scopes) == 1
+
+    now[0] = 3400.0
+    provider._access_token_sync()  # noqa: SLF001
+    assert len(fake_module.app.silent_scopes) == 2
+    assert fake_module.applications_created == 1
+
+
+def test_msal_provider_invalidated_token_is_refreshed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_module = FakeMsalModule(accounts=[object()], silent_token="silent-token")
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+    )
+
+    provider._access_token_sync()  # noqa: SLF001
+    provider.invalidate_token()
+    provider._access_token_sync()  # noqa: SLF001
+
+    assert len(fake_module.app.silent_scopes) == 2
+
+
+def test_msal_provider_reports_abandoned_sign_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_module = FakeMsalModule(interactive_result={})
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(AuthError, match="Se reconnecter au compte Microsoft"):
+        provider._access_token_sync()  # noqa: SLF001
+
+
+def test_sign_out_clears_stored_account() -> None:
+    storage = FakeStorage()
+
+    sign_out_microsoft(storage)  # type: ignore[arg-type]
+
+    assert storage.cleared == 1
+
+
 class FakeStorage:
     def __init__(self) -> None:
         self.saved: list[str] = []
+        self.cleared = 0
 
     def load(self) -> str:
         return ""
 
     def save(self, value: str) -> None:
         self.saved.append(value)
+
+    def clear(self) -> None:
+        self.cleared += 1
 
 
 class FakeCache:
@@ -108,8 +180,10 @@ class FakePublicClientApplication:
         accounts: list[object] | None = None,
         silent_token: str = "",
         assert_on_silent: bool = False,
+        interactive_result: object | None = None,
     ) -> None:
         self._accounts = accounts or []
+        self._interactive_result = interactive_result
         self._silent_token = silent_token
         self._assert_on_silent = assert_on_silent
         self.interactive_calls = 0
@@ -134,6 +208,8 @@ class FakePublicClientApplication:
         self.interactive_scopes.append(scopes)
         self.interactive_timeouts.append(kwargs.get("timeout"))
         self.interactive_calls += 1
+        if self._interactive_result is not None:
+            return self._interactive_result
         return {"access_token": "token"}
 
 
@@ -144,11 +220,14 @@ class FakeMsalModule:
         accounts: list[object] | None = None,
         silent_token: str = "",
         assert_on_silent: bool = False,
+        interactive_result: object | None = None,
     ) -> None:
+        self.applications_created = 0
         self.app = FakePublicClientApplication(
             accounts=accounts,
             silent_token=silent_token,
             assert_on_silent=assert_on_silent,
+            interactive_result=interactive_result,
         )
 
     def SerializableTokenCache(self) -> FakeCache:  # noqa: N802
@@ -159,4 +238,5 @@ class FakeMsalModule:
         *_args: object,
         **_kwargs: object,
     ) -> FakePublicClientApplication:
+        self.applications_created += 1
         return self.app

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.1.42
+
+- Renouvelle automatiquement la connexion Microsoft avant son expiration (environ une heure)
+  et refait une seule fois une requete refusee pour jeton expire. Le repertoire SharePoint
+  ne decroche plus apres une longue utilisation de l'application.
+- Limite la connexion Microsoft dans le navigateur a trois minutes : une fenetre de
+  connexion abandonnee ne bloque plus le chargement du repertoire. Les operations
+  simultanees partagent un seul renouvellement de connexion.
+- Ajoute dans les parametres le bouton `Se reconnecter au compte Microsoft` : il efface la
+  connexion enregistree sur le poste, recree les connexions au repertoire et a Planner,
+  puis ouvre le navigateur pour choisir le compte.
+
 ## 0.1.41
 
 - Retablit le champ modifiable `Gere par` dans le formulaire principal et la creation rapide,

@@ -45,6 +45,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Parametres")
         self._reconnect_repertoire = False
+        self._microsoft_sign_in_requested = False
         self._planner_task: asyncio.Task[None] | None = None
         self._finished = False
         self._build_ui(config)
@@ -124,6 +125,7 @@ class SettingsDialog(QDialog):
         root.addWidget(self._paths_group(config))
         root.addWidget(self._outlook_group(config))
         root.addWidget(self._planner_group(config))
+        root.addWidget(self._microsoft_group())
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -173,6 +175,27 @@ class SettingsDialog(QDialog):
         self.repertoire_reconnect_button.clicked.connect(self._request_repertoire_reconnection)
         layout.addRow("", self.repertoire_reconnect_button)
         return group
+
+    @property
+    def microsoft_sign_in_requested(self) -> bool:
+        return self._microsoft_sign_in_requested
+
+    def _microsoft_group(self) -> QGroupBox:
+        group = QGroupBox("Compte Microsoft")
+        layout = QFormLayout(group)
+        self.microsoft_sign_in_button = QPushButton("Se reconnecter au compte Microsoft")
+        self.microsoft_sign_in_button.setToolTip(
+            "Oublie la connexion Microsoft enregistree sur ce poste. Apres OK, "
+            "le navigateur s'ouvre pour choisir le compte et se connecter a nouveau.",
+        )
+        self.microsoft_sign_in_button.clicked.connect(self._request_microsoft_sign_in)
+        layout.addRow("", self.microsoft_sign_in_button)
+        return group
+
+    def _request_microsoft_sign_in(self) -> None:
+        self._microsoft_sign_in_requested = True
+        self.microsoft_sign_in_button.setText("Reconnexion apres enregistrement des parametres")
+        self.microsoft_sign_in_button.setEnabled(False)
 
     def _request_repertoire_reconnection(self) -> None:
         self._reconnect_repertoire = True

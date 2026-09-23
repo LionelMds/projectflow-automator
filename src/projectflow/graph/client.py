@@ -11,10 +11,16 @@ from projectflow.exceptions import GraphError
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 RETRY_STATUSES = {429, 500, 502, 503, 504}
+HTTP_UNAUTHORIZED = 401
 HTTP_FORBIDDEN = 403
 HTTP_LOCKED = 423
 HTTP_TOO_MANY_REQUESTS = 429
 MAX_ATTEMPTS = 3
+UNAUTHORIZED_MESSAGE = (
+    "La connexion Microsoft a expire ou a ete refusee (401). "
+    "Utilisez Parametres > Se reconnecter au compte Microsoft, "
+    "puis actualisez les donnees."
+)
 WORKBOOK_CONFLICT_CODES = {
     "accessconflict",
     "conflictuncategorized",
@@ -79,6 +85,37 @@ class GraphClient:
         json: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
+        last_response = await self._send(method, path, json=json, headers=headers)
+        invalidate_token = getattr(self._token_provider, "invalidate_token", None)
+        if last_response.status_code == HTTP_UNAUTHORIZED and callable(invalidate_token):
+            # Microsoft rejected the token before processing the request, so a
+            # single replay with a refreshed token cannot duplicate a mutation.
+            invalidate_token()
+            last_response = await self._send(method, path, json=json, headers=headers)
+        if last_response.is_error:
+            raise _response_error(last_response, method)
+        if not last_response.content:
+            return {}
+        try:
+            payload = last_response.json()
+        except ValueError as exc:
+            raise GraphError(
+                "Microsoft Graph a retourne une reponse illisible. "
+                "Actualisez les donnees avant de relancer l'operation.",
+                status_code=last_response.status_code,
+            ) from exc
+        if isinstance(payload, dict):
+            return payload
+        return {"value": payload}
+
+    async def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, Any] | None,
+        headers: Mapping[str, str] | None,
+    ) -> httpx.Response:
         request_headers = dict(headers or {})
         request_headers["Authorization"] = f"Bearer {await self._token_provider.access_token()}"
         request_headers.setdefault("Accept", "application/json")
@@ -113,21 +150,7 @@ class GraphClient:
 
         if last_response is None:
             raise GraphError("Microsoft Graph n'a retourne aucune reponse.")
-        if last_response.is_error:
-            raise _response_error(last_response, method)
-        if not last_response.content:
-            return {}
-        try:
-            payload = last_response.json()
-        except ValueError as exc:
-            raise GraphError(
-                "Microsoft Graph a retourne une reponse illisible. "
-                "Actualisez les donnees avant de relancer l'operation.",
-                status_code=last_response.status_code,
-            ) from exc
-        if isinstance(payload, dict):
-            return payload
-        return {"value": payload}
+        return last_response
 
     def _client(self) -> httpx.AsyncClient:
         if self._http_client is not None:
@@ -196,7 +219,10 @@ def _graph_error_message(response: httpx.Response) -> str:
 
 def _response_error(response: httpx.Response, method: str) -> GraphError:
     error_code, inner_error_code = _graph_error_codes(response)
-    message = _graph_error_message(response)
+    if response.status_code == HTTP_UNAUTHORIZED:
+        message = UNAUTHORIZED_MESSAGE
+    else:
+        message = _graph_error_message(response)
     if method.upper() not in {"GET", "HEAD"} and response.status_code in RETRY_STATUSES - {
         HTTP_TOO_MANY_REQUESTS
     }:

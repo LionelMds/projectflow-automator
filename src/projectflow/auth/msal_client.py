@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
+import threading
+import time
 from collections.abc import Callable, Sequence
 from importlib import import_module
 from typing import Protocol, cast
@@ -17,6 +20,11 @@ PLANNER_GRAPH_SCOPES = (
     "User.ReadBasic.All",
     "GroupMember.Read.All",
 )
+# Browser sign-in that is never completed must not block every Graph operation.
+INTERACTIVE_TIMEOUT_SECONDS = 180
+# Refresh before Microsoft rejects the token (access tokens last about one hour).
+TOKEN_REFRESH_MARGIN_SECONDS = 300
+DEFAULT_TOKEN_LIFETIME_SECONDS = 3600
 CLIENT_ID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
@@ -73,21 +81,38 @@ class MsalAccessTokenProvider:
         client_id: str,
         scopes: Sequence[str] = GRAPH_SCOPES,
         cache_storage: TokenCacheStorage | None = None,
-        interactive_timeout: int | None = None,
+        interactive_timeout: int | None = INTERACTIVE_TIMEOUT_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._client_id = client_id.strip()
         self._scopes = list(scopes)
         self._cache_storage = cache_storage or TokenCacheStorage()
         self._cached_token: str = ""
+        self._token_expires_at = 0.0
         self._interactive_timeout = interactive_timeout
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._app: PublicClientApplicationProtocol | None = None
+        self._cache: SerializableTokenCacheProtocol | None = None
 
     async def access_token(self) -> str:
         return await asyncio.to_thread(self._access_token_sync)
 
-    def _access_token_sync(self) -> str:
-        if self._cached_token:
-            return self._cached_token
+    def invalidate_token(self) -> None:
+        """Forget the in-memory token so the next call refreshes it through MSAL."""
+        with self._lock:
+            self._cached_token = ""
+            self._token_expires_at = 0.0
 
+    def _access_token_sync(self) -> str:
+        # Concurrent operations must share one refresh or one browser sign-in.
+        with self._lock:
+            if self._cached_token and self._clock() < self._token_expires_at:
+                return self._cached_token
+            self._cached_token = ""
+            return self._refresh_token()
+
+    def _refresh_token(self) -> str:
         if not self._client_id:
             raise AuthError(
                 "Connexion Microsoft indisponible: client Microsoft non configure "
@@ -100,17 +125,9 @@ class MsalAccessTokenProvider:
                 "'TON_CLIENT_ID'.",
             )
 
-        msal = _msal_module()
-        cache = msal.SerializableTokenCache()
-        serialized_cache = self._cache_storage.load()
-        if serialized_cache:
-            cache.deserialize(serialized_cache)
-
-        app = msal.PublicClientApplication(
-            self._client_id,
-            authority=AUTHORITY,
-            token_cache=cache,
-        )
+        app, cache = self._application()
+        # Another provider may have refreshed or cleared the shared cache meanwhile.
+        cache.deserialize(self._cache_storage.load() or "{}")
         try:
             result = self._acquire_token(app)
         except (AssertionError, ValueError) as exc:
@@ -119,6 +136,7 @@ class MsalAccessTokenProvider:
         token = result.get("access_token")
         if isinstance(token, str) and token:
             self._cached_token = token
+            self._token_expires_at = self._clock() + _token_lifetime(result)
             serialized = cache.serialize()
             if serialized:
                 self._cache_storage.save(serialized)
@@ -127,9 +145,26 @@ class MsalAccessTokenProvider:
         message = (
             result.get("error_description")
             or result.get("error")
-            or "authentification annulee"
+            or "authentification annulee ou delai depasse"
         )
-        raise AuthError(f"Connexion Microsoft impossible: {message}")
+        raise AuthError(
+            f"Connexion Microsoft impossible: {message}. "
+            "Utilisez Parametres > Se reconnecter au compte Microsoft pour recommencer.",
+        )
+
+    def _application(
+        self,
+    ) -> tuple[PublicClientApplicationProtocol, SerializableTokenCacheProtocol]:
+        # Reusing the application avoids a new authority discovery on each refresh.
+        if self._app is None or self._cache is None:
+            msal = _msal_module()
+            self._cache = msal.SerializableTokenCache()
+            self._app = msal.PublicClientApplication(
+                self._client_id,
+                authority=AUTHORITY,
+                token_cache=self._cache,
+            )
+        return self._app, self._cache
 
     def _acquire_token(self, app: PublicClientApplicationProtocol) -> dict[str, object]:
         accounts = app.get_accounts()
@@ -147,6 +182,20 @@ class MsalAccessTokenProvider:
         if isinstance(result, dict):
             return cast("dict[str, object]", result)
         return {}
+
+
+def sign_out_microsoft(cache_storage: TokenCacheStorage | None = None) -> None:
+    """Forget the stored Microsoft account; the next access asks to sign in again."""
+    (cache_storage or TokenCacheStorage()).clear()
+
+
+def _token_lifetime(result: dict[str, object]) -> float:
+    expires_in = result.get("expires_in")
+    lifetime = float(DEFAULT_TOKEN_LIFETIME_SECONDS)
+    if isinstance(expires_in, int | float | str):
+        with contextlib.suppress(ValueError):
+            lifetime = float(expires_in)
+    return max(0.0, lifetime - TOKEN_REFRESH_MARGIN_SECONDS)
 
 
 def _msal_module() -> MsalModuleProtocol:

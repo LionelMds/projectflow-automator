@@ -152,3 +152,53 @@ async def test_graph_client_reports_unreadable_success_without_replaying_write()
             await client.post("/workbook/tables/table/rows/add")
 
     assert len(requests) == 1
+
+
+class RefreshingTokenProvider:
+    def __init__(self) -> None:
+        self.tokens = ["expired", "fresh"]
+        self.invalidations = 0
+
+    async def access_token(self) -> str:
+        return self.tokens[0]
+
+    def invalidate_token(self) -> None:
+        self.invalidations += 1
+        self.tokens.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_graph_client_refreshes_rejected_token_once() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["Authorization"])
+        if request.headers["Authorization"] == "Bearer expired":
+            return httpx.Response(401, json={"error": {"code": "InvalidAuthenticationToken"}})
+        return httpx.Response(201, json={"ok": True})
+
+    provider = RefreshingTokenProvider()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphClient(token_provider=provider, http_client=http_client)
+
+        assert await client.post("/rows/add", json={"values": []}) == {"ok": True}
+
+    assert seen == ["Bearer expired", "Bearer fresh"]
+    assert provider.invalidations == 1
+
+
+@pytest.mark.asyncio
+async def test_graph_client_asks_to_sign_in_again_when_refresh_is_rejected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": {"code": "InvalidAuthenticationToken"}})
+
+    provider = RefreshingTokenProvider()
+    provider.tokens.append("still-rejected")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphClient(token_provider=provider, http_client=http_client)
+
+        with pytest.raises(GraphError, match="Se reconnecter au compte Microsoft") as error:
+            await client.get("/me/drive/root")
+
+    assert error.value.status_code == 401
+    assert provider.invalidations == 1
