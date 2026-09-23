@@ -101,7 +101,7 @@ class ServiceContainer:
             client_id=settings.microsoft_client_id,
             scopes=PLANNER_GRAPH_SCOPES,
         )
-        graph = GraphClient(token_provider=token_provider)
+        graph = GraphClient(token_provider=token_provider, request_timeout=60.0)
         self._graph_clients.append(graph)
         self.planner_service = ConfiguredPlannerGateway(
             client=GraphPlannerClient(graph=graph),

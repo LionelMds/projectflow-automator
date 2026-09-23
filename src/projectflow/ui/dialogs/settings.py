@@ -576,4 +576,6 @@ def _planner_client() -> GraphPlannerClient:
         client_id=settings.microsoft_client_id,
         scopes=PLANNER_GRAPH_SCOPES,
     )
-    return GraphPlannerClient(graph=GraphClient(token_provider=token_provider))
+    return GraphPlannerClient(
+        graph=GraphClient(token_provider=token_provider, request_timeout=60.0)
+    )

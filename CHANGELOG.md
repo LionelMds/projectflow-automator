@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.1.43
+
+- Affiche une fenetre `Connexion Microsoft` pendant la connexion, avec les boutons
+  `Ouvrir la page de connexion`, `Copier le lien` et `Annuler`. La page est ouverte par
+  Windows, y compris quand Edge tourne en arriere-plan, et la fenetre se ferme apres la
+  connexion. Le delai de connexion passe a cinq minutes.
+- Une seule connexion Microsoft a la fois pour le repertoire et Planner ; la seconde
+  reutilise la connexion obtenue. Une autorisation supplementaire (Planner) reprend le
+  compte deja connecte au lieu de redemander le choix du compte.
+- Ne conserve que le compte Microsoft choisi lors de la connexion, pour ne plus utiliser
+  un autre compte enregistre sur le poste sans acces au SharePoint.
+- Limite les requetes Planner a 60 secondes : le chargement des membres ne tourne plus
+  indefiniment. Les etapes de connexion sont journalisees, sans jeton.
+
 ## 0.1.42
 
 - Renouvelle automatiquement la connexion Microsoft avant son expiration (environ une heure)

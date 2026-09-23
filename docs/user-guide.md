@@ -105,6 +105,11 @@ cliquer sur `Se reconnecter au compte Microsoft` puis `OK`. La connexion enregis
 poste est effacee et le navigateur s'ouvre pour choisir le compte. Pour aussi retrouver le
 classeur partage, cliquer egalement sur `Reconnecter a OneDrive / SharePoint` avant `OK`.
 
+Pendant une connexion, ProjectFlow affiche la fenetre `Connexion Microsoft`. Si la page ne
+s'affiche pas dans le navigateur, cliquer sur `Ouvrir la page de connexion`, ou sur
+`Copier le lien` puis le coller dans la barre d'adresse d'Edge ou de Chrome. La fenetre se
+ferme d'elle-meme une fois la connexion terminee.
+
 ## Creer un projet
 
 1. Saisir l'annee et l'ID projet, par exemple `2026` et `4995`.

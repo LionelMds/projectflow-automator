@@ -12,6 +12,16 @@ from projectflow.auth.msal_client import (
 )
 from projectflow.exceptions import AuthError
 
+ACCOUNT = {"username": "alice@example.com", "home_account_id": "alice-oid.tenant"}
+
+
+@pytest.fixture(autouse=True)
+def _browser_sign_in_uses_fake_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(app: object, scopes: list[str], **kwargs: object) -> dict[str, object]:
+        return app.acquire_token_interactive(scopes=scopes, **kwargs)  # type: ignore[attr-defined, no-any-return]
+
+    monkeypatch.setattr(msal_client, "run_browser_sign_in", run)
+
 
 def test_graph_scopes_do_not_include_msal_reserved_scopes() -> None:
     assert set(GRAPH_SCOPES).isdisjoint({"offline_access", "profile", "openid"})
@@ -59,7 +69,7 @@ def test_msal_provider_reuses_in_memory_token_and_saves_cache(
 def test_msal_provider_passes_list_scopes_to_silent_flow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_module = FakeMsalModule(accounts=[object()], silent_token="silent-token")
+    fake_module = FakeMsalModule(accounts=[dict(ACCOUNT)], silent_token="silent-token")
     monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
     provider = MsalAccessTokenProvider(
         client_id="11111111-1111-1111-1111-111111111111",
@@ -75,7 +85,7 @@ def test_msal_provider_passes_list_scopes_to_silent_flow(
 def test_msal_provider_wraps_msal_parameter_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_module = FakeMsalModule(assert_on_silent=True, accounts=[object()])
+    fake_module = FakeMsalModule(assert_on_silent=True, accounts=[dict(ACCOUNT)])
     monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
     provider = MsalAccessTokenProvider(
         client_id="11111111-1111-1111-1111-111111111111",
@@ -90,7 +100,7 @@ def test_msal_provider_refreshes_token_before_expiry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = [0.0]
-    fake_module = FakeMsalModule(accounts=[object()], silent_token="silent-token")
+    fake_module = FakeMsalModule(accounts=[dict(ACCOUNT)], silent_token="silent-token")
     monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
     provider = MsalAccessTokenProvider(
         client_id="11111111-1111-1111-1111-111111111111",
@@ -112,7 +122,7 @@ def test_msal_provider_refreshes_token_before_expiry(
 def test_msal_provider_invalidated_token_is_refreshed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_module = FakeMsalModule(accounts=[object()], silent_token="silent-token")
+    fake_module = FakeMsalModule(accounts=[dict(ACCOUNT)], silent_token="silent-token")
     monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
     provider = MsalAccessTokenProvider(
         client_id="11111111-1111-1111-1111-111111111111",
@@ -138,6 +148,60 @@ def test_msal_provider_reports_abandoned_sign_in(
 
     with pytest.raises(AuthError, match="Se reconnecter au compte Microsoft"):
         provider._access_token_sync()  # noqa: SLF001
+
+
+def test_known_account_confirms_access_without_choosing_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_module = FakeMsalModule(accounts=[dict(ACCOUNT)])
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+    )
+
+    provider._access_token_sync()  # noqa: SLF001
+
+    assert fake_module.app.interactive_options == [
+        {"prompt": None, "login_hint": "alice@example.com"},
+    ]
+
+
+def test_new_sign_in_lets_user_choose_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_module = FakeMsalModule()
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+    )
+
+    provider._access_token_sync()  # noqa: SLF001
+
+    assert fake_module.app.interactive_options == [{"prompt": "select_account", "login_hint": None}]
+
+
+def test_sign_in_forgets_other_cached_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    other = {"username": "perso@outlook.com", "home_account_id": "other.tenant"}
+    fake_module = FakeMsalModule(
+        accounts=[other, dict(ACCOUNT)],
+        interactive_result={
+            "access_token": "token",
+            "id_token_claims": {
+                "oid": "alice-oid",
+                "tid": "tenant",
+                "preferred_username": "alice@example.com",
+            },
+        },
+    )
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+    )
+
+    provider._access_token_sync()  # noqa: SLF001
+
+    assert fake_module.app.get_accounts() == [ACCOUNT]
 
 
 def test_sign_out_clears_stored_account() -> None:
@@ -189,10 +253,14 @@ class FakePublicClientApplication:
         self.interactive_calls = 0
         self.interactive_scopes: list[list[str]] = []
         self.interactive_timeouts: list[object] = []
+        self.interactive_options: list[dict[str, object]] = []
         self.silent_scopes: list[list[str]] = []
 
     def get_accounts(self) -> list[object]:
-        return self._accounts
+        return list(self._accounts)
+
+    def remove_account(self, account: object) -> None:
+        self._accounts.remove(account)
 
     def acquire_token_silent(self, scopes: object, **_kwargs: object) -> object:
         if self._assert_on_silent:
@@ -207,6 +275,9 @@ class FakePublicClientApplication:
         assert isinstance(scopes, list)
         self.interactive_scopes.append(scopes)
         self.interactive_timeouts.append(kwargs.get("timeout"))
+        self.interactive_options.append(
+            {"prompt": kwargs.get("prompt"), "login_hint": kwargs.get("login_hint")},
+        )
         self.interactive_calls += 1
         if self._interactive_result is not None:
             return self._interactive_result

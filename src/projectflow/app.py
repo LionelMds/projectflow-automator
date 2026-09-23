@@ -12,12 +12,14 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
+from projectflow.auth.browser_sign_in import set_sign_in_prompt
 from projectflow.config import AppConfig
 from projectflow.demo import build_demo_environment
 from projectflow.logging import configure_logging, get_logger
 from projectflow.platform.single_instance import SingleInstanceGuard
 from projectflow.services import ServiceContainer
 from projectflow.ui.controller import ProjectFlowController, ServiceProvider
+from projectflow.ui.dialogs.microsoft_sign_in import MicrosoftSignInPrompt
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.onboarding.wizard import OnboardingWizard
 from projectflow.ui.tray import ProjectFlowTray
@@ -42,6 +44,10 @@ def run(argv: Sequence[str]) -> int:
 
     event_loop = QEventLoop(app)
     asyncio.set_event_loop(event_loop)
+    # Browser sign-ins run in worker threads; this shows them in a ProjectFlow window
+    # because the browser may open behind other windows or not at all.
+    sign_in_prompt = MicrosoftSignInPrompt()
+    set_sign_in_prompt(sign_in_prompt)
 
     smoke_delay_ms = _smoke_exit_delay_ms(logger)
     demo_mode = _demo_mode_enabled(argv)
