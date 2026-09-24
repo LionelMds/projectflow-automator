@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.1.44
+
+- Corrige la connexion Microsoft de la 0.1.43 : le navigateur affichait
+  « response_mode=query is not supported » et aucune connexion ni autorisation Planner
+  n'aboutissait. La redirection utilise maintenant `form_post`, exige par MSAL 1.39.
+  Le bouton `Annuler` de la fenetre de connexion interrompt bien l'attente.
+- Enregistre la connexion Microsoft a un seul endroit. Le gestionnaire d'identifiants
+  Windows refuse les donnees de plus d'environ 1280 caracteres ; une ancienne copie
+  pouvait y rester et masquer la connexion en cours, qui etait alors perdue a chaque
+  demarrage. Le fichier de secours est ecrit de facon atomique.
+- Journalise la duree de chaque requete Microsoft et de chaque renouvellement de
+  connexion, sans identifiant ni lien, pour diagnostiquer les postes lents.
+
 ## 0.1.43
 
 - Affiche une fenetre `Connexion Microsoft` pendant la connexion, avec les boutons

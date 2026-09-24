@@ -97,6 +97,7 @@ def test_sign_in_opens_page_shows_prompt_and_exchanges_code(prompt: RecordingPro
     assert app.flow_options == {
         "scopes": ["Files.ReadWrite.All"],
         "redirect_uri": "http://localhost:50123",
+        "response_mode": "form_post",
         "prompt": "select_account",
     }
     assert receiver.wait_options["timeout"] == 300

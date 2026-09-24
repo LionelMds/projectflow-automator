@@ -43,13 +43,25 @@ class TokenCacheStorage:
             return ""
 
     def save(self, value: str) -> None:
+        # Keep a single copy: load() prefers the keyring, so a stale copy there
+        # would hide the current connection saved in the file, and vice versa.
         if self._save_to_keyring(value):
+            self._delete_fallback()
             return
+        # Windows Credential Manager refuses secrets above ~1280 characters,
+        # which a Microsoft token cache always exceeds.
+        self._delete_from_keyring()
         self._fallback_path.parent.mkdir(parents=True, exist_ok=True)
-        self._fallback_path.write_text(value, encoding="utf-8")
+        temporary = self._fallback_path.with_suffix(".tmp")
+        temporary.write_text(value, encoding="utf-8")
+        # Another connection may read the cache concurrently: never expose half a file.
+        temporary.replace(self._fallback_path)
 
     def clear(self) -> None:
         self._delete_from_keyring()
+        self._delete_fallback()
+
+    def _delete_fallback(self) -> None:
         try:
             self._fallback_path.unlink()
         except FileNotFoundError:

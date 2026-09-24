@@ -133,6 +133,7 @@ class MsalAccessTokenProvider:
                 "'TON_CLIENT_ID'.",
             )
 
+        started = time.monotonic()
         app, cache = self._application()
         try:
             result = self._acquire_token(app, cache)
@@ -140,6 +141,12 @@ class MsalAccessTokenProvider:
             raise AuthError(f"Connexion Microsoft impossible: {exc}") from exc
 
         token = result.get("access_token")
+        get_logger(__name__).info(
+            "auth.token.refreshed",
+            scopes=self._scopes,
+            success=isinstance(token, str) and bool(token),
+            duration_ms=round((time.monotonic() - started) * 1000),
+        )
         if isinstance(token, str) and token:
             self._cached_token = token
             self._token_expires_at = self._clock() + _token_lifetime(result)

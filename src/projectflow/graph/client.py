@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -8,6 +9,7 @@ import httpx
 
 from projectflow.auth.msal_client import AccessTokenProvider
 from projectflow.exceptions import GraphError
+from projectflow.logging import get_logger
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 RETRY_STATUSES = {429, 500, 502, 503, 504}
@@ -16,6 +18,8 @@ HTTP_FORBIDDEN = 403
 HTTP_LOCKED = 423
 HTTP_TOO_MANY_REQUESTS = 429
 MAX_ATTEMPTS = 3
+# Longer route segments are identifiers (drives, items, plans) and stay out of logs.
+LOG_ID_MIN_LENGTH = 16
 UNAUTHORIZED_MESSAGE = (
     "La connexion Microsoft a expire ou a ete refusee (401). "
     "Utilisez Parametres > Se reconnecter au compte Microsoft, "
@@ -116,12 +120,15 @@ class GraphClient:
         json: Mapping[str, Any] | None,
         headers: Mapping[str, str] | None,
     ) -> httpx.Response:
+        started = time.perf_counter()
         request_headers = dict(headers or {})
         request_headers["Authorization"] = f"Bearer {await self._token_provider.access_token()}"
         request_headers.setdefault("Accept", "application/json")
+        token_ms = _elapsed_ms(started)
 
         last_response: httpx.Response | None = None
         for attempt in range(MAX_ATTEMPTS):
+            sent = time.perf_counter()
             try:
                 response = await self._client().request(
                     method,
@@ -143,6 +150,16 @@ class GraphClient:
                     "avant de relancer l'operation.",
                 ) from exc
             last_response = response
+            # Timings without identifiers or links, to diagnose slow workstations.
+            get_logger(__name__).info(
+                "graph.request",
+                method=method,
+                route=_log_route(path),
+                status=response.status_code,
+                attempt=attempt + 1,
+                token_ms=token_ms,
+                duration_ms=_elapsed_ms(sent),
+            )
             if attempt + 1 == MAX_ATTEMPTS or not _should_retry(response, method):
                 break
             retry_after = _retry_after_seconds(response)
@@ -167,6 +184,19 @@ class GraphClient:
         if self._http_client is None:
             return
         await self._http_client.aclose()
+
+
+def _elapsed_ms(started: float) -> int:
+    return round((time.perf_counter() - started) * 1000)
+
+
+def _log_route(path: str) -> str:
+    route = path.split("?", 1)[0].removeprefix(GRAPH_BASE_URL)
+    segments = [
+        "{id}" if len(segment) >= LOG_ID_MIN_LENGTH or "!" in segment or "%" in segment else segment
+        for segment in route.split("/")
+    ]
+    return "/".join(segments)
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:

@@ -99,7 +99,11 @@ def run_browser_sign_in(
     logger = get_logger(__name__)
     with (receiver_factory or _default_receiver)() as receiver:
         port = receiver.get_port()
-        flow_options: dict[str, object] = {"redirect_uri": f"http://localhost:{port}"}
+        # MSAL's local receiver only accepts the redirection as an HTTP POST.
+        flow_options: dict[str, object] = {
+            "redirect_uri": f"http://localhost:{port}",
+            "response_mode": "form_post",
+        }
         if prompt:
             flow_options["prompt"] = prompt
         if login_hint:
@@ -146,15 +150,22 @@ def run_browser_sign_in(
 
 
 def _abort_receiver(port: int, state: str) -> None:
-    query = urlencode(
+    # Same shape as Microsoft's form_post redirection, so the receiver stops waiting.
+    body = urlencode(
         {
             "error": "access_denied",
             "error_description": "Connexion annulee dans ProjectFlow.",
             "state": state,
         },
+    ).encode()
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/",
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
     )
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/?{query}", timeout=5):
+        with urllib.request.urlopen(request, timeout=5):  # noqa: S310
             pass
     except OSError:
         get_logger(__name__).warning("auth.interactive.abort_failed")
