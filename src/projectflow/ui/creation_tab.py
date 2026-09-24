@@ -18,8 +18,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from projectflow.config import PlannerConfig
+from projectflow.config import CadConfig, PlannerConfig
 from projectflow.core.client_directory import ClientDirectory
+from projectflow.ui.widgets.cad import CadOptionsWidget
 from projectflow.ui.widgets.client_autocomplete import ClientAutocomplete
 from projectflow.ui.widgets.planner import PlannerSelectionWidget, PlannerTaskFormData
 
@@ -35,6 +36,8 @@ class CreationFormData:
     localisation: str
     gere_par: str
     planner: PlannerTaskFormData = field(default_factory=PlannerTaskFormData)
+    add_solidworks: bool = False
+    add_autocad: bool = False
 
 
 class CreationTab(QWidget):
@@ -57,6 +60,7 @@ class CreationTab(QWidget):
         self.user_initials_edit.setText(initials)
 
     def data(self) -> CreationFormData:
+        add_solidworks, add_autocad = self.cad_options.values()
         return CreationFormData(
             year=self.year_combo.currentText().strip(),
             project_id=self.project_id_edit.text().strip(),
@@ -67,6 +71,8 @@ class CreationTab(QWidget):
             localisation=self.localisation_edit.text().strip(),
             gere_par=self.gere_par_edit.text().strip(),
             planner=self.planner_widget.data(),
+            add_solidworks=add_solidworks,
+            add_autocad=add_autocad,
         )
 
     def set_project_identity(self, *, year: str, project_id: str, subproject_id: str = "") -> None:
@@ -91,6 +97,7 @@ class CreationTab(QWidget):
         self.localisation_edit.setText(data.localisation)
         self.gere_par_edit.setText(data.gere_par)
         self.planner_widget.set_data(data.planner)
+        self.cad_options.set_values(solidworks=data.add_solidworks, autocad=data.add_autocad)
 
     def append_log(self, message: str) -> None:
         self.logs.append(message)
@@ -107,6 +114,13 @@ class CreationTab(QWidget):
         ]:
             edit.clear()
         self.planner_widget.reset_fields()
+        self.cad_options.reset()
+
+    def reset_cad_options(self) -> None:
+        self.cad_options.reset()
+
+    def apply_cad_config(self, cad: CadConfig) -> None:
+        self.cad_options.apply_config(cad)
 
     def apply_planner_config(self, planner: PlannerConfig) -> None:
         self.planner_widget.set_config_defaults(
@@ -220,6 +234,14 @@ class CreationTab(QWidget):
         self.planner_widget = PlannerSelectionWidget()
         self.planner_widget.options_requested.connect(self.planner_options_requested.emit)
         root_layout.addWidget(self.planner_widget)
+
+        self.cad_frame = QFrame()
+        _configure_frame(self.cad_frame)
+        cad_layout = QFormLayout(self.cad_frame)
+        _configure_form_layout(cad_layout)
+        self.cad_options = CadOptionsWidget()
+        cad_layout.addRow("Fichiers CAO", self.cad_options)
+        root_layout.addWidget(self.cad_frame)
         root_layout.addStretch(1)
 
         self.logs = QTextEdit()

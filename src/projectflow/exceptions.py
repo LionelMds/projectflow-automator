@@ -51,3 +51,11 @@ class ProjectNumberError(ProjectFlowError, ValueError):
 
 class ProjectCreationError(ProjectFlowError):
     """Raised when project creation cannot complete."""
+
+
+class CadError(ProjectFlowError):
+    """Raised when CAD template files cannot be prepared."""
+
+
+class CadUnavailableError(CadError):
+    """Raised when SolidWorks Document Manager cannot be used on this computer."""

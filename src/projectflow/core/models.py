@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from projectflow.core.numero import ProjectNumber
 
@@ -22,10 +23,33 @@ class ProjectInput:
     localisation: str = ""
     gere_par: str = ""
     planner: PlannerTaskInput = field(default_factory=PlannerTaskInput)
+    add_solidworks: bool = False
+    add_autocad: bool = False
 
     @property
     def is_subproject(self) -> bool:
         return self.number.is_subproject
+
+
+CadFileStatus = Literal["created", "skipped", "error"]
+
+
+@dataclass(frozen=True, slots=True)
+class CadFileResult:
+    path: str
+    status: CadFileStatus
+    detail: str = ""
+
+    @property
+    def name(self) -> str:
+        return self.path.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+@dataclass(frozen=True, slots=True)
+class CadOutcome:
+    files: tuple[CadFileResult, ...] = ()
+    warnings: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +63,9 @@ class ProjectCreationResult:
     planner_task_updated: bool = False
     outlook_error: str | None = None
     planner_error: str | None = None
+    cad_files: tuple[CadFileResult, ...] = ()
+    cad_warnings: tuple[str, ...] = ()
+    cad_error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

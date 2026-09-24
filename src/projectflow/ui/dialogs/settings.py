@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Protocol
 
+from pydantic import ValidationError
 from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -14,8 +17,10 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -26,7 +31,8 @@ from PySide6.QtWidgets import (
 
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
-from projectflow.config import AppConfig, RepertoireChantierConfig
+from projectflow.cad.license_storage import SolidWorksLicenseStorage
+from projectflow.config import AppConfig, CadConfig, CadPropertyNames, RepertoireChantierConfig
 from projectflow.exceptions import ProjectFlowError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
@@ -35,15 +41,29 @@ from projectflow.outlook.local import detect_local_outlook_accounts, validate_lo
 from projectflow.platform.paths import native_path_text
 
 
+class LicenseKeyStorage(Protocol):
+    def load(self) -> str:
+        """Return the stored key, or an empty string."""
+
+    def save(self, value: str) -> bool:
+        """Store the key; return False when the credential store refused it."""
+
+    def clear(self) -> bool:
+        """Delete the key; return False when it could not be deleted."""
+
+
 class SettingsDialog(QDialog):
     def __init__(
         self,
         config: AppConfig,
         *,
         parent: QWidget | None = None,
+        license_storage: LicenseKeyStorage | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Parametres")
+        self._license_storage = license_storage or SolidWorksLicenseStorage()
+        self._license_clear_requested = False
         self._reconnect_repertoire = False
         self._microsoft_sign_in_requested = False
         self._planner_task: asyncio.Task[None] | None = None
@@ -81,6 +101,7 @@ class SettingsDialog(QDialog):
         config.planner.bucket_id = self._selected_planner_bucket_id()
         config.planner.bucket_name = self.planner_bucket_combo.currentText().strip()
         config.planner.due_days = self.planner_due_days_spin.value()
+        config.cad = self._cad_config()
 
     def accept(self) -> None:
         if "://" in self.repertoire_open_path_edit.text():
@@ -113,7 +134,60 @@ class SettingsDialog(QDialog):
                 "Selectionnez une colonne Planner ou desactivez la creation Planner.",
             )
             return
+        if not self._validate_cad():
+            return
+        if not self._store_license_key():
+            return
         super().accept()
+
+    def _validate_cad(self) -> bool:
+        try:
+            cad = self._cad_config()
+        except ValidationError as exc:
+            QMessageBox.warning(self, "Modeles CAO", _validation_message(exc))
+            return False
+        reference = _optional_path(self.reference_edit.text())
+        if reference is not None and any(
+            template is not None and _same_or_inside(template, reference)
+            for template in (cad.solidworks_template_dir, cad.autocad_template_dir)
+        ):
+            QMessageBox.warning(
+                self,
+                "Modeles CAO",
+                "Les dossiers modeles CAO doivent etre distincts du dossier de reference, "
+                "sinon ils seraient copies a chaque creation de projet.",
+            )
+            return False
+        return True
+
+    def _store_license_key(self) -> bool:
+        key = self.solidworks_license_edit.text().strip()
+        if key:
+            stored = self._license_storage.save(key)
+        elif self._license_clear_requested:
+            stored = self._license_storage.clear()
+        else:
+            return True
+        if not stored:
+            QMessageBox.warning(
+                self,
+                "Modeles CAO",
+                "Le gestionnaire d'identifiants du systeme a refuse la cle Document Manager.",
+            )
+        return stored
+
+    def _cad_config(self) -> CadConfig:
+        return CadConfig(
+            solidworks_template_dir=_optional_path(self.cad_solidworks_edit.text()),
+            autocad_template_dir=_optional_path(self.cad_autocad_edit.text()),
+            destination_subfolder=self.cad_subfolder_edit.text(),
+            properties=CadPropertyNames(
+                **{
+                    field: edit.text() or CadPropertyNames.model_fields[field].default
+                    for field, edit in self.cad_property_edits.items()
+                },
+            ),
+        )
 
     def _build_ui(self, config: AppConfig) -> None:
         root = QVBoxLayout(self)
@@ -125,6 +199,7 @@ class SettingsDialog(QDialog):
         root.addWidget(self._paths_group(config))
         root.addWidget(self._outlook_group(config))
         root.addWidget(self._planner_group(config))
+        root.addWidget(self._cad_group(config))
         root.addWidget(self._microsoft_group())
 
         buttons = QDialogButtonBox(
@@ -175,6 +250,66 @@ class SettingsDialog(QDialog):
         self.repertoire_reconnect_button.clicked.connect(self._request_repertoire_reconnection)
         layout.addRow("", self.repertoire_reconnect_button)
         return group
+
+    def _cad_group(self, config: AppConfig) -> QGroupBox:
+        group = QGroupBox("Modèles CAO")
+        layout = QFormLayout(group)
+        self.cad_solidworks_edit = QLineEdit(native_path_text(config.cad.solidworks_template_dir))
+        self.cad_solidworks_edit.setPlaceholderText("Dossier distinct du dossier de reference")
+        self.cad_autocad_edit = QLineEdit(native_path_text(config.cad.autocad_template_dir))
+        self.cad_subfolder_edit = QLineEdit(config.cad.destination_subfolder)
+        self.cad_subfolder_edit.setPlaceholderText("Vide = racine du dossier projet")
+        self.solidworks_license_edit = QLineEdit()
+        self.solidworks_license_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        has_key = bool(self._license_storage.load())
+        self.solidworks_license_edit.setPlaceholderText(
+            "Cle enregistree - laisser vide pour la conserver" if has_key else "Aucune cle",
+        )
+        self.solidworks_license_clear_button = QPushButton("Effacer la cle")
+        self.solidworks_license_clear_button.setEnabled(has_key)
+        self.solidworks_license_clear_button.clicked.connect(self._request_license_clear)
+        license_row = QWidget()
+        license_layout = QHBoxLayout(license_row)
+        license_layout.setContentsMargins(0, 0, 0, 0)
+        license_layout.addWidget(self.solidworks_license_edit, 1)
+        license_layout.addWidget(self.solidworks_license_clear_button)
+        layout.addRow(
+            "Dossier modele SolidWorks",
+            _browse_row(self.cad_solidworks_edit, directory=True),
+        )
+        layout.addRow("Dossier modele AutoCAD", _browse_row(self.cad_autocad_edit, directory=True))
+        layout.addRow("Sous-dossier dans le projet", self.cad_subfolder_edit)
+        layout.addRow("Cle Document Manager", license_row)
+
+        self.cad_property_edits: dict[str, QLineEdit] = {}
+        properties = QWidget()
+        properties_layout = QGridLayout(properties)
+        properties_layout.setContentsMargins(0, 0, 0, 0)
+        for index, (field, label) in enumerate([
+            ("projet", "Projet"),
+            ("client", "Client"),
+            ("auteur", "Auteur"),
+            ("description", "Description"),
+            ("revision", "Revision"),
+            ("revision_defaut", "Rev. par defaut"),
+        ]):
+            edit = QLineEdit(getattr(config.cad.properties, field))
+            edit.setToolTip(f"Nom exact de la propriete SolidWorks ({label}), accents compris.")
+            self.cad_property_edits[field] = edit
+            edit.setMinimumWidth(edit.fontMetrics().horizontalAdvance("M" * 10) + 12)
+            row, column = divmod(index, 2)
+            properties_layout.addWidget(QLabel(label), row, column * 2)
+            properties_layout.addWidget(edit, row, column * 2 + 1)
+        properties_layout.setColumnStretch(1, 1)
+        properties_layout.setColumnStretch(3, 1)
+        layout.addRow("Proprietes", properties)
+        return group
+
+    def _request_license_clear(self) -> None:
+        self._license_clear_requested = True
+        self.solidworks_license_edit.clear()
+        self.solidworks_license_edit.setPlaceholderText("Cle effacee apres enregistrement")
+        self.solidworks_license_clear_button.setEnabled(False)
 
     @property
     def microsoft_sign_in_requested(self) -> bool:
@@ -524,6 +659,17 @@ def _browse_row(edit: QLineEdit, *, directory: bool) -> QWidget:
     layout.addWidget(edit, 1)
     layout.addWidget(button)
     return widget
+
+
+def _validation_message(error: ValidationError) -> str:
+    messages = [str(item.get("msg", "")).removeprefix("Value error, ") for item in error.errors()]
+    return "\n".join(message for message in messages if message) or str(error)
+
+
+def _same_or_inside(path: Path, parent: Path) -> bool:
+    candidate = Path(os.path.normcase(path.absolute()))
+    base = Path(os.path.normcase(parent.absolute()))
+    return candidate == base or base in candidate.parents
 
 
 def _optional_path(value: str) -> Path | None:

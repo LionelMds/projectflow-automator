@@ -8,6 +8,13 @@ from typing import cast
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from projectflow.cad.demo_document_manager import (
+    DEMO_LICENSE_KEY,
+    open_json_document_manager,
+    write_demo_document,
+)
+from projectflow.cad.solidworks_properties import TEMPLATE_MARKER
+from projectflow.cad.templates import CadTemplateService
 from projectflow.config import AppConfig, RepertoireChantierConfig, UserConfig
 from projectflow.core.fiche_service import FICHE_SUFFIX, FicheService
 from projectflow.core.local_repertoire import LocalWorkbookGateway
@@ -37,6 +44,10 @@ class DemoServiceContainer:
             fiche_service=self.fiche(),
             repertoire_service=self.repertoire(),
             outlook=create_local_outlook_client(self.config.outlook),
+            cad=CadTemplateService(
+                license_key_loader=lambda: DEMO_LICENSE_KEY,
+                manager_factory=open_json_document_manager,
+            ),
         )
 
 
@@ -48,11 +59,14 @@ def build_demo_environment(
     clients_dir = root / "Clients"
     reference_dir = root / "Modeles" / "10-Racine"
     repertoire_path = root / "Repertoire chantier demo.xlsx"
+    solidworks_dir = root / "Modeles" / "11-Racine Solidworks"
+    autocad_dir = root / "Modeles" / "12-Racine AutoCAD"
 
     clients_dir.mkdir(parents=True, exist_ok=True)
     reference_dir.mkdir(parents=True, exist_ok=True)
     _ensure_reference_fiche(reference_dir)
     _ensure_repertoire(repertoire_path)
+    _ensure_cad_templates(solidworks_dir, autocad_dir)
 
     config = AppConfig()
     config.user = UserConfig(
@@ -68,6 +82,9 @@ def build_demo_environment(
         item_id=str(repertoire_path),
         display_path=str(repertoire_path),
     )
+    config.cad.solidworks_template_dir = solidworks_dir
+    config.cad.autocad_template_dir = autocad_dir
+    config.cad.destination_subfolder = "CAO"
     services = DemoServiceContainer(config=config, workbook_path=repertoire_path)
     return config, services
 
@@ -86,6 +103,34 @@ def _ensure_reference_fiche(reference_dir: Path) -> None:
     worksheet["D6"] = "Localisation : "
     worksheet["C6"] = ""
     workbook.save(fiche_path)
+
+
+def _ensure_cad_templates(solidworks_dir: Path, autocad_dir: Path) -> None:
+    """Fake SolidWorks files (JSON) that the demo Document Manager can read and write."""
+    parts = ["ENV-100.SLDPRT", "PRT-100.SLDPRT", "PRT-200.SLDPRT"]
+    common = {
+        "Projet": TEMPLATE_MARKER,
+        "Client": "",
+        "Auteur": "",
+        "Révision": "",
+        "Fournisseur": "Balz Métal SA",
+        "FaireouAcheter": "Faire",
+    }
+    for name in parts:
+        path = solidworks_dir / f"{TEMPLATE_MARKER}-{name}"
+        if not path.exists():
+            write_demo_document(path, common)
+    assembly = solidworks_dir / f"{TEMPLATE_MARKER}-ENS-100.SLDASM"
+    if not assembly.exists():
+        write_demo_document(
+            assembly,
+            {**common, "Description": ""},
+            [str(solidworks_dir / f"{TEMPLATE_MARKER}-{name}") for name in parts],
+        )
+    drawing = autocad_dir / f"{TEMPLATE_MARKER}-ENS-100.dwg"
+    if not drawing.exists():
+        drawing.parent.mkdir(parents=True, exist_ok=True)
+        drawing.write_bytes(b"AC1032 ProjectFlow demo")
 
 
 def _ensure_repertoire(repertoire_path: Path) -> None:

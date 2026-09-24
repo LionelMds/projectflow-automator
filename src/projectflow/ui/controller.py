@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 from collections.abc import Callable, Coroutine, Sequence
+from dataclasses import replace
 from datetime import date
 from functools import wraps
 from pathlib import Path
@@ -263,6 +264,7 @@ class ProjectFlowController:
         dialog = QuickCreateDialog(parent=self._window)
         self._quick_dialog = dialog
         dialog.set_user_initials(self._config.user.initials)
+        dialog.apply_cad_config(self._config.cad)
         dialog.apply_planner_config(
             enabled=self._config.planner.enabled,
             bucket_id=self._config.planner.bucket_id,
@@ -409,6 +411,7 @@ class ProjectFlowController:
             self._error(str(exc))
             return
         result, existing_update = created
+        self._window.creation_tab.reset_cad_options()
         self._save_config_if_available()
         self._log_creation_result(result, existing_update=existing_update)
         self._log_creation_integrations(result)
@@ -455,6 +458,7 @@ class ProjectFlowController:
         except (ProjectFlowError, ValueError) as exc:
             self._error(str(exc))
             return
+        self._window.creation_tab.reset_cad_options()
         self._save_config_if_available()
         self._log(f"+ Projet mis a jour: {result.fiche_path or result.project_dir}")
         self._log_creation_integrations(result)
@@ -1143,6 +1147,7 @@ class ProjectFlowController:
         if self._quick_dialog is None:
             return
         self._quick_dialog.set_user_initials(self._config.user.initials)
+        self._quick_dialog.apply_cad_config(self._config.cad)
         if planner_changed:
             self._quick_dialog.apply_planner_config(
                 enabled=self._config.planner.enabled,
@@ -1218,6 +1223,8 @@ class ProjectFlowController:
                 assignee_ids=data.planner.assignee_ids,
                 due_days=data.planner.due_days if data.planner.due_enabled else None,
             ),
+            add_solidworks=data.add_solidworks,
+            add_autocad=data.add_autocad,
         )
 
     def _empty_creation_data(self) -> CreationFormData:
@@ -1332,6 +1339,7 @@ class ProjectFlowController:
             self._log("+ Informations existantes conservees")
 
     def _log_creation_integrations(self, result: ProjectCreationResult) -> None:
+        self._log_cad_result(result)
         if result.outlook_error:
             self._log(f"! Dossiers Outlook non crees: {result.outlook_error}")
         elif self._config.outlook.enabled and result.outlook_folder_created:
@@ -1350,6 +1358,19 @@ class ProjectFlowController:
             self._log("+ Tache Planner deja existante")
         elif self._config.planner.enabled:
             self._log("! Planner actif mais aucune tache n'a ete associee a ce projet")
+
+    def _log_cad_result(self, result: ProjectCreationResult) -> None:
+        for item in result.cad_files:
+            if item.status == "created":
+                self._log(f"+ Fichier CAO cree: {item.name}")
+            elif item.status == "skipped":
+                self._log(f"-> Fichier CAO ignore: {item.name} ({item.detail})")
+            else:
+                self._log(f"! Fichier CAO en erreur: {item.name} - {item.detail}")
+        for warning in result.cad_warnings:
+            self._log(f"! CAO: {warning}")
+        if result.cad_error:
+            self._log(f"! Fichiers CAO non crees: {result.cad_error}")
 
     def _open_project_folder(self, result: ProjectCreationResult) -> None:
         if self._closing:
@@ -1373,7 +1394,7 @@ class ProjectFlowController:
         QMessageBox.information(
             self._window,
             title,
-            f"{message}\n\nDossier:\n{result.project_dir}",
+            f"{message}{_cad_summary(result)}\n\nDossier:\n{result.project_dir}",
         )
 
     def _show_quick_creation_confirmation(
@@ -1392,7 +1413,7 @@ class ProjectFlowController:
         )
         dialog = QuickCreationConfirmationDialog(
             title=title,
-            message=message,
+            message=f"{message}{_cad_summary(result)}",
             project_dir=result.project_dir,
             parent=self._window if self._window.isVisible() else None,
         )
@@ -1424,7 +1445,10 @@ class ProjectFlowController:
             self.open_repertoire()
             return
         if action == "edit":
-            self._window.creation_tab.set_form_data(data)
+            # The CAD files were created: editing must not offer to add them again.
+            self._window.creation_tab.set_form_data(
+                replace(data, add_solidworks=False, add_autocad=False),
+            )
             self._window.show_and_raise()
             return
         if action == "next":
@@ -1505,6 +1529,22 @@ class ProjectFlowController:
         self._window.sortie_tab.append_log(f"! {message}")
         if not self._closing:
             QMessageBox.critical(self._window, "Sortie dossier", message)
+
+
+def _cad_summary(result: ProjectCreationResult) -> str:
+    if not (result.cad_files or result.cad_warnings or result.cad_error):
+        return ""
+    counts = {
+        status: sum(1 for item in result.cad_files if item.status == status)
+        for status in ("created", "skipped", "error")
+    }
+    summary = (
+        f"\n\nFichiers CAO : {counts['created']} cree(s), {counts['skipped']} ignore(s), "
+        f"{counts['error']} en erreur."
+    )
+    if result.cad_warnings or result.cad_error:
+        summary += " Details dans le journal."
+    return summary
 
 
 def _non_empty_changed(current: str, existing: str) -> bool:

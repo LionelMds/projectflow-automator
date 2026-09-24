@@ -15,7 +15,15 @@ flowchart LR
   Outlook --> MacMail["Mail natif macOS via Apple Events"]
   Service -. optionnel .-> Planner["Graph Planner"]
   Planner --> M365["Microsoft Planner"]
+  Service -. optionnel .-> Cad["CadTemplateService"]
+  Cad --> Models["Dossiers modeles CAO"]
+  Cad --> DM["SolidWorks Document Manager (COM)"]
 ```
+
+Les operations CAO (`projectflow.cad`) tournent dans le thread de fichiers
+(`run_file_io`). L'acces COM est isole derriere les protocoles de
+`cad/solidworks_properties.py` ; les tests et le mode demo utilisent un faux Document Manager
+(`cad/demo_document_manager.py`).
 
 ## Premier lancement
 

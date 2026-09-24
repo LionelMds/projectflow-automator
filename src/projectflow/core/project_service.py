@@ -5,10 +5,16 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
-from projectflow.config import AppConfig, OutlookFolderConfig
+from projectflow.cad.templates import CadTemplateService
+from projectflow.config import AppConfig, CadConfig, OutlookFolderConfig
 from projectflow.core.background_io import file_io_lock, run_file_io
 from projectflow.core.fiche_service import FicheService, standard_fiche_path
-from projectflow.core.models import ProjectCreationResult, ProjectDeletionResult, ProjectInput
+from projectflow.core.models import (
+    CadOutcome,
+    ProjectCreationResult,
+    ProjectDeletionResult,
+    ProjectInput,
+)
 from projectflow.core.numero import project_folder_name
 from projectflow.core.repertoire_service import RepertoireRow, RepertoireService
 from projectflow.exceptions import ConfigError, ProjectCreationError
@@ -33,6 +39,18 @@ class PlannerGateway(Protocol):
         """Delete every Planner task matching this project."""
 
 
+class CadGateway(Protocol):
+    def apply(
+        self,
+        project: ProjectInput,
+        project_dir: Path,
+        *,
+        config: CadConfig,
+        initials: str,
+    ) -> CadOutcome:
+        """Copy the requested CAD templates without replacing existing files (blocking)."""
+
+
 PinPathCallable = Callable[[Path], None]
 TrashPathCallable = Callable[[Path], bool]
 
@@ -48,8 +66,10 @@ class ProjectService:
         planner: PlannerGateway | None = None,
         pin_path: PinPathCallable | None = None,
         trash_path: TrashPathCallable | None = None,
+        cad: CadGateway | None = None,
     ) -> None:
         self._config = config
+        self._cad: CadGateway = cad or CadTemplateService()
         self._fiche_service = fiche_service
         self._repertoire_service = repertoire_service
         self._outlook = outlook
@@ -85,6 +105,7 @@ class ProjectService:
                 force_overwrite=force_overwrite,
             )
 
+        cad = await self._apply_cad(project, project_dir)
         outlook_created, outlook_error = await self._apply_outlook(project, outlook)
         (
             planner_task_id,
@@ -106,6 +127,9 @@ class ProjectService:
             planner_task_updated=planner_updated,
             outlook_error=outlook_error,
             planner_error=planner_error,
+            cad_files=cad.files,
+            cad_warnings=cad.warnings,
+            cad_error=_cad_error(cad),
         )
 
     async def create_subproject(self, project: ProjectInput) -> ProjectCreationResult:
@@ -125,6 +149,7 @@ class ProjectService:
             initials=self._config.user.initials,
         )
         await self._repertoire_service.upsert_project(project)
+        cad = await self._apply_cad(project, project_dir)
         (
             planner_task_id,
             planner_created,
@@ -139,6 +164,9 @@ class ProjectService:
             planner_task_created=planner_created,
             planner_task_updated=planner_updated,
             planner_error=planner_error,
+            cad_files=cad.files,
+            cad_warnings=cad.warnings,
+            cad_error=_cad_error(cad),
         )
 
     async def update_project(self, project: ProjectInput) -> ProjectCreationResult:
@@ -156,6 +184,7 @@ class ProjectService:
             initials=self._config.user.initials,
         )
         await self._repertoire_service.upsert_project(project, force_overwrite=True)
+        cad = await self._apply_cad(project, project_dir)
         outlook_created, outlook_error = await self._apply_outlook(project, outlook)
         (
             planner_task_id,
@@ -175,6 +204,9 @@ class ProjectService:
             planner_task_updated=planner_updated,
             outlook_error=outlook_error,
             planner_error=planner_error,
+            cad_files=cad.files,
+            cad_warnings=cad.warnings,
+            cad_error=_cad_error(cad),
         )
 
     def _prepare_project_files(
@@ -318,6 +350,20 @@ class ProjectService:
             )
         return self._planner
 
+    async def _apply_cad(self, project: ProjectInput, project_dir: Path) -> CadOutcome:
+        if not (project.add_solidworks or project.add_autocad):
+            return CadOutcome()
+        try:
+            return await run_file_io(
+                self._cad.apply,
+                project,
+                project_dir,
+                config=self._config.cad.model_copy(deep=True),
+                initials=self._config.user.initials,
+            )
+        except Exception as exc:  # noqa: BLE001 - CAD files never cancel the project
+            return CadOutcome(errors=(_integration_error_message(exc),))
+
     async def _apply_outlook(
         self,
         project: ProjectInput,
@@ -351,6 +397,10 @@ class ProjectService:
             )
         except Exception as exc:  # noqa: BLE001 - isolate one integration from the others
             return None, False, False, _integration_error_message(exc)
+
+
+def _cad_error(outcome: CadOutcome) -> str | None:
+    return " ; ".join(outcome.errors) or None
 
 
 def _integration_error_message(error: Exception) -> str:

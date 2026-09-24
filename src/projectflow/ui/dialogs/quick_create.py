@@ -18,8 +18,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from projectflow.config import CadConfig
 from projectflow.core.client_directory import ClientDirectory
 from projectflow.ui.creation_tab import CreationFormData
+from projectflow.ui.widgets.cad import CadOptionsWidget
 from projectflow.ui.widgets.client_autocomplete import ClientAutocomplete
 from projectflow.ui.widgets.planner import PlannerSelectionWidget
 
@@ -37,6 +39,7 @@ class QuickCreateDialog(QDialog):
         self._build_ui()
 
     def data(self) -> CreationFormData:
+        add_solidworks, add_autocad = self.cad_options.values()
         return CreationFormData(
             year=self.year_combo.currentText().strip(),
             project_id=self.project_id_edit.text().strip(),
@@ -47,6 +50,8 @@ class QuickCreateDialog(QDialog):
             localisation=self.localisation_edit.text().strip(),
             gere_par=self.gere_par_edit.text().strip(),
             planner=self.planner_widget.data(),
+            add_solidworks=add_solidworks,
+            add_autocad=add_autocad,
         )
 
     def set_data(self, data: CreationFormData) -> None:
@@ -64,6 +69,7 @@ class QuickCreateDialog(QDialog):
         self.localisation_edit.setText(data.localisation)
         self.gere_par_edit.setText(data.gere_par)
         self.planner_widget.set_data(data.planner)
+        self.cad_options.set_values(solidworks=data.add_solidworks, autocad=data.add_autocad)
 
     def set_project_identity(
         self,
@@ -98,6 +104,9 @@ class QuickCreateDialog(QDialog):
             bucket_name=bucket_name,
             due_days=due_days,
         )
+
+    def apply_cad_config(self, cad: CadConfig) -> None:
+        self.cad_options.apply_config(cad)
 
     def set_client_directory(self, directory: ClientDirectory) -> None:
         self._client_autocomplete.set_directory(directory)
@@ -182,6 +191,9 @@ class QuickCreateDialog(QDialog):
         self.planner_widget = PlannerSelectionWidget()
         self.planner_widget.options_requested.connect(self.planner_options_requested.emit)
         layout.addWidget(self.planner_widget)
+
+        self.cad_options = CadOptionsWidget()
+        layout.addWidget(self.cad_options)
 
         buttons = QDialogButtonBox()
         create_button = QPushButton("Creer")

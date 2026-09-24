@@ -110,6 +110,105 @@ s'affiche pas dans le navigateur, cliquer sur `Ouvrir la page de connexion`, ou 
 `Copier le lien` puis le coller dans la barre d'adresse d'Edge ou de Chrome. La fenetre se
 ferme d'elle-meme une fois la connexion terminee.
 
+## Fichiers CAO (SolidWorks et AutoCAD)
+
+Deux cases, sous le cadre Planner de la fenetre principale et au-dessus du bouton `Creer` du
+formulaire rapide, ajoutent les fichiers CAO au projet :
+
+- `Ajouter arborescence SolidWorks` copie les fichiers SolidWorks modeles, les renomme avec le
+  numero du projet, relie l'assemblage aux pieces du projet et renseigne les proprietes ;
+- `Ajouter modèle AutoCAD` copie et renomme le plan DWG modele.
+
+Les cases sont decochees au demarrage, apres `Reinitialiser` et apres chaque creation reussie :
+leur etat n'est jamais memorise. Une case grisee indique que son dossier modele n'est pas
+configure ou est introuvable ; l'infobulle en donne la raison.
+
+Les cases fonctionnent aussi pour les sous-projets (`2026-5233-2-ENS-100.SLDASM`, place dans le
+sous-dossier `2026-5233-2` s'il existe) et avec `Mettre a jour` ou une nouvelle creation sur un
+projet existant : seuls les fichiers manquants sont ajoutes, aucun fichier existant n'est
+jamais ecrase. Le journal liste les fichiers crees, ignores (deja presents) ou en erreur. Un
+echec CAO n'annule pas la creation du projet.
+
+### Preparer les modeles
+
+Dans `Parametres`, section `Modèles CAO` :
+
+- `Dossier modele SolidWorks` : dossier distinct du dossier de reference (sinon les modeles
+  seraient copies a chaque creation), par exemple
+  `C:\Users\Lionel\OneDrive - Balz Metal Sa\Entreprise\00-Bibliothèque CAO\10-Modèles et documents\11-Racine Solidworks` ;
+- `Dossier modele AutoCAD`, par exemple `...\10-Modèles et documents\12-Racine AutoCAD` ;
+- `Sous-dossier dans le projet` : vide pour la racine du projet, ou par exemple `03-CAO` ;
+- `Cle Document Manager` : voir ci-dessous ;
+- `Proprietes` : noms exacts, accents compris, des proprietes SolidWorks renseignees.
+
+Les noms des fichiers modeles contiennent le marqueur `20XX-XXXX` (sans accolades), remplace a la
+copie par le numero du projet, y compris dans les noms de sous-dossiers :
+
+```text
+20XX-XXXX-ENS-100.SLDASM   assemblage general (contient ENV-100, PRT-100, PRT-200)
+20XX-XXXX-ENV-100.SLDPRT   environnement
+20XX-XXXX-PRT-100.SLDPRT
+20XX-XXXX-PRT-200.SLDPRT
+20XX-XXXX-ENS-100.dwg      dossier AutoCAD ; le cartouche utilise le champ « nom de fichier »
+```
+
+Seuls les fichiers dont le nom contient le marqueur sont copies. Les fichiers temporaires
+(`~$*`, `*.bak`, `*.dwl`, `*.dwl2`) sont ignores. Les copies sont rendues modifiables (attribut
+lecture seule retire).
+
+Proprietes personnalisees ecrites au niveau fichier (pas configuration) dans les copies :
+
+| Propriete | Valeur |
+|---|---|
+| toutes | le marqueur `20XX-XXXX` est remplace par le numero (les modeles contiennent `Projet = 20XX-XXXX`) |
+| `Projet` | le numero du projet si la propriete est vide |
+| `Client` | la societe du formulaire |
+| `Auteur` | les initiales utilisateur des parametres |
+| `Description` | la designation, seulement pour `ENS-100` |
+| `Révision` | `A` si vide |
+| `Fournisseur` et les autres | valeur du modele conservee |
+
+### Garder les modeles disponibles hors connexion
+
+Les dossiers modeles sont sur OneDrive : dans l'Explorateur, clic droit sur chaque dossier
+modele -> `Toujours conserver sur cet appareil`. Un fichier present seulement en ligne peut
+faire echouer la copie ; ProjectFlow l'indique alors dans le journal.
+
+### Cle SolidWorks Document Manager
+
+ProjectFlow modifie les fichiers SolidWorks avec SolidWorks Document Manager, installe avec
+SolidWorks, sans lancer SolidWorks. Il faut une cle de licence Document Manager :
+
+1. Se connecter au portail client SOLIDWORKS (`customerportal.solidworks.com`) avec un compte
+   rattache a une licence sous abonnement.
+2. Demander une cle `Document Manager API` (menu API Support / Document Manager Key Request).
+3. Coller la cle recue dans `Parametres` -> `Modèles CAO` -> `Cle Document Manager`, puis `OK`.
+
+La cle est rangee dans le gestionnaire d'identifiants du systeme, jamais dans le fichier de
+configuration ni dans les journaux. Laisser le champ vide conserve la cle ; `Effacer la cle` la
+supprime.
+
+Sans Document Manager (logiciel absent, cle manquante ou invalide, ou macOS), l'option
+SolidWorks ne copie pas les assemblages ni les mises en plan, pour ne jamais laisser un
+assemblage relie aux modeles ; elle copie les pieces sans renseigner les proprietes et affiche un
+avertissement. L'option AutoCAD fonctionne partout.
+
+### References de l'assemblage
+
+L'assemblage modele pointe vers les pieces modeles. Apres la copie, ProjectFlow remplace chaque
+reference vers un fichier modele par le fichier renomme du projet, enregistre, puis relit les
+references. Si une reference pointe encore vers le dossier modele, la copie de l'assemblage est
+supprimee et une erreur explicite est affichee : les modeles ne peuvent pas etre modifies par
+erreur depuis un projet. Les references enregistrees sur un autre poste (autre chemin
+OneDrive) sont reconnues par le nom du fichier.
+
+Les copies conservent les identifiants internes SolidWorks des modeles, comme avec `Pack and Go`.
+SolidWorks accepte donc sans avertissement l'assemblage relie aux pieces copiees. En contrepartie,
+tous les projets partagent ces identifiants : remplacer un composant par la piece du meme modele
+d'un autre projet ne declenchera pas d'alerte, et les modeles ne doivent pas etre recrees de zero
+(un nouveau fichier aurait un autre identifiant et SolidWorks signalerait une reference qui ne
+correspond pas dans les assemblages existants).
+
 ## Creer un projet
 
 1. Saisir l'annee et l'ID projet, par exemple `2026` et `4995`.
@@ -118,7 +217,8 @@ ferme d'elle-meme une fois la connexion terminee.
 4. Configurer Planner dans les parametres si une tache peut etre creee.
 5. Dans le formulaire, cocher `Creer une tache Planner`, choisir la colonne, les membres et
    l'echeance si necessaire.
-6. Cliquer sur `Creer`.
+6. Cocher si besoin `Ajouter arborescence SolidWorks` et `Ajouter modèle AutoCAD`.
+7. Cliquer sur `Creer`.
 
 ProjectFlow cree le dossier projet, copie le dossier de reference sans ecraser, remplit la
 fiche client, inscrit la date d'atelier en `E2` sans modifier `B9`, et met a jour le repertoire chantier. Si ce

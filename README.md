@@ -15,6 +15,12 @@ lien utilise pour l'ecriture cloud. Les parametres memorisent les initiales util
 la boite mail, le plan et la colonne Planner. Voir le [guide des parametres et de l'ouverture
 Excel](docs/repertoire-opening.md), qui explique aussi les droits des liens de partage.
 
+Les options **Ajouter arborescence SolidWorks** et **Ajouter modèle AutoCAD** copient les
+modeles CAO `20XX-XXXX-*` dans le projet en les renommant avec son numero. Pour SolidWorks,
+l'assemblage est relie aux pieces du projet et les proprietes sont renseignees via SolidWorks
+Document Manager (cle de licence dans les parametres). Voir la section
+[Fichiers CAO](docs/user-guide.md#fichiers-cao-solidworks-et-autocad) du guide.
+
 Le responsable saisi dans **Gere par** est inscrit en **C6**. Les **Initiales utilisateur**,
 definies dans les parametres et affichees a cote, sont inscrites separement en **C9**.
 
@@ -97,10 +103,13 @@ Ce mode cree un environnement local dans le dossier de donnees utilisateur Proje
 
 - `Clients/`
 - `Modeles/10-Racine/`
+- `Modeles/11-Racine Solidworks/` et `Modeles/12-Racine AutoCAD/` : faux modeles CAO
 - `Repertoire chantier demo.xlsx`
 
 Il permet de tester `Suivant disponible`, `Creer`, `Charger`, `Ouvrir dossier`, `Ouvrir fiche`,
-`Mettre a jour`, et Outlook local si un profil Outlook classique est disponible.
+`Mettre a jour`, et Outlook local si un profil Outlook classique est disponible. Les options
+CAO y fonctionnent sans SolidWorks : les faux fichiers SolidWorks sont de petits fichiers JSON
+lus et ecrits par un Document Manager de demonstration, copies dans le sous-dossier `CAO`.
 
 ## Variables utiles
 
@@ -217,6 +226,8 @@ Le MVP couvre :
 - Outlook local Windows via le profil Outlook classique, desactive par defaut,
 - Mail macOS via l'application native Mail, desactive par defaut,
 - Planner configurable par plan/bucket, desactive par defaut dans chaque nouveau formulaire,
+- copie optionnelle des modeles SolidWorks (references d'assemblage et proprietes via
+  Document Manager) et AutoCAD, sans ecraser,
 - assistant de premiere configuration base uniquement sur les chemins.
 
 Outlook local utilise le profil Outlook classique du poste Windows : `Parametres` -> `Outlook`

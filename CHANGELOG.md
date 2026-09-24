@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Ajoute les options `Ajouter arborescence SolidWorks` et `Ajouter modèle AutoCAD` dans la
+  fenetre principale (cadre `Fichiers CAO`) et dans le formulaire rapide. Decochees par defaut,
+  jamais memorisees, grisees avec une explication si le dossier modele manque. Elles copient
+  les fichiers modeles `20XX-XXXX-*` en les renommant avec le numero du projet ou du
+  sous-projet, sans jamais ecraser un fichier existant ; `Mettre a jour` ajoute seulement les
+  fichiers manquants.
+- SolidWorks : via SolidWorks Document Manager, sans lancer SolidWorks, l'assemblage copie est
+  relie aux pieces du projet (references relues et verifiees : aucune ne doit rester vers les
+  modeles) et les proprietes personnalisees `Projet`, `Client`, `Auteur`, `Description`
+  (ENS-100) et `Révision` sont renseignees. Sans Document Manager, les assemblages ne sont pas
+  copies et un avertissement s'affiche.
+- Ajoute la section `Modèles CAO` des parametres : dossiers modeles SolidWorks et AutoCAD,
+  sous-dossier de destination, noms des proprietes et cle Document Manager rangee dans le
+  gestionnaire d'identifiants du systeme.
+- Le journal et la confirmation de creation listent les fichiers CAO crees, ignores ou en
+  erreur ; un echec CAO n'annule pas la creation du projet. Le mode demo fournit de faux
+  modeles CAO.
+
 ## 0.1.44
 
 - Corrige la connexion Microsoft de la 0.1.43 : le navigateur affichait

@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "_applied_planner_config", None) != self._config.planner:
             self.creation_tab.apply_planner_config(self._config.planner)
             self._applied_planner_config = self._config.planner.model_copy(deep=True)
+        self.creation_tab.apply_cad_config(self._config.cad)
         self.creation_tab.set_user_initials(self._config.user.initials)
 
     def set_background_mode_enabled(self, *, enabled: bool) -> None:

@@ -120,6 +120,53 @@ class PlannerConfig(BaseModel):
         return self.bucket_id.strip()
 
 
+class CadPropertyNames(BaseModel):
+    """Names of the SolidWorks file-level custom properties filled by ProjectFlow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    projet: str = "Projet"
+    client: str = "Client"
+    auteur: str = "Auteur"
+    description: str = "Description"
+    revision: str = "Révision"
+    revision_defaut: str = "A"
+
+    @field_validator("projet", "client", "auteur", "description", "revision", "revision_defaut")
+    @classmethod
+    def strip_value(cls, value: str) -> str:
+        return value.strip()
+
+
+class CadConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    solidworks_template_dir: Path | None = None
+    autocad_template_dir: Path | None = None
+    destination_subfolder: str = ""
+    properties: CadPropertyNames = Field(default_factory=CadPropertyNames)
+
+    @field_validator("solidworks_template_dir", "autocad_template_dir", mode="before")
+    @classmethod
+    def expand_paths(cls, value: object) -> object:
+        if value in (None, ""):
+            return None
+        if isinstance(value, str | Path):
+            return expand_user_path(value)
+        return value
+
+    @field_validator("destination_subfolder")
+    @classmethod
+    def normalize_subfolder(cls, value: str) -> str:
+        parts = [part.strip() for part in value.replace("\\", "/").split("/")]
+        parts = [part for part in parts if part and part != "."]
+        if any(part == ".." for part in parts) or (value.strip()[:1] in {"/", "\\"}):
+            raise ValueError("Le sous-dossier CAO doit etre un chemin relatif au dossier projet.")
+        if any(":" in part for part in parts):
+            raise ValueError("Le sous-dossier CAO doit etre un chemin relatif au dossier projet.")
+        return "/".join(parts)
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -128,6 +175,7 @@ class AppConfig(BaseModel):
     paths: PathsConfig = Field(default_factory=PathsConfig)
     outlook: OutlookConfig = Field(default_factory=OutlookConfig)
     planner: PlannerConfig = Field(default_factory=PlannerConfig)
+    cad: CadConfig = Field(default_factory=CadConfig)
 
     @property
     def is_onboarded(self) -> bool:
