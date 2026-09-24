@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.45
+
 - Ajoute les options `Ajouter arborescence SolidWorks` et `Ajouter modèle AutoCAD` dans la
   fenetre principale (cadre `Fichiers CAO`) et dans le formulaire rapide. Decochees par defaut,
   jamais memorisees, grisees avec une explication si le dossier modele manque. Elles copient
