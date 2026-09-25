@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.50
+
 - Corrige l'erreur `13` lors de la copie SolidWorks : Document Manager renvoie les composants
   d'un assemblage dans un tableau d'objets COM que comtypes ne sait pas convertir
   (`KeyError: 13`). Le tableau est maintenant decode directement.
