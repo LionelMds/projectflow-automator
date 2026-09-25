@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.54
+
 - La Description (designation du projet) de l'`ENS-100` est ecrite dans les proprietes de chaque
   configuration, et non plus au niveau fichier. Le marqueur `20XX-XXXX` est aussi remplace dans
   les proprietes de configuration. Un echec a cette etape est un avertissement : la copie est
