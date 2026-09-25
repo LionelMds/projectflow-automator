@@ -144,6 +144,38 @@ def make_writable(path: Path) -> None:
         path.chmod(mode | stat.S_IWRITE)
 
 
+def check_document_manager(
+    license_key: str,
+    template_dir: Path | None,
+    *,
+    manager_factory: DocumentManagerFactory = open_document_manager,
+) -> str:
+    """Open Document Manager and one template to validate the key; raise CadError otherwise."""
+    sample = _first_solidworks_template(template_dir)
+    with manager_factory(license_key) as manager:
+        if sample is None:
+            return (
+                "Document Manager est installe. La cle sera verifiee a la premiere creation : "
+                "aucun fichier SolidWorks modele trouve."
+            )
+        with manager.open_document(sample, read_only=True):
+            pass
+    return f"Document Manager et cle de licence valides (test sur {sample.name})."
+
+
+def _first_solidworks_template(template_dir: Path | None) -> Path | None:
+    if template_dir is None or not template_dir.is_dir():
+        return None
+    candidates = sorted(
+        path
+        for path in template_dir.rglob("*")
+        if path.suffix.casefold() in SOLIDWORKS_SUFFIXES
+        and contains_marker(path.name)
+        and not is_temporary_cad_file(path.name)
+    )
+    return candidates[0] if candidates else None
+
+
 class CadTemplateService:
     def __init__(
         self,

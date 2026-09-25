@@ -13,9 +13,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from projectflow.cad.document_manager_registry import (
+    class_factory_prog_ids,
+    default_registry,
+    diagnose_document_manager,
+)
 from projectflow.exceptions import CadError, CadUnavailableError
 
-SW_DM_CLASS_FACTORY = "SwDocumentMgr.SwDMClassFactory"
 # SwDmDocumentType
 _DOCUMENT_TYPES = {".sldprt": 1, ".sldasm": 2, ".slddrw": 3}
 # SwDmDocumentOpenError
@@ -132,10 +136,7 @@ def open_document_manager(license_key: str) -> Iterator[DocumentManagerSession]:
     com = _load_com_modules()
     com.pythoncom.CoInitialize()
     try:
-        try:
-            factory = com.client.Dispatch(SW_DM_CLASS_FACTORY)
-        except com.error as exc:
-            raise CadUnavailableError("SolidWorks Document Manager n'est pas installe") from exc
+        factory = _dispatch_class_factory(com)
         try:
             application = factory.GetApplication(license_key.strip())
         except com.error as exc:
@@ -145,6 +146,29 @@ def open_document_manager(license_key: str) -> Iterator[DocumentManagerSession]:
         yield DocumentManagerSession(application, com)
     finally:
         com.pythoncom.CoUninitialize()
+
+
+def _dispatch_class_factory(com: _ComModules) -> Any:
+    registry = default_registry()
+    last_error: BaseException | None = None
+    for prog_id in class_factory_prog_ids(registry):
+        try:
+            return com.client.Dispatch(prog_id)
+        except com.error as exc:
+            last_error = exc
+    reason = diagnose_document_manager(registry)
+    raise CadUnavailableError(
+        f"SolidWorks Document Manager introuvable : {reason} ({_com_error_text(last_error)})",
+    ) from last_error
+
+
+def _com_error_text(error: BaseException | None) -> str:
+    if error is None:
+        return "aucune erreur COM"
+    args: tuple[object, ...] = tuple(getattr(error, "args", ()))
+    if len(args) >= 2 and isinstance(args[0], int):  # noqa: PLR2004 - (hresult, message, ...)
+        return f"erreur COM 0x{args[0] & 0xFFFFFFFF:08X} {str(args[1]).strip()}"
+    return f"erreur COM {error}"
 
 
 def _load_com_modules() -> _ComModules:

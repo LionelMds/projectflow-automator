@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.cad.license_storage import SolidWorksLicenseStorage
+from projectflow.cad.templates import check_document_manager
 from projectflow.config import AppConfig, CadConfig, CadPropertyNames, RepertoireChantierConfig
 from projectflow.exceptions import ProjectFlowError
 from projectflow.graph.client import GraphClient
@@ -271,7 +272,13 @@ class SettingsDialog(QDialog):
         license_row = QWidget()
         license_layout = QHBoxLayout(license_row)
         license_layout.setContentsMargins(0, 0, 0, 0)
+        self.solidworks_license_test_button = QPushButton("Tester")
+        self.solidworks_license_test_button.setToolTip(
+            "Verifie que Document Manager est installe et que la cle ouvre un fichier modele.",
+        )
+        self.solidworks_license_test_button.clicked.connect(self._test_document_manager)
         license_layout.addWidget(self.solidworks_license_edit, 1)
+        license_layout.addWidget(self.solidworks_license_test_button)
         license_layout.addWidget(self.solidworks_license_clear_button)
         layout.addRow(
             "Dossier modele SolidWorks",
@@ -304,6 +311,20 @@ class SettingsDialog(QDialog):
         properties_layout.setColumnStretch(3, 1)
         layout.addRow("Proprietes", properties)
         return group
+
+    def _test_document_manager(self) -> None:
+        key = self.solidworks_license_edit.text().strip()
+        if not key and not self._license_clear_requested:
+            key = self._license_storage.load()
+        try:
+            message = check_document_manager(
+                key,
+                _optional_path(self.cad_solidworks_edit.text()),
+            )
+        except ProjectFlowError as exc:
+            self._show_error("Document Manager", str(exc))
+            return
+        QMessageBox.information(self, "Document Manager", message)
 
     def _request_license_clear(self) -> None:
         self._license_clear_requested = True

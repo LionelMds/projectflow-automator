@@ -324,3 +324,37 @@ def test_settings_dialog_refuses_cad_template_inside_reference_folder(
 
     assert dialog.result() != dialog.DialogCode.Accepted
     assert "distincts du dossier de reference" in warnings[0]
+
+
+def test_settings_dialog_tests_document_manager_with_stored_key(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_license_keyring: Any,
+) -> None:
+    memory_license_keyring.set_password(
+        "ProjectFlow Automator",
+        "solidworks-document-manager-license",
+        "cle-stockee",
+    )
+    calls: list[tuple[str, Path | None]] = []
+    messages: list[str] = []
+
+    def fake_check(key: str, template_dir: Path | None) -> str:
+        calls.append((key, template_dir))
+        return "Document Manager et cle de licence valides."
+
+    monkeypatch.setattr("projectflow.ui.dialogs.settings.check_document_manager", fake_check)
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, _title, text: messages.append(text),
+    )
+    dialog = SettingsDialog(AppConfig())
+    qtbot.addWidget(dialog)
+    dialog.cad_solidworks_edit.setText(str(tmp_path))
+
+    dialog.solidworks_license_test_button.click()
+
+    assert calls == [("cle-stockee", tmp_path)]
+    assert messages == ["Document Manager et cle de licence valides."]

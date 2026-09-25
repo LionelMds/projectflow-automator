@@ -25,6 +25,7 @@ from projectflow.cad.solidworks_properties import compute_property_updates
 from projectflow.cad.templates import (
     CadTemplateService,
     cad_destination_dir,
+    check_document_manager,
     copy_new_file,
     plan_template_copy,
     template_availability,
@@ -569,3 +570,23 @@ async def test_subproject_creation_adds_cad_files(tmp_path: Path) -> None:
     result = await service.create_subproject(_project("2026-5233-2", add_autocad=True))
 
     assert [item.name for item in result.cad_files] == ["2026-5233-2-ENS-100.dwg"]
+
+
+def test_check_document_manager_opens_a_template(tmp_path: Path) -> None:
+    template_dir = _solidworks_templates(tmp_path)
+
+    message = check_document_manager(
+        DEMO_LICENSE_KEY,
+        template_dir,
+        manager_factory=open_json_document_manager,
+    )
+
+    assert "cle de licence valides" in message
+    assert "20XX-XXXX-ENS-100.SLDASM" in message
+    with pytest.raises(CadUnavailableError):
+        check_document_manager("mauvaise", template_dir, manager_factory=open_json_document_manager)
+    assert "verifiee a la premiere creation" in check_document_manager(
+        DEMO_LICENSE_KEY,
+        None,
+        manager_factory=open_json_document_manager,
+    )

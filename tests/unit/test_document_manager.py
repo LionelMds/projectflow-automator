@@ -7,6 +7,10 @@ import pytest
 
 from projectflow.cad import document_manager
 from projectflow.cad.document_manager import _ComModules, open_document_manager
+from projectflow.cad.document_manager_registry import (
+    class_factory_prog_ids,
+    diagnose_document_manager,
+)
 from projectflow.exceptions import CadError, CadUnavailableError
 
 
@@ -110,20 +114,56 @@ class FakeFactory:
 class FakeClient:
     VARIANT = FakeVariant
 
-    def __init__(self, factory: FakeFactory | None) -> None:
+    def __init__(self, factory: FakeFactory | None, prog_id: str) -> None:
         self.factory = factory
+        self.prog_id = prog_id
+        self.attempts: list[str] = []
 
     def Dispatch(self, prog_id: str) -> FakeFactory:  # noqa: N802
-        assert prog_id == "SwDocumentMgr.SwDMClassFactory"
-        if self.factory is None:
-            raise FakeComError("Classe non enregistree")
+        self.attempts.append(prog_id)
+        if self.factory is None or prog_id != self.prog_id:
+            raise FakeComError(-2147221005, "Chaine de classe non valide", None, None)
         return self.factory
 
 
-def _install(monkeypatch: pytest.MonkeyPatch, factory: FakeFactory | None) -> FakePythoncom:
+class FakeRegistry:
+    def __init__(
+        self,
+        values: dict[str, str] | None = None,
+        values_32: dict[str, str] | None = None,
+        keys: list[str] | None = None,
+    ) -> None:
+        self.values = values or {}
+        self.values_32 = values_32 or {}
+        self.keys = keys or []
+
+    def default_value(self, path: str, *, wow64_32: bool = False) -> str | None:
+        return (self.values_32 if wow64_32 else self.values).get(path)
+
+    def subkeys(self, path: str = "") -> list[str]:
+        assert path == ""
+        return self.keys
+
+
+def _install(
+    monkeypatch: pytest.MonkeyPatch,
+    factory: FakeFactory | None,
+    *,
+    prog_id: str = "SwDocumentMgr.SwDMClassFactory",
+    registry: FakeRegistry | None = None,
+) -> FakePythoncom:
     pythoncom = FakePythoncom()
-    com = _ComModules(pythoncom, FakeClient(factory), FakeComError)
+    com = _ComModules(pythoncom, FakeClient(factory, prog_id), FakeComError)
     monkeypatch.setattr(document_manager, "_load_com_modules", lambda: com)
+    monkeypatch.setattr(
+        document_manager,
+        "default_registry",
+        lambda: registry or FakeRegistry(),
+    )
+    monkeypatch.setattr(
+        "projectflow.cad.document_manager_registry.installed_dll_candidates",
+        list,
+    )
     return pythoncom
 
 
@@ -168,7 +208,7 @@ def test_document_manager_invalid_license_is_unavailable(monkeypatch: pytest.Mon
 @pytest.mark.parametrize(
     ("factory", "message"),
     [
-        (None, "n'est pas installe"),
+        (None, "introuvable : SwDocumentMgr.dll est introuvable.*0x800401F3"),
         (FakeFactory(None), "refusee"),
     ],
 )
@@ -205,3 +245,65 @@ def test_document_manager_reports_open_and_save_errors(monkeypatch: pytest.Monke
             manager.open_document(Path("a.SLDPRT")),
         ):
             pass
+
+
+def test_document_manager_uses_versioned_prog_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    factory = FakeFactory(FakeApplication(FakeDocument()))
+    registry = FakeRegistry(
+        keys=[
+            "SwDocumentMgr.SwDMClassFactory.33",
+            "SwDocumentMgr.SwDMClassFactory.34",
+            "Other.Class",
+        ],
+    )
+    _install(
+        monkeypatch,
+        factory,
+        prog_id="SwDocumentMgr.SwDMClassFactory.34",
+        registry=registry,
+    )
+
+    with open_document_manager("cle"):
+        pass
+
+    assert factory.keys == ["cle"]
+    assert class_factory_prog_ids(registry) == [
+        "SwDocumentMgr.SwDMClassFactory",
+        "SwDocumentMgr.SwDMClassFactory.34",
+        "SwDocumentMgr.SwDMClassFactory.33",
+    ]
+
+
+def test_diagnose_dll_present_but_not_registered(tmp_path: Path) -> None:
+    dll = tmp_path / "SwDocumentMgr.dll"
+    dll.write_bytes(b"")
+
+    reason = diagnose_document_manager(FakeRegistry(), dll_candidates=lambda: [dll])
+
+    assert "n'est pas inscrit" in reason
+    assert f'regsvr32 "{dll}"' in reason
+
+
+def test_diagnose_registered_in_32_bits_only() -> None:
+    registry = FakeRegistry(
+        values={"SwDocumentMgr.SwDMClassFactory\\CLSID": "{CLSID}"},
+        values_32={"CLSID\\{CLSID}\\InprocServer32": "C:/x86/SwDocumentMgr.dll"},
+    )
+
+    assert "32 bits seulement" in diagnose_document_manager(registry, dll_candidates=list)
+
+
+def test_diagnose_registered_dll_missing(tmp_path: Path) -> None:
+    missing = tmp_path / "absent" / "SwDocumentMgr.dll"
+    registry = FakeRegistry(
+        values={
+            "SwDocumentMgr.SwDMClassFactory\\CLSID": "{CLSID}",
+            "CLSID\\{CLSID}\\InprocServer32": f'"{missing}"',
+        },
+    )
+
+    assert "DLL inscrite" in diagnose_document_manager(registry, dll_candidates=list)
+
+
+def test_diagnose_without_registry() -> None:
+    assert diagnose_document_manager(None) == "registre Windows inaccessible"

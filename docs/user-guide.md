@@ -184,6 +184,17 @@ SolidWorks, sans lancer SolidWorks. Il faut une cle de licence Document Manager 
 2. Demander une cle `Document Manager API` (menu API Support / Document Manager Key Request).
 3. Coller la cle recue dans `Parametres` -> `Modèles CAO` -> `Cle Document Manager`, puis `OK`.
 
+Le bouton `Tester`, a cote de la cle, verifie que Document Manager est installe et que la cle
+ouvre un fichier du dossier modele SolidWorks. En cas d'echec, le message donne la cause :
+
+- `SwDocumentMgr.dll est introuvable` : Document Manager n'est pas installe sur ce poste ;
+  installer SOLIDWORKS ou le SOLIDWORKS Document Manager fourni avec la cle ;
+- `present mais n'est pas inscrit` : la DLL existe mais Windows ne la connait pas ; la commande
+  `regsvr32` affichee doit etre lancee par un administrateur ;
+- `inscrit en 32 bits seulement` : installer la version 64 bits de Document Manager ;
+- `cle de licence ... refusee` ou `invalide` : recoller la cle complete, les deux parties
+  `swdocmgr_general` et `swdocmgr_previews` separees par la virgule, sans espace.
+
 La cle est rangee dans le gestionnaire d'identifiants du systeme, jamais dans le fichier de
 configuration ni dans les journaux. Laisser le champ vide conserve la cle ; `Effacer la cle` la
 supprime.

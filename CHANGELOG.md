@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.1.46
+
+- Document Manager introuvable : le message donne maintenant la cause (DLL absente, presente
+  mais non inscrite avec la commande `regsvr32` a lancer, inscription 32 bits seulement) et
+  le code d'erreur COM, au lieu de « n'est pas installe ».
+- Utilise aussi les ProgID versionnes de Document Manager (`SwDocumentMgr.SwDMClassFactory.NN`)
+  quand seul l'un d'eux est inscrit.
+- Ajoute le bouton `Tester` a cote de la cle Document Manager dans `Modèles CAO`.
+
 ## 0.1.45
 
 - Ajoute les options `Ajouter arborescence SolidWorks` et `Ajouter modèle AutoCAD` dans la
