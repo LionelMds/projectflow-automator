@@ -7,7 +7,7 @@ mode replace it with fakes that satisfy the protocols below.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Protocol
@@ -29,8 +29,12 @@ class SolidWorksDocument(Protocol):
     def set_custom_property(self, name: str, value: str) -> None:
         """Create or update one file-level text custom property."""
 
-    def external_references(self) -> list[str]:
-        """Return the paths of the documents referenced by this document."""
+    def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
+        """Return the paths of the documents referenced by this document.
+
+        ``search_paths`` are folders where the referenced documents can be found (the template
+        folder): some Document Manager versions only list the references they can find.
+        """
 
     def reference_report(self) -> str:
         """Describe what each reference source returned during the last read (for the log)."""

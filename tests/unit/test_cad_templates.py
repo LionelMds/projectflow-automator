@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import stat
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from openpyxl import Workbook
@@ -593,7 +594,8 @@ def test_check_document_manager_opens_a_template(tmp_path: Path) -> None:
 
 
 class _BlindDocument(JsonDocument):
-    def external_references(self) -> list[str]:
+    def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
+        del search_paths
         return []
 
 
@@ -652,15 +654,16 @@ def test_default_destination_reuses_accented_plan_folder(tmp_path: Path) -> None
 
 
 class _CrashingDocument(JsonDocument):
-    def external_references(self) -> list[str]:
+    def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
+        del search_paths
         raise KeyError(13)
 
 
 class _ForgetfulDocument(JsonDocument):
     """References readable when writing, lost when re-reading: nothing can be verified."""
 
-    def external_references(self) -> list[str]:
-        return [] if self._read_only else super().external_references()
+    def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
+        return [] if self._read_only else super().external_references(search_paths)
 
     def reference_report(self) -> str:
         return "liste : 0 ; composants : KeyError 13" if self._read_only else "liste : 3"
@@ -769,3 +772,91 @@ def test_check_document_manager_reports_a_failed_copy(tmp_path: Path) -> None:
 
     with pytest.raises(CadError, match=r"Essai de copie echoue : 2099-9999-ENS-100\.SLDASM"):
         check_document_manager("key", template_dir, manager_factory=factory)
+
+
+def test_check_document_manager_keeps_failed_self_test_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template_dir = _solidworks_templates(tmp_path / "modeles")
+    monkeypatch.setattr(templates.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    factory = _service_with(_StubbornDocument)._manager_factory  # noqa: SLF001
+
+    with pytest.raises(CadError) as raised:
+        check_document_manager("key", template_dir, manager_factory=factory)
+
+    kept = tmp_path / "temp" / "ProjectFlow-essai-CAO"
+    assert "encore liee(s) au dossier modele" in str(raised.value)
+    assert f"Copie d'essai conservee dans {kept}" in str(raised.value)
+    assert (kept / "2099-9999-ENS-100.SLDASM").exists()
+
+
+def test_self_test_folder_is_deleted_after_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template_dir = _solidworks_templates(tmp_path / "modeles")
+    monkeypatch.setattr(templates.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    (tmp_path / "temp" / "ProjectFlow-essai-CAO").mkdir(parents=True)
+
+    check_document_manager(
+        DEMO_LICENSE_KEY,
+        template_dir,
+        manager_factory=open_json_document_manager,
+    )
+
+    assert not (tmp_path / "temp" / "ProjectFlow-essai-CAO").exists()
+
+
+class _RecordingDocument(JsonDocument):
+    searched: ClassVar[list[tuple[str, ...]]] = []
+    replaced: ClassVar[list[tuple[str, str]]] = []
+
+    def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
+        self.searched.append(tuple(str(path) for path in search_paths))
+        return super().external_references(search_paths)
+
+    def replace_reference(self, old_path: str, new_path: str) -> None:
+        self.replaced.append((old_path, new_path))
+        super().replace_reference(old_path, new_path)
+
+
+def test_copy_searches_template_folder_and_verifies_in_a_new_session(tmp_path: Path) -> None:
+    sessions: list[str] = []
+    _RecordingDocument.searched = []
+    _RecordingDocument.replaced = []
+
+    class _Manager(JsonDocumentManager):
+        @contextmanager
+        def open_document(
+            self,
+            path: Path,
+            *,
+            read_only: bool = False,
+        ) -> Iterator[JsonDocument]:
+            yield _RecordingDocument(path, read_only=read_only)
+
+    @contextmanager
+    def factory(key: str) -> Iterator[_Manager]:
+        sessions.append(key)
+        yield _Manager()
+
+    config = _config(tmp_path)
+    template_dir = config.solidworks_template_dir
+    project_dir = tmp_path / "projet"
+    outcome = CadTemplateService(license_key_loader=lambda: "key", manager_factory=factory).apply(
+        _project(add_solidworks=True),
+        project_dir,
+        config=config,
+        initials="LM",
+    )
+
+    assert outcome.errors == ()
+    assert all(item.status == "created" for item in outcome.files)
+    # One session for the copy, then one new session per verified document.
+    assert len(sessions) == 1 + len(outcome.files)
+    assert (str(template_dir), str(project_dir)) in _RecordingDocument.searched
+    assert _RecordingDocument.replaced[0] == (
+        str(template_dir / "20XX-XXXX-ENV-100.SLDPRT"),
+        str(project_dir / "2026-5233-ENV-100.SLDPRT"),
+    )

@@ -33,7 +33,8 @@ class JsonDocument:
     def set_custom_property(self, name: str, value: str) -> None:
         self._properties[name] = value
 
-    def external_references(self) -> list[str]:
+    def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
+        del search_paths
         return list(self._references)
 
     def reference_report(self) -> str:

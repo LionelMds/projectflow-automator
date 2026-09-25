@@ -81,6 +81,14 @@ class FakeSearch(Interfaced):
     supported = (FakeModule.ISwDMSearchOption,)
     SearchFilters = 0
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.paths: list[str] = []
+
+    def AddSearchPath(self, path: str) -> bool:  # noqa: N802
+        self.paths.append(path)
+        return True
+
 
 class FakeDocument(Interfaced):
     supported = (FakeModule.ISwDMDocument19,)
@@ -611,3 +619,30 @@ def test_object_array_falls_back_when_raw_method_is_not_a_variant() -> None:
     items = com.object_array(TypedArrayConfiguration(["C:/a.SLDPRT"]), "GetComponents")
 
     assert [item.PathName for item in items] == ["C:/a.SLDPRT"]
+
+
+class SearchRecordingApplication(FakeApplication):
+    def __init__(self, document: FakeDocument) -> None:
+        super().__init__(document)
+        self.searches: list[FakeSearch] = []
+
+    def GetSearchOptionObject(self) -> FakeSearch:  # noqa: N802
+        search = FakeSearch()
+        self.searches.append(search)
+        return search
+
+
+def test_reference_search_uses_given_folders(monkeypatch: pytest.MonkeyPatch) -> None:
+    document = FakeDocument()
+    document.references = ()
+    application = SearchRecordingApplication(document)
+    _install(monkeypatch, FakeFactory(application))
+
+    with (
+        open_document_manager("cle") as manager,
+        manager.open_document(Path("C:/Projet/2026-5233-PRT-100.SLDPRT")) as opened,
+    ):
+        assert opened.external_references([Path("C:/Modeles"), Path("C:/Projet")]) == []
+
+    assert [search.SearchFilters for search in application.searches] == [9, 15]
+    assert application.searches[0].paths == [str(Path("C:/Modeles")), str(Path("C:/Projet"))]

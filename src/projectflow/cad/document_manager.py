@@ -11,7 +11,7 @@ import ctypes
 import importlib
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -92,7 +92,7 @@ class DocumentManagerDocument:
         if not self._document.AddCustomProperty(name, _CUSTOM_INFO_TEXT, value):
             raise CadError(f"Propriete SolidWorks impossible a creer: {name}")
 
-    def external_references(self) -> list[str]:
+    def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
         """Merge the reference list and, for an assembly, the components of each configuration.
 
         Each source can fail or come back empty depending on the Document Manager version; a
@@ -100,7 +100,10 @@ class DocumentManagerDocument:
         what each one returned is kept for ``reference_report``.
         """
         self._report = []
-        references = self._read_source("liste", self._listed_references)
+        references = self._read_source(
+            "liste",
+            lambda: self._listed_references(search_paths),
+        )
         if self._is_assembly:
             references += self._read_source("composants", self._component_paths)
         return list(dict.fromkeys(references))
@@ -117,7 +120,7 @@ class DocumentManagerDocument:
         self._report.append(f"{label} : {len(items)}")
         return items
 
-    def _listed_references(self) -> list[str]:
+    def _listed_references(self, search_paths: Sequence[Path]) -> list[str]:
         failures: list[str] = []
         for filters in _SEARCH_FILTERS:
             search = self._com.latest(
@@ -127,6 +130,11 @@ class DocumentManagerDocument:
                 # Setting it on a bare IUnknown pointer would silently do nothing.
                 raise CadError("option de recherche Document Manager sans SearchFilters")
             search.SearchFilters = filters
+            add_search_path = getattr(search, "AddSearchPath", None)
+            if add_search_path is not None:
+                for folder in search_paths:
+                    with suppress(*self._com.errors):
+                        add_search_path(str(folder))
             for method_name in _REFERENCE_METHODS:
                 method = getattr(self._document, method_name, None)
                 if method is None:

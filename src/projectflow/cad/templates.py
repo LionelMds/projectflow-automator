@@ -7,7 +7,7 @@ import re
 import shutil
 import stat
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +36,7 @@ from projectflow.platform.paths import native_path_text
 
 # Number used by the settings self-test copy, in a temporary folder deleted afterwards.
 SELF_TEST_NUMBER = "2099-9999"
+SELF_TEST_FOLDER = "ProjectFlow-essai-CAO"
 TEMPORARY_SUFFIXES = frozenset({".bak", ".dwl", ".dwl2"})
 _COPY_CHUNK_SIZE = 1024 * 1024
 _ONEDRIVE_HINT = (
@@ -170,7 +171,13 @@ def check_document_manager(
         with manager.open_document(sample, read_only=True) as document:
             if sample.suffix.casefold() not in SOLIDWORKS_LINKED_SUFFIXES:
                 return f"Document Manager et cle de licence valides (test sur {sample.name})."
-            found = _read_references(document, path=sample, stage="test", required=True)
+            found = _read_references(
+                document,
+                path=sample,
+                stage="test",
+                required=True,
+                search_paths=[sample.parent],
+            )
             sources = document.reference_report()
     names = ", ".join(_reference_name(reference) for reference in found)
     copy_report = _self_test_copy(license_key, template_dir or sample.parent, manager_factory)
@@ -185,31 +192,41 @@ def _self_test_copy(
     license_key: str,
     template_dir: Path,
     manager_factory: DocumentManagerFactory,
+    *,
+    work_dir: Path | None = None,
 ) -> str:
-    """Run the real SolidWorks copy on a temporary folder, then delete it.
+    """Run the real SolidWorks copy on a temporary folder.
 
     This proves before any project creation that the copied assembly is relinked to the
-    copied parts and verified, with the same code as a creation.
+    copied parts and verified, with the same code as a creation. The folder is deleted on
+    success; on failure it is kept so the copy can be opened in SolidWorks, which tells
+    whether the references were really left on the templates.
     """
+    folder = work_dir or Path(tempfile.gettempdir()) / SELF_TEST_FOLDER
+    shutil.rmtree(folder, ignore_errors=True)
     service = CadTemplateService(
         license_key_loader=lambda: license_key,
         manager_factory=manager_factory,
+        keep_failed_copies=True,
     )
     project = ProjectInput(number=parse_project_number(SELF_TEST_NUMBER), add_solidworks=True)
-    with tempfile.TemporaryDirectory(
-        prefix="projectflow-cad-test-",
-        ignore_cleanup_errors=True,
-    ) as temporary:
-        outcome = service.apply(
-            project,
-            Path(temporary),
-            config=CadConfig(solidworks_template_dir=template_dir, destination_subfolder=""),
-            initials="",
-        )
+    outcome = service.apply(
+        project,
+        folder,
+        config=CadConfig(solidworks_template_dir=template_dir, destination_subfolder=""),
+        initials="",
+    )
     problems = [f"{item.name} : {item.detail}" for item in outcome.files if item.status == "error"]
     problems += [*outcome.warnings, *outcome.errors]
     if problems:
-        raise CadError("Essai de copie echoue : " + " ; ".join(problems))
+        raise CadError(
+            "Essai de copie echoue : "
+            + " ; ".join(problems)
+            + f"\nCopie d'essai conservee dans {folder} : ouvrir "
+            f"{SELF_TEST_NUMBER}-ENS-100.SLDASM dans SolidWorks, puis Fichier > Chercher les "
+            "references, sans enregistrer.",
+        )
+    shutil.rmtree(folder, ignore_errors=True)
     linked = [
         item
         for item in outcome.files
@@ -243,9 +260,12 @@ class CadTemplateService:
         *,
         license_key_loader: Callable[[], str] = load_solidworks_license_key,
         manager_factory: DocumentManagerFactory = open_document_manager,
+        keep_failed_copies: bool = False,
     ) -> None:
         self._license_key_loader = license_key_loader
         self._manager_factory = manager_factory
+        # Only for the settings self-test: its copies live in a temporary folder.
+        self._keep_failed_copies = keep_failed_copies
 
     def apply(
         self,
@@ -349,8 +369,8 @@ class CadTemplateService:
             return None
         return manager
 
-    @staticmethod
     def _bind_document(
+        self,
         manager: SolidWorksDocumentManager,
         item: TemplateFile,
         references: _ReferenceMap,
@@ -378,10 +398,15 @@ class CadTemplateService:
                     document.set_custom_property(name, value)
                 if references_changed or updates:
                     document.save()
-            _verify_no_template_links(manager, item.destination, references, required=linked)
+            # A new Document Manager session: the first one may answer from what it read
+            # before the save, which would hide (or invent) a remaining template link.
+            with self._manager_factory(self._license_key_loader()) as verifier:
+                _verify_no_template_links(verifier, item.destination, references, required=linked)
         except Exception as exc:  # noqa: BLE001 - one file must not stop the others
             detail = _error_text(exc)
-            if linked or isinstance(exc, _TemplateLinkError):
+            if (linked or isinstance(exc, _TemplateLinkError)) and self._keep_failed_copies:
+                detail += " Copie d'essai conservee pour controle."
+            elif linked or isinstance(exc, _TemplateLinkError):
                 with suppress(OSError):
                     item.destination.unlink()
                 detail += " La copie a ete supprimee pour ne pas modifier les modeles."
@@ -439,6 +464,7 @@ class _ReferenceMap:
     """
 
     def __init__(self, template_dir: Path, documents: Iterable[TemplateFile]) -> None:
+        self._template_dir = template_dir
         self._template_key = _path_key(str(template_dir))
         self._by_path: dict[str, Path] = {}
         by_name: dict[str, list[Path]] = {}
@@ -446,6 +472,10 @@ class _ReferenceMap:
             self._by_path[_path_key(str(item.source))] = item.destination
             by_name.setdefault(item.source.name.casefold(), []).append(item.destination)
         self._by_name = {name: paths[0] for name, paths in by_name.items() if len(paths) == 1}
+
+    def search_paths(self, document: Path) -> list[Path]:
+        """Folders where Document Manager can find what the document references."""
+        return list(dict.fromkeys([self._template_dir, document.parent]))
 
     def replacement_for(self, reference: str) -> Path | None:
         target = self._by_path.get(_path_key(reference))
@@ -473,15 +503,29 @@ def _rewrite_references(
     path: Path,
     required: bool,
 ) -> bool:
-    current = _read_references(document, path=path, stage="copie", required=required)
+    current = _read_references(
+        document,
+        path=path,
+        stage="copie",
+        required=required,
+        search_paths=references.search_paths(path),
+    )
     changed = False
     for reference in current:
         target = references.replacement_for(reference)
         if target is None or _path_key(reference) == _path_key(str(target)):
             continue
-        document.replace_reference(reference, str(target))
+        # The stored path must match exactly; component paths may be spelled differently.
+        for old_path in _path_spellings(reference):
+            document.replace_reference(old_path, str(target))
         changed = True
     return changed
+
+
+def _path_spellings(reference: str) -> list[str]:
+    return list(
+        dict.fromkeys([reference, reference.replace("/", "\\"), os.path.normpath(reference)])
+    )
 
 
 def _verify_no_template_links(
@@ -493,15 +537,30 @@ def _verify_no_template_links(
 ) -> None:
     """Re-read the saved file; raise when a reference still points to the templates."""
     with manager.open_document(path, read_only=True) as document:
-        found = _read_references(document, path=path, stage="verification", required=required)
+        found = _read_references(
+            document,
+            path=path,
+            stage="verification",
+            required=required,
+            search_paths=references.search_paths(path),
+        )
         report = document.reference_report()
     remaining = references.template_links(found)
     if remaining:
+        example = remaining[0]
+        state = "present" if _exists(example) else "introuvable"
         raise _TemplateLinkError(
             "reference(s) encore liee(s) au dossier modele : "
             + ", ".join(_reference_name(reference) for reference in remaining)
-            + (f" (lecture : {report})." if report else "."),
+            + f" (lecture : {report} ; chemin lu : {example}, {state}).",
         )
+
+
+def _exists(path: str) -> bool:
+    try:
+        return Path(path).exists()
+    except (OSError, ValueError):
+        return False
 
 
 def _read_references(
@@ -510,14 +569,15 @@ def _read_references(
     path: Path,
     stage: str,
     required: bool,
+    search_paths: Sequence[Path] = (),
 ) -> list[str]:
-    found = document.external_references()
+    found = document.external_references(search_paths)
     report = document.reference_report()
     get_logger(__name__).info(
         "cad.references",
         file=path.name,
         stage=stage,
-        references=[_reference_name(reference) for reference in found],
+        references=found,
         sources=report,
     )
     if required and not found:

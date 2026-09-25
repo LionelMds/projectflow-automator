@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Assemblage encore lie aux modeles avec `liste : 0 ; composants : 3` : Document Manager ne
+  listait aucune reference. La recherche des references inclut maintenant le dossier modele et
+  le dossier de la copie, et le remplacement essaie aussi les variantes d'ecriture du chemin
+  lu dans les composants.
+- La verification apres enregistrement se fait dans une nouvelle session Document Manager, pour
+  ne pas relire des donnees gardees en memoire. Le message d'erreur donne le chemin lu et
+  s'il existe ; le journal note les chemins complets.
+- `Tester` conserve la copie d'essai en cas d'echec (`%TEMP%\ProjectFlow-essai-CAO`) pour la
+  controler dans SolidWorks.
+
 ## 0.1.50
 
 - Corrige l'erreur `13` lors de la copie SolidWorks : Document Manager renvoie les composants

@@ -52,24 +52,28 @@ class FakeWorkbook:
         copy_format_from_row_index: int | None = None,
         format_width: int = 12,
     ) -> None:
-        self.inserted_rows.append((
-            worksheet_name,
-            row_index,
-            copy_format_from_row_index,
-            format_width,
-        ))
+        self.inserted_rows.append(
+            (
+                worksheet_name,
+                row_index,
+                copy_format_from_row_index,
+                format_width,
+            )
+        )
 
 
 @pytest.mark.asyncio
 async def test_next_available_returns_first_main_project_with_empty_info_columns() -> None:
-    workbook = FakeWorkbook([
-        ["2026-4995", "", "", "", "Occupe"],
-        ["2026-4996", "Balz", "", "", ""],
-        ["2026-4997", "", "Lionel", "", ""],
-        ["2026-4998", "", "", "Zurich", ""],
-        ["2026-4996", "", "", "", ""],
-        ["2026-4996-1", "", "", "", ""],
-    ])
+    workbook = FakeWorkbook(
+        [
+            ["2026-4995", "", "", "", "Occupe"],
+            ["2026-4996", "Balz", "", "", ""],
+            ["2026-4997", "", "Lionel", "", ""],
+            ["2026-4998", "", "", "Zurich", ""],
+            ["2026-4996", "", "", "", ""],
+            ["2026-4996-1", "", "", "", ""],
+        ]
+    )
 
     result = await RepertoireService(workbook).next_available(year=2026)
 
@@ -81,12 +85,14 @@ async def test_next_available_returns_first_main_project_with_empty_info_columns
 
 @pytest.mark.asyncio
 async def test_read_snapshot_exposes_project_rows_and_next_available_row() -> None:
-    workbook = FakeWorkbook([
-        ["NO.", "DATE", "CLIENT", "CONTACT", "DESCRIPTION"],
-        ["2026-4995", "11.05.2026", "Balz", "Lionel", "Escalier"],
-        ["2026-4996", "", "", "", ""],
-        ["2026-4996-2", "", "", "", "Variante"],
-    ])
+    workbook = FakeWorkbook(
+        [
+            ["NO.", "DATE", "CLIENT", "CONTACT", "DESCRIPTION"],
+            ["2026-4995", "11.05.2026", "Balz", "Lionel", "Escalier"],
+            ["2026-4996", "", "", "", ""],
+            ["2026-4996-2", "", "", "", "Variante"],
+        ]
+    )
 
     snapshot = await RepertoireService(workbook).read_snapshot(year=2026)
 
@@ -103,15 +109,19 @@ async def test_read_snapshot_exposes_project_rows_and_next_available_row() -> No
 
 @pytest.mark.asyncio
 async def test_update_editable_row_writes_only_a_to_e() -> None:
-    workbook = FakeWorkbook([[
-        "2026-4995",
-        "11.05.2026",
-        "Balz",
-        "Lionel",
-        "Escalier",
-        "Valeur comptable",
-        "Montant comptable",
-    ]])
+    workbook = FakeWorkbook(
+        [
+            [
+                "2026-4995",
+                "11.05.2026",
+                "Balz",
+                "Lionel",
+                "Escalier",
+                "Valeur comptable",
+                "Montant comptable",
+            ]
+        ]
+    )
 
     await RepertoireService(workbook).update_editable_row(
         year=2026,
@@ -131,13 +141,17 @@ async def test_update_editable_row_writes_only_a_to_e() -> None:
 
 @pytest.mark.asyncio
 async def test_update_editable_row_rejects_concurrent_change() -> None:
-    workbook = FakeWorkbook([[
-        "2026-4995",
-        "11.05.2026",
-        "Client modifie",
-        "Lionel",
-        "Escalier",
-    ]])
+    workbook = FakeWorkbook(
+        [
+            [
+                "2026-4995",
+                "11.05.2026",
+                "Client modifie",
+                "Lionel",
+                "Escalier",
+            ]
+        ]
+    )
 
     with pytest.raises(ProjectCreationError, match="modifiee dans le fichier partage"):
         await RepertoireService(workbook).update_editable_row(
@@ -152,11 +166,13 @@ async def test_update_editable_row_rejects_concurrent_change() -> None:
 
 @pytest.mark.asyncio
 async def test_clear_main_project_group_keeps_numbers_and_clears_only_b_to_e() -> None:
-    workbook = FakeWorkbook([
-        ["2026-4995", TODAY, "Balz", "Lionel", "Escalier", "Comptabilite"],
-        ["2026-4995-2", TODAY, "Balz", "Lionel", "Variante", "Montant"],
-        ["2026-5000", "", "", "", "", "Autre"],
-    ])
+    workbook = FakeWorkbook(
+        [
+            ["2026-4995", TODAY, "Balz", "Lionel", "Escalier", "Comptabilite"],
+            ["2026-4995-2", TODAY, "Balz", "Lionel", "Variante", "Montant"],
+            ["2026-5000", "", "", "", "", "Autre"],
+        ]
+    )
     rows = (
         RepertoireRow(row_index=0, values=tuple(workbook.rows[0][:5])),
         RepertoireRow(row_index=1, values=tuple(workbook.rows[1][:5])),
@@ -175,10 +191,12 @@ async def test_clear_main_project_group_keeps_numbers_and_clears_only_b_to_e() -
 
 @pytest.mark.asyncio
 async def test_project_deletion_rejects_new_related_row_added_concurrently() -> None:
-    workbook = FakeWorkbook([
-        ["2026-4995", TODAY, "Balz", "Lionel", "Escalier"],
-        ["2026-4995-2", TODAY, "Balz", "Lionel", "Variante"],
-    ])
+    workbook = FakeWorkbook(
+        [
+            ["2026-4995", TODAY, "Balz", "Lionel", "Escalier"],
+            ["2026-4995-2", TODAY, "Balz", "Lionel", "Variante"],
+        ]
+    )
     expected = (RepertoireRow(row_index=0, values=tuple(workbook.rows[0][:5])),)
 
     with pytest.raises(ProjectCreationError, match="groupe de projet a change"):
@@ -227,10 +245,12 @@ async def test_upsert_project_rejects_filled_client_columns_without_force() -> N
 
 @pytest.mark.asyncio
 async def test_upsert_subproject_inserts_blank_row_before_writing_only_a_to_e() -> None:
-    workbook = FakeWorkbook([
-        ["2026-4995", "Balz", "", "", "Escalier", "LM"],
-        ["2026-5000", "", "", "", "", ""],
-    ])
+    workbook = FakeWorkbook(
+        [
+            ["2026-4995", "Balz", "", "", "Escalier", "LM"],
+            ["2026-5000", "", "", "", "", ""],
+        ]
+    )
     project = ProjectInput(number=parse_project_number("2026-4995-2"), designation="Variante")
 
     await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)
@@ -259,11 +279,13 @@ async def test_upsert_subproject_does_not_write_unrelated_sixth_column() -> None
 
 @pytest.mark.asyncio
 async def test_upsert_existing_subproject_updates_existing_row_without_inserting() -> None:
-    workbook = FakeWorkbook([
-        ["2026-4995", "Balz", "", "", "Escalier", "Code interne"],
-        ["2026-4995-2", "Balz", "", "", "Ancienne variante", "Sous-code"],
-        ["2026-5000", "", "", "", "", ""],
-    ])
+    workbook = FakeWorkbook(
+        [
+            ["2026-4995", "Balz", "", "", "Escalier", "Code interne"],
+            ["2026-4995-2", "Balz", "", "", "Ancienne variante", "Sous-code"],
+            ["2026-5000", "", "", "", "", ""],
+        ]
+    )
     project = ProjectInput(number=parse_project_number("2026-4995-2"), designation="Variante")
 
     await RepertoireService(workbook, today=lambda: TODAY).upsert_project(project)

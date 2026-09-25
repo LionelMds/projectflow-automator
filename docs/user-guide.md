@@ -192,8 +192,11 @@ Le bouton `Tester`, a cote de la cle, verifie en arriere-plan, sans creer de pro
 2. que les references de cet assemblage sont lisibles (le message indique le nombre lu par
    chaque source : `liste` et `composants`) ;
 3. qu'une copie complete fonctionne : les modeles sont copies dans un dossier temporaire sous
-   le numero `2099-9999`, l'assemblage est relie aux pieces copiees puis verifie, et le dossier
-   temporaire est efface. Les modeles ne sont ouverts qu'en lecture.
+   le numero `2099-9999`, l'assemblage est relie aux pieces copiees puis verifie dans une
+   nouvelle session Document Manager, et le dossier temporaire est efface. Les modeles ne sont
+   ouverts qu'en lecture. En cas d'echec, la copie d'essai est conservee dans
+   `%TEMP%\ProjectFlow-essai-CAO` : l'ouvrir dans SolidWorks puis `Fichier > Chercher les
+   references`, sans enregistrer, montre ou pointent vraiment ses references.
 
 Si le test reussit, la creation d'un projet avec `Ajouter arborescence SolidWorks` fonctionnera.
 En cas d'echec, le message donne la cause :

@@ -23,11 +23,7 @@ def test_application_settings_loads_missing_path_as_defaults(tmp_path: Path) -> 
 def test_application_settings_loads_json_file(tmp_path: Path) -> None:
     path = tmp_path / "app_settings.json"
     path.write_text(
-        '{'
-        '"github_owner": "balz",'
-        '"github_repo": "projectflow",'
-        '"microsoft_client_id": "client"'
-        "}",
+        '{"github_owner": "balz","github_repo": "projectflow","microsoft_client_id": "client"}',
         encoding="utf-8",
     )
 
