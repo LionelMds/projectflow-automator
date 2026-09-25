@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.53
+
 - Corrige la verification apres le remplacement par SolidWorks : Document Manager relisait les
   anciennes fiches de composants et refusait a tort un assemblage correctement relie (constate
   dans SolidWorks sur la copie d'essai). La verification demande maintenant a SolidWorks ce que
