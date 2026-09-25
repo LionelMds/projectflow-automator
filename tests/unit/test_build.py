@@ -32,6 +32,7 @@ def test_windows_pyinstaller_command_uses_onefile(tmp_path: Path) -> None:
     assert "msal" in command
     assert "keyring.backends.Windows" in command
     assert "win32com.client" in command
+    assert "comtypes.client" in command
     assert "pythoncom" in command
     assert "pywintypes" in command
     assert "mypy" in command

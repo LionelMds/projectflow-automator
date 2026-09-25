@@ -176,8 +176,9 @@ faire echouer la copie ; ProjectFlow l'indique alors dans le journal.
 
 ### Cle SolidWorks Document Manager
 
-ProjectFlow modifie les fichiers SolidWorks avec SolidWorks Document Manager, installe avec
-SolidWorks, sans lancer SolidWorks. Il faut une cle de licence Document Manager :
+ProjectFlow modifie les fichiers SolidWorks avec SolidWorks Document Manager, sans lancer
+SolidWorks. Document Manager s'installe avec `swdocmgr.exe`, telecharge avec la cle (le kit
+`apisdk.exe` n'est pas necessaire). Il faut aussi une cle de licence Document Manager :
 
 1. Se connecter au portail client SOLIDWORKS (`customerportal.solidworks.com`) avec un compte
    rattache a une licence sous abonnement.

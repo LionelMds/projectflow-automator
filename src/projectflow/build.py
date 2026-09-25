@@ -163,6 +163,11 @@ def _hidden_imports(target: BuildTarget) -> tuple[str, ...]:
     hidden_imports = ["msal", "qasync"]
     if target == "windows":
         hidden_imports.extend([
+            "comtypes",
+            "comtypes.client",
+            "comtypes.stream",
+            "comtypes.tools.codegenerator",
+            "comtypes.tools.tlbparser",
             "keyring.backends.Windows",
             "pythoncom",
             "pywintypes",

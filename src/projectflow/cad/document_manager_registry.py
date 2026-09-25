@@ -75,6 +75,23 @@ def class_factory_prog_ids(registry: ClassesRegistry | None) -> list[str]:
     return prog_ids
 
 
+def registered_dll_path(registry: ClassesRegistry | None) -> Path | None:
+    """Return the 64-bit DLL registered for Document Manager, when it exists on disk."""
+    if registry is None:
+        return None
+    for prog_id in class_factory_prog_ids(registry):
+        clsid = registry.default_value(f"{prog_id}\\CLSID")
+        if clsid is None:
+            continue
+        server = registry.default_value(f"CLSID\\{clsid}\\InprocServer32")
+        if server is None:
+            continue
+        path = Path(os.path.expandvars(server.strip('"')))
+        if path.is_file():
+            return path
+    return None
+
+
 def diagnose_document_manager(
     registry: ClassesRegistry | None,
     *,

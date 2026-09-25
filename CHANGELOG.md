@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.47
+
+- Corrige Document Manager « Cette interface n'est pas prise en charge » (0x80004002) :
+  ses objets n'acceptent pas l'appel generique de pywin32. ProjectFlow utilise maintenant
+  comtypes et la bibliotheque de types de `swdocumentmgr.dll` pour appeler ses interfaces.
+
 ## 0.1.46
 
 - Document Manager introuvable : le message donne maintenant la cause (DLL absente, presente

@@ -4,13 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "projectflow-automator"
-version = "0.1.46"
+version = "0.1.47"
 description = "Application desktop cross-platform pour automatiser la creation des projets Balz Metal Sa."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
 authors = [{ name = "Balz Metal Sa" }]
 dependencies = [
+  "comtypes>=1.4; sys_platform == 'win32'",
   "httpx>=0.27",
   "keyring>=25",
   "msal>=1.39,<2",
