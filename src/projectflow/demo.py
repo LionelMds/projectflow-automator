@@ -124,8 +124,9 @@ def _ensure_cad_templates(solidworks_dir: Path, autocad_dir: Path) -> None:
     if not assembly.exists():
         write_demo_document(
             assembly,
-            {**common, "Description": ""},
+            common,
             [str(solidworks_dir / f"{TEMPLATE_MARKER}-{name}") for name in parts],
+            configurations={"Défaut": {"Description": ""}},
         )
     drawing = autocad_dir / f"{TEMPLATE_MARKER}-ENS-100.dwg"
     if not drawing.exists():

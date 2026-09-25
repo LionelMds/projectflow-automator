@@ -22,6 +22,7 @@ from projectflow.cad.solidworks_properties import (
     DocumentManagerFactory,
     SolidWorksDocument,
     SolidWorksDocumentManager,
+    compute_configuration_updates,
     compute_property_updates,
     contains_marker,
     is_description_file,
@@ -413,13 +414,16 @@ class CadTemplateService:
                     number=run.number,
                     societe=run.project.societe,
                     initials=run.initials,
-                    designation=run.project.designation,
-                    write_description=is_description_file(item.destination, run.number),
                     names=run.config.properties,
                 )
                 for name, value in updates.items():
                     document.set_custom_property(name, value)
-                if updates or (replacements and self._reference_replacer is None):
+                configurations_changed = _write_configuration_properties(document, item, run)
+                if (
+                    updates
+                    or configurations_changed
+                    or (replacements and self._reference_replacer is None)
+                ):
                     document.save()
             if replacements and self._reference_replacer is not None:
                 # The document is closed: SolidWorks refuses to relink an open document.
@@ -538,6 +542,54 @@ class _ReferenceMap:
         key = _path_key(reference)
         prefix = self._template_key.rstrip("\\/") + os.sep
         return key == self._template_key or key.startswith(prefix)
+
+
+def _write_configuration_properties(
+    document: SolidWorksDocument,
+    item: TemplateFile,
+    run: _CadRun,
+) -> bool:
+    """Fill the configuration properties (description of ENS-100, marker) of every configuration.
+
+    A failure here is only a warning: the copy is correctly linked, the description can be
+    typed by hand.
+    """
+    write_description = is_description_file(item.destination, run.number)
+    try:
+        configurations = _read_configurations(
+            document,
+            required=write_description and bool(run.project.designation.strip()),
+        )
+        changed = False
+        for configuration, existing in configurations.items():
+            updates = compute_configuration_updates(
+                existing,
+                number=run.number,
+                designation=run.project.designation,
+                write_description=write_description,
+                names=run.config.properties,
+            )
+            for name, value in updates.items():
+                document.set_configuration_property(configuration, name, value)
+                changed = True
+    except Exception as exc:  # noqa: BLE001 - the copy itself stays valid
+        run.warnings.append(
+            f"{item.destination.name} : proprietes de configuration non renseignees "
+            f"({_error_text(exc)}).",
+        )
+        return False
+    return changed
+
+
+def _read_configurations(
+    document: SolidWorksDocument,
+    *,
+    required: bool,
+) -> dict[str, dict[str, str]]:
+    configurations = document.configuration_properties()
+    if required and not configurations:
+        raise CadError("aucune configuration lue")
+    return configurations
 
 
 def _planned_replacements(

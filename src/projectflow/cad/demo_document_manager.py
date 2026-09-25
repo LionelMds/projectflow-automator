@@ -14,6 +14,7 @@ from pathlib import Path
 from projectflow.exceptions import CadError, CadUnavailableError
 
 DEMO_LICENSE_KEY = "demo-document-manager"
+DEFAULT_CONFIGURATION = "Défaut"
 
 
 class JsonDocument:
@@ -26,12 +27,22 @@ class JsonDocument:
             raise CadError(f"{path.name}: fichier SolidWorks de demonstration illisible.") from exc
         self._properties = {str(key): str(value) for key, value in data["properties"].items()}
         self._references = [str(reference) for reference in data["references"]]
+        self._configurations = {
+            str(name): {str(key): str(value) for key, value in values.items()}
+            for name, values in data.get("configurations", {DEFAULT_CONFIGURATION: {}}).items()
+        }
 
     def custom_properties(self) -> dict[str, str]:
         return dict(self._properties)
 
     def set_custom_property(self, name: str, value: str) -> None:
         self._properties[name] = value
+
+    def configuration_properties(self) -> dict[str, dict[str, str]]:
+        return {name: dict(values) for name, values in self._configurations.items()}
+
+    def set_configuration_property(self, configuration: str, name: str, value: str) -> None:
+        self._configurations[configuration][name] = value
 
     def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
         del search_paths
@@ -46,7 +57,12 @@ class JsonDocument:
     def save(self) -> None:
         if self._read_only:
             raise CadError(f"{self._path.name}: document ouvert en lecture seule.")
-        write_demo_document(self._path, self._properties, self._references)
+        write_demo_document(
+            self._path,
+            self._properties,
+            self._references,
+            configurations=self._configurations,
+        )
 
 
 class JsonDocumentManager:
@@ -66,11 +82,20 @@ def write_demo_document(
     path: Path,
     properties: Mapping[str, str],
     references: Sequence[str] = (),
+    *,
+    configurations: Mapping[str, Mapping[str, str]] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            {"properties": dict(properties), "references": list(references)},
+            {
+                "properties": dict(properties),
+                "references": list(references),
+                "configurations": {
+                    name: dict(values)
+                    for name, values in (configurations or {DEFAULT_CONFIGURATION: {}}).items()
+                },
+            },
             ensure_ascii=False,
             indent=2,
         ),
@@ -81,3 +106,7 @@ def write_demo_document(
 def read_demo_document(path: Path) -> tuple[dict[str, str], list[str]]:
     document = JsonDocument(path, read_only=True)
     return document.custom_properties(), document.external_references()
+
+
+def read_demo_configurations(path: Path) -> dict[str, dict[str, str]]:
+    return JsonDocument(path, read_only=True).configuration_properties()

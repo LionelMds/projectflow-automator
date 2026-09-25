@@ -646,3 +646,64 @@ def test_reference_search_uses_given_folders(monkeypatch: pytest.MonkeyPatch) ->
 
     assert [search.SearchFilters for search in application.searches] == [9, 15]
     assert application.searches[0].paths == [str(Path("C:/Modeles")), str(Path("C:/Projet"))]
+
+
+class PropertyConfiguration(Interfaced):
+    supported = (FakeModule.ISwDMConfiguration14,)
+
+    def __init__(self, properties: dict[str, str]) -> None:
+        super().__init__()
+        self.properties = properties
+
+    def GetCustomPropertyNames(self) -> tuple[str, ...] | None:  # noqa: N802
+        return tuple(self.properties) or None
+
+    def GetCustomProperty(self, name: str) -> tuple[int, str]:  # noqa: N802
+        return 30, self.properties[name]
+
+    def SetCustomProperty(self, name: str, value: str) -> bool:  # noqa: N802
+        self.properties[name] = value
+        return True
+
+    def AddCustomProperty(self, name: str, value_type: int, value: str) -> bool:  # noqa: N802
+        assert value_type == 30
+        self.properties[name] = value
+        return True
+
+
+class PropertyConfigurationManager:
+    def __init__(self) -> None:
+        self.configurations = {
+            "Défaut": PropertyConfiguration({"Description": "", "Repère": "20XX-XXXX"}),
+            "Variante": PropertyConfiguration({}),
+        }
+
+    def GetConfigurationNames(self) -> tuple[str, ...]:  # noqa: N802
+        return tuple(self.configurations)
+
+    def GetConfigurationByName(self, name: str) -> PropertyConfiguration:  # noqa: N802
+        return self.configurations[name]
+
+
+def test_document_manager_reads_and_writes_configuration_properties(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = FakeDocument()
+    configurations = PropertyConfigurationManager()
+    document.ConfigurationManager = configurations  # type: ignore[attr-defined]
+    _install(monkeypatch, FakeFactory(FakeApplication(document)))
+
+    with (
+        open_document_manager("cle") as manager,
+        manager.open_document(Path("C:/Projet/2026-5233-ENS-100.SLDASM")) as opened,
+    ):
+        assert opened.configuration_properties() == {
+            "Défaut": {"Description": "", "Repère": "20XX-XXXX"},
+            "Variante": {},
+        }
+        opened.set_configuration_property("Défaut", "Description", "Escalier")
+        opened.set_configuration_property("Variante", "Description", "Escalier")
+
+    assert configurations.configurations["Défaut"].properties["Description"] == "Escalier"
+    assert configurations.configurations["Variante"].properties == {"Description": "Escalier"}
+    assert document.properties == {"Projet": "20XX-XXXX"}

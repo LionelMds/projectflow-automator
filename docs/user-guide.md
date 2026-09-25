@@ -157,7 +157,7 @@ Seuls les fichiers dont le nom contient le marqueur sont copies. Les fichiers te
 (`~$*`, `*.bak`, `*.dwl`, `*.dwl2`) sont ignores. Les copies sont rendues modifiables (attribut
 lecture seule retire).
 
-Proprietes personnalisees ecrites au niveau fichier (pas configuration) dans les copies :
+Proprietes personnalisees ecrites dans les copies (au niveau fichier, sauf la Description) :
 
 | Propriete | Valeur |
 |---|---|
@@ -165,7 +165,7 @@ Proprietes personnalisees ecrites au niveau fichier (pas configuration) dans les
 | `Projet` | le numero du projet si la propriete est vide |
 | `Client` | la societe du formulaire |
 | `Auteur` | les initiales utilisateur des parametres |
-| `Description` | la designation, seulement pour `ENS-100` |
+| `Description` | la designation, seulement pour `ENS-100`, dans les proprietes de chaque configuration (pas au niveau fichier) |
 | `Révision` | `A` si vide |
 | `Fournisseur` et les autres | valeur du modele conservee |
 

@@ -29,6 +29,12 @@ class SolidWorksDocument(Protocol):
     def set_custom_property(self, name: str, value: str) -> None:
         """Create or update one file-level text custom property."""
 
+    def configuration_properties(self) -> dict[str, dict[str, str]]:
+        """Return the custom properties of each configuration, by configuration name."""
+
+    def set_configuration_property(self, configuration: str, name: str, value: str) -> None:
+        """Create or update one text custom property of a configuration."""
+
     def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
         """Return the paths of the documents referenced by this document.
 
@@ -77,15 +83,13 @@ def compute_property_updates(
     number: str,
     societe: str,
     initials: str,
-    designation: str,
-    write_description: bool,
     names: CadPropertyNames,
 ) -> dict[str, str]:
-    """Return the file-level properties to write; other properties stay untouched."""
-    updates: dict[str, str] = {}
-    for name, value in existing.items():
-        if contains_marker(value):
-            updates[name] = replace_marker(value, number)
+    """Return the file-level properties to write; other properties stay untouched.
+
+    The description is not a file-level property: see ``compute_configuration_updates``.
+    """
+    updates = _marker_updates(existing, number)
 
     def current(name: str) -> str:
         return updates.get(name, existing.get(name, "")).strip()
@@ -98,8 +102,32 @@ def compute_property_updates(
         assign(names.projet, number)
     assign(names.client, societe)
     assign(names.auteur, initials)
-    if write_description:
-        assign(names.description, designation)
     if names.revision and not current(names.revision):
         assign(names.revision, names.revision_defaut)
     return updates
+
+
+def compute_configuration_updates(
+    existing: Mapping[str, str],
+    *,
+    number: str,
+    designation: str,
+    write_description: bool,
+    names: CadPropertyNames,
+) -> dict[str, str]:
+    """Return the properties to write in one configuration (marker and description)."""
+    updates = _marker_updates(existing, number)
+    description = designation.strip()
+    if write_description and names.description and description:
+        current = updates.get(names.description, existing.get(names.description, "")).strip()
+        if current != description:
+            updates[names.description] = description
+    return updates
+
+
+def _marker_updates(existing: Mapping[str, str], number: str) -> dict[str, str]:
+    return {
+        name: replace_marker(value, number)
+        for name, value in existing.items()
+        if contains_marker(value)
+    }

@@ -92,6 +92,31 @@ class DocumentManagerDocument:
         if not self._document.AddCustomProperty(name, _CUSTOM_INFO_TEXT, value):
             raise CadError(f"Propriete SolidWorks impossible a creer: {name}")
 
+    def configuration_properties(self) -> dict[str, dict[str, str]]:
+        manager = self._document.ConfigurationManager
+        result: dict[str, dict[str, str]] = {}
+        for name in _string_list(manager.GetConfigurationNames()):
+            configuration = self._configuration(manager, name)
+            result[name] = {
+                str(property_name): _text_result(
+                    configuration.GetCustomProperty(str(property_name))
+                )
+                for property_name in configuration.GetCustomPropertyNames() or ()
+            }
+        return result
+
+    def set_configuration_property(self, configuration: str, name: str, value: str) -> None:
+        target = self._configuration(self._document.ConfigurationManager, configuration)
+        names = {str(existing) for existing in target.GetCustomPropertyNames() or ()}
+        if name in names:
+            target.SetCustomProperty(name, value)
+            return
+        if not target.AddCustomProperty(name, _CUSTOM_INFO_TEXT, value):
+            raise CadError(f"Propriete de configuration impossible a creer: {name}")
+
+    def _configuration(self, manager: Any, name: str) -> Any:
+        return self._com.latest(manager.GetConfigurationByName(name), "ISwDMConfiguration")
+
     def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
         """Merge the reference list and, for an assembly, the components of each configuration.
 

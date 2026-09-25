@@ -17,12 +17,16 @@ from projectflow.cad.demo_document_manager import (
     JsonDocument,
     JsonDocumentManager,
     open_json_document_manager,
+    read_demo_configurations,
     read_demo_document,
     write_demo_document,
 )
 from projectflow.cad.document_manager import open_document_manager
 from projectflow.cad.license_storage import SolidWorksLicenseStorage
-from projectflow.cad.solidworks_properties import compute_property_updates
+from projectflow.cad.solidworks_properties import (
+    compute_configuration_updates,
+    compute_property_updates,
+)
 from projectflow.cad.templates import (
     CadTemplateService,
     cad_destination_dir,
@@ -52,6 +56,12 @@ TEMPLATE_PROPERTIES = {
 }
 
 
+TEMPLATE_CONFIGURATIONS = {
+    "Défaut": {"Description": "", "Repère": "20XX-XXXX-A"},
+    "Variante": {},
+}
+
+
 def _solidworks_templates(root: Path, *, reference_root: Path | None = None) -> Path:
     template_dir = root / "11-Racine Solidworks"
     stored_root = reference_root or template_dir
@@ -63,6 +73,7 @@ def _solidworks_templates(root: Path, *, reference_root: Path | None = None) -> 
         [f"{stored_root}\\20XX-XXXX-{name}" for name in TEMPLATE_PARTS]
         if reference_root is not None
         else [str(template_dir / f"20XX-XXXX-{name}") for name in TEMPLATE_PARTS],
+        configurations=TEMPLATE_CONFIGURATIONS,
     )
     return template_dir
 
@@ -230,10 +241,15 @@ def test_solidworks_option_renames_files_rewrites_references_and_properties(
         "Projet": "2026-5233",
         "Client": "Client SA",
         "Auteur": "LM",
-        "Description": "Escalier helicoidal",
         "Révision": "A",
         "TAG": "Repère 2026-5233",
     }
+    assert assembly_properties["Description"] == ""
+    assert read_demo_configurations(cad_dir / "2026-5233-ENS-100.SLDASM") == {
+        "Défaut": {"Description": "Escalier helicoidal", "Repère": "2026-5233-A"},
+        "Variante": {"Description": "Escalier helicoidal"},
+    }
+    assert read_demo_configurations(cad_dir / "2026-5233-PRT-100.SLDPRT") == {"Défaut": {}}
     part_properties, _ = read_demo_document(cad_dir / "2026-5233-PRT-100.SLDPRT")
     assert part_properties["Description"] == ""
     assert part_properties["Projet"] == "2026-5233"
@@ -289,7 +305,9 @@ def test_subproject_files_use_subproject_number_and_folder(tmp_path: Path) -> No
     }
     properties, references = read_demo_document(target / "2026-5233-2-ENS-100.SLDASM")
     assert properties["Projet"] == "2026-5233-2"
-    assert properties["Description"] == "Escalier helicoidal"
+    assert properties["Description"] == ""
+    configurations = read_demo_configurations(target / "2026-5233-2-ENS-100.SLDASM")
+    assert configurations["Défaut"]["Description"] == "Escalier helicoidal"
     assert references[0] == str(target / "2026-5233-2-ENV-100.SLDPRT")
     assert cad_destination_dir(project_dir, parse_project_number("2026-5233-3"), "CAO") == (
         project_dir / "CAO"
@@ -429,8 +447,6 @@ def test_property_updates_follow_mapping() -> None:
         number="2026-5233",
         societe="Client SA",
         initials="LM",
-        designation="Garde-corps",
-        write_description=False,
         names=names,
     )
 
@@ -443,18 +459,71 @@ def test_property_updates_follow_mapping() -> None:
     }
 
 
-def test_property_updates_keep_existing_revision_and_description_scope() -> None:
+def test_file_properties_keep_revision_and_never_write_description() -> None:
     updates = compute_property_updates(
         {"Projet": "Existant", "Révision": "C", "Description": "modele"},
         number="2026-5233",
         societe="",
         initials="",
-        designation="Escalier",
-        write_description=True,
         names=CadPropertyNames(),
     )
 
-    assert updates == {"Description": "Escalier"}
+    assert updates == {}
+
+
+def test_configuration_updates_write_description_only_when_asked() -> None:
+    existing = {"Description": "modele", "Repère": "20XX-XXXX-B"}
+
+    assert compute_configuration_updates(
+        existing,
+        number="2026-5233",
+        designation=" Escalier ",
+        write_description=True,
+        names=CadPropertyNames(),
+    ) == {"Description": "Escalier", "Repère": "2026-5233-B"}
+    assert compute_configuration_updates(
+        existing,
+        number="2026-5233",
+        designation="Escalier",
+        write_description=False,
+        names=CadPropertyNames(),
+    ) == {"Repère": "2026-5233-B"}
+    assert (
+        compute_configuration_updates(
+            {},
+            number="2026-5233",
+            designation="",
+            write_description=True,
+            names=CadPropertyNames(),
+        )
+        == {}
+    )
+
+
+class _NoConfigurationDocument(JsonDocument):
+    def configuration_properties(self) -> dict[str, dict[str, str]]:
+        raise KeyError(13)
+
+
+def test_configuration_failure_is_a_warning_and_keeps_the_copy(tmp_path: Path) -> None:
+    project_dir = tmp_path / "projet"
+
+    outcome = _service_with(_NoConfigurationDocument).apply(
+        _project(add_solidworks=True),
+        project_dir,
+        config=_config(tmp_path),
+        initials="LM",
+    )
+
+    assert all(item.status == "created" for item in outcome.files)
+    assert any(
+        "2026-5233-ENS-100.SLDASM : proprietes de configuration non renseignees (KeyError: 13)"
+        in warning
+        for warning in outcome.warnings
+    )
+    assert read_demo_document(project_dir / "2026-5233-ENS-100.SLDASM")[0]["Projet"] == (
+        "2026-5233"
+    )
 
 
 def test_template_availability_explains_why_an_option_is_disabled(tmp_path: Path) -> None:
