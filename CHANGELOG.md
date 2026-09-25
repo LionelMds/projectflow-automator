@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.52
+
 - Corrige l'assemblage copie reste lie aux pieces modeles : `ReplaceReference` de Document
   Manager ne modifie pas les composants d'un assemblage SolidWorks 2026 (verifie dans
   SolidWorks sur la copie d'essai). Les references sont maintenant remplacees par SolidWorks
