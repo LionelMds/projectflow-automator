@@ -258,7 +258,7 @@ def test_solidworks_references_saved_on_another_computer_are_matched_by_name(
     outcome = _service().apply(
         _project(add_solidworks=True),
         project_dir,
-        config=CadConfig(solidworks_template_dir=template_dir),
+        config=CadConfig(solidworks_template_dir=template_dir, destination_subfolder=""),
         initials="LM",
     )
 
@@ -590,3 +590,62 @@ def test_check_document_manager_opens_a_template(tmp_path: Path) -> None:
         None,
         manager_factory=open_json_document_manager,
     )
+
+
+class _BlindDocument(JsonDocument):
+    def external_references(self) -> list[str]:
+        return []
+
+
+class _BlindManager(JsonDocumentManager):
+    @contextmanager
+    def open_document(self, path: Path, *, read_only: bool = False) -> Iterator[JsonDocument]:
+        yield _BlindDocument(path, read_only=read_only)
+
+
+def test_assembly_without_readable_references_is_not_kept(tmp_path: Path) -> None:
+    @contextmanager
+    def blind_factory(_key: str) -> Iterator[_BlindManager]:
+        yield _BlindManager()
+
+    project_dir = tmp_path / "projet"
+    outcome = CadTemplateService(
+        license_key_loader=lambda: "key",
+        manager_factory=blind_factory,
+    ).apply(
+        _project(add_solidworks=True),
+        project_dir,
+        config=_config(tmp_path),
+        initials="LM",
+    )
+
+    assembly = next(item for item in outcome.files if item.name.endswith(".SLDASM"))
+    assert assembly.status == "error"
+    assert "aucune reference" in assembly.detail
+    assert not (project_dir / "2026-5233-ENS-100.SLDASM").exists()
+    assert read_demo_document(project_dir / "2026-5233-PRT-100.SLDPRT")[0]["Projet"] == (
+        "2026-5233"
+    )
+
+
+def test_default_destination_reuses_accented_plan_folder(tmp_path: Path) -> None:
+    project_dir = tmp_path / "2026-5233"
+    existing = project_dir / "plans" / "Plan d'exécution"
+    existing.mkdir(parents=True)
+
+    config = CadConfig(autocad_template_dir=_autocad_templates(tmp_path / "modeles"))
+    outcome = _service().apply(
+        _project(add_autocad=True),
+        project_dir,
+        config=config,
+        initials="LM",
+    )
+
+    assert config.destination_subfolder == "Plans/Plan d'exécution"
+    assert outcome.files[0].path == str(existing / "2026-5233-ENS-100.dwg")
+    assert (existing / "2026-5233-ENS-100.dwg").exists()
+    assert cad_destination_dir(
+        tmp_path / "vide",
+        parse_project_number("2026-5233"),
+        "Plans/Plan d'execution",
+    ) == (tmp_path / "vide" / "Plans" / "Plan d'execution")

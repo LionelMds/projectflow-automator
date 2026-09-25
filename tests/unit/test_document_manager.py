@@ -47,6 +47,18 @@ class FakeModule:
     class ISwDMSearchOption:
         pass
 
+    class ISwDMConfiguration:
+        pass
+
+    class ISwDMConfiguration14:
+        pass
+
+    class ISwDMComponent:
+        pass
+
+    class ISwDMComponent9:
+        pass
+
 
 class Interfaced:
     """Answer QueryInterface only for the interfaces listed in ``supported``."""
@@ -324,3 +336,70 @@ def test_diagnose_registered_dll_missing(tmp_path: Path) -> None:
 
 def test_diagnose_without_registry() -> None:
     assert diagnose_document_manager(None) == "registre Windows inaccessible"
+
+
+class FakeComponent(Interfaced):
+    supported = (FakeModule.ISwDMComponent9,)
+
+    def __init__(self, path: str) -> None:
+        super().__init__()
+        self.PathName = path
+
+
+class FakeConfiguration(Interfaced):
+    supported = (FakeModule.ISwDMConfiguration14,)
+
+    def __init__(self, paths: list[str]) -> None:
+        super().__init__()
+        self.paths = paths
+
+    def GetComponents(self) -> tuple[FakeComponent, ...]:  # noqa: N802
+        return tuple(FakeComponent(path) for path in self.paths)
+
+
+class FakeConfigurationManager:
+    def __init__(self, configurations: dict[str, list[str]]) -> None:
+        self.configurations = configurations
+
+    def GetConfigurationNames(self) -> tuple[str, ...]:  # noqa: N802
+        return tuple(self.configurations)
+
+    def GetConfigurationByName(self, name: str) -> FakeConfiguration:  # noqa: N802
+        return FakeConfiguration(self.configurations[name])
+
+
+class AssemblyDocument(FakeDocument):
+    def __init__(self) -> None:
+        super().__init__()
+        self.references = ()
+        self.ConfigurationManager = FakeConfigurationManager(
+            {
+                "Defaut": ["C:/Modeles/20XX-XXXX-PRT-100.SLDPRT"],
+                "Variante": [
+                    "C:/Modeles/20XX-XXXX-PRT-100.SLDPRT",
+                    "C:/Modeles/20XX-XXXX-PRT-200.SLDPRT",
+                ],
+            },
+        )
+
+    def GetAllExternalReferences4(self, search: FakeSearch) -> tuple[object, ...]:  # noqa: N802
+        del search
+        return ((False,), (False,), (0,), ("C:/Modeles/20XX-XXXX-ENV-100.SLDPRT",))
+
+
+def test_document_manager_merges_listed_references_and_components(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install(monkeypatch, FakeFactory(FakeApplication(AssemblyDocument())))
+
+    with (
+        open_document_manager("cle") as manager,
+        manager.open_document(Path("C:/Projet/2026-5233-ENS-100.SLDASM")) as opened,
+    ):
+        references = opened.external_references()
+
+    assert references == [
+        "C:/Modeles/20XX-XXXX-ENV-100.SLDPRT",
+        "C:/Modeles/20XX-XXXX-PRT-100.SLDPRT",
+        "C:/Modeles/20XX-XXXX-PRT-200.SLDPRT",
+    ]

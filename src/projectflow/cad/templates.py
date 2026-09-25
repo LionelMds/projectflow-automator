@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import stat
+import unicodedata
 from collections.abc import Callable, Iterable
 from contextlib import ExitStack, suppress
 from dataclasses import dataclass
@@ -86,8 +87,27 @@ def cad_destination_dir(project_dir: Path, number: ProjectNumber, subfolder: str
     nested = project_dir / str(number)
     if number.is_subproject and nested.is_dir():
         base = nested
-    parts = [part for part in re.split(r"[\\/]", subfolder) if part]
-    return base.joinpath(*parts)
+    for part in (part for part in re.split(r"[\\/]", subfolder) if part):
+        base = _existing_child(base, part) or base / part
+    return base
+
+
+def _existing_child(parent: Path, name: str) -> Path | None:
+    """Reuse ``Plan d'exécution`` when the setting says ``Plan d'execution`` (or other case)."""
+    wanted = _folder_key(name)
+    try:
+        children = sorted(parent.iterdir())
+    except OSError:
+        return None
+    return next(
+        (child for child in children if child.is_dir() and _folder_key(child.name) == wanted),
+        None,
+    )
+
+
+def _folder_key(name: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", name.strip())
+    return "".join(char for char in decomposed if not unicodedata.combining(char)).casefold()
 
 
 def plan_template_copy(
@@ -298,7 +318,12 @@ class CadTemplateService:
         linked = item.suffix in SOLIDWORKS_LINKED_SUFFIXES
         try:
             with manager.open_document(item.destination) as document:
-                references_changed = _rewrite_references(document, references)
+                references_changed = _rewrite_references(
+                    document,
+                    references,
+                    path=item.destination,
+                    required=linked,
+                )
                 updates = compute_property_updates(
                     document.custom_properties(),
                     number=run.number,
@@ -400,9 +425,28 @@ class _ReferenceMap:
         return key == self._template_key or key.startswith(prefix)
 
 
-def _rewrite_references(document: SolidWorksDocument, references: _ReferenceMap) -> bool:
+def _rewrite_references(
+    document: SolidWorksDocument,
+    references: _ReferenceMap,
+    *,
+    path: Path,
+    required: bool,
+) -> bool:
+    current = document.external_references()
+    get_logger(__name__).info(
+        "cad.references",
+        file=path.name,
+        references=[_reference_name(reference) for reference in current],
+    )
+    if required and not current:
+        # An assembly or drawing always references documents: an empty list means they could
+        # not be read, and the copy could still open (and modify) the templates.
+        raise _TemplateLinkError(
+            "Document Manager n'a renvoye aucune reference : impossible de relier la copie "
+            "aux fichiers du projet.",
+        )
     changed = False
-    for reference in document.external_references():
+    for reference in current:
         target = references.replacement_for(reference)
         if target is None or _path_key(reference) == _path_key(str(target)):
             continue

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.1.48
+
+- Corrige l'assemblage copie encore relie aux pieces modeles : Document Manager pouvait
+  renvoyer une liste de references vide. Les references sont maintenant lues aussi dans les
+  composants de chaque configuration, et un assemblage ou une mise en plan dont aucune
+  reference n'est lue n'est plus conserve (copie supprimee, erreur dans le journal). Les
+  references lues sont journalisees.
+- Sous-dossier CAO par defaut : `Plans\Plan d'exécution`. Un dossier existant est reutilise
+  meme si les accents ou la casse different.
+
 ## 0.1.47
 
 - Corrige Document Manager « Cette interface n'est pas prise en charge » (0x80004002) :

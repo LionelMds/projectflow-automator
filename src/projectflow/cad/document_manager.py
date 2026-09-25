@@ -67,10 +67,53 @@ class DocumentManagerDocument:
             raise CadError(f"Propriete SolidWorks impossible a creer: {name}")
 
     def external_references(self) -> list[str]:
+        """Merge the reference list and the assembly components of every configuration.
+
+        Either source alone can come back empty depending on the Document Manager version;
+        a missed reference would leave the copy linked to the templates.
+        """
+        references = [*self._listed_references(), *self._component_paths()]
+        return list(dict.fromkeys(str(item) for item in references if item))
+
+    def _listed_references(self) -> list[str]:
         search = self._application.GetSearchOptionObject()
         search.SearchFilters = _SEARCH_EXTERNAL_REFERENCE | _SEARCH_IN_CONTEXT_REFERENCE
-        references = _references_result(self._document.GetAllExternalReferences(search))
-        return [str(reference) for reference in references if reference]
+        for method_name in ("GetAllExternalReferences4", "GetAllExternalReferences"):
+            method = getattr(self._document, method_name, None)
+            if method is None:
+                continue
+            try:
+                references = _string_list(method(search))
+            except self._com.errors:
+                continue
+            if references:
+                return references
+        return []
+
+    def _component_paths(self) -> list[str]:
+        try:
+            manager = self._document.ConfigurationManager
+            names = _string_list(manager.GetConfigurationNames())
+        except self._com.errors_or_missing:
+            return []
+        paths: list[str] = []
+        for name in names:
+            try:
+                configuration = self._com.latest(
+                    manager.GetConfigurationByName(name),
+                    "ISwDMConfiguration",
+                )
+                components = configuration.GetComponents() or ()
+            except self._com.errors_or_missing:
+                continue
+            for component in components:
+                try:
+                    path = self._com.latest(component, "ISwDMComponent").PathName
+                except self._com.errors_or_missing:
+                    continue
+                if path:
+                    paths.append(str(path))
+        return paths
 
     def replace_reference(self, old_path: str, new_path: str) -> None:
         self._document.ReplaceReference(old_path, new_path)
@@ -132,6 +175,8 @@ class ComApi:
         self.client = client
         self.module = module
         self.errors: tuple[type[BaseException], ...] = (comtypes.COMError, OSError)
+        # Optional members differ between Document Manager versions.
+        self.errors_or_missing: tuple[type[BaseException], ...] = (*self.errors, AttributeError)
 
     def create_class_factory(self) -> Any:
         coclass = getattr(self.module, "SwDMClassFactory", None)
@@ -239,12 +284,21 @@ def _text_result(result: Any) -> str:
     return "" if result is None else str(result)
 
 
-def _references_result(result: Any) -> tuple[Any, ...]:
+def _string_list(result: Any) -> list[str]:
+    """Extract the strings of a COM array; for [out] tuples, the first non-empty text array."""
     if result is None:
-        return ()
+        return []
     if isinstance(result, str):
-        return (result,)
-    return tuple(result)
+        return [result] if result else []
+    items = list(result)
+    if items and all(isinstance(item, str) for item in items):
+        return [item for item in items if item]
+    for item in items:
+        if isinstance(item, tuple | list):
+            nested = _string_list(item)
+            if nested:
+                return nested
+    return []
 
 
 def _com_error_text(error: BaseException) -> str:

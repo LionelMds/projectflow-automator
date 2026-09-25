@@ -258,7 +258,7 @@ class SettingsDialog(QDialog):
         self.cad_solidworks_edit = QLineEdit(native_path_text(config.cad.solidworks_template_dir))
         self.cad_solidworks_edit.setPlaceholderText("Dossier distinct du dossier de reference")
         self.cad_autocad_edit = QLineEdit(native_path_text(config.cad.autocad_template_dir))
-        self.cad_subfolder_edit = QLineEdit(config.cad.destination_subfolder)
+        self.cad_subfolder_edit = QLineEdit(config.cad.destination_subfolder.replace("/", os.sep))
         self.cad_subfolder_edit.setPlaceholderText("Vide = racine du dossier projet")
         self.solidworks_license_edit = QLineEdit()
         self.solidworks_license_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -292,14 +292,16 @@ class SettingsDialog(QDialog):
         properties = QWidget()
         properties_layout = QGridLayout(properties)
         properties_layout.setContentsMargins(0, 0, 0, 0)
-        for index, (field, label) in enumerate([
-            ("projet", "Projet"),
-            ("client", "Client"),
-            ("auteur", "Auteur"),
-            ("description", "Description"),
-            ("revision", "Revision"),
-            ("revision_defaut", "Rev. par defaut"),
-        ]):
+        for index, (field, label) in enumerate(
+            [
+                ("projet", "Projet"),
+                ("client", "Client"),
+                ("auteur", "Auteur"),
+                ("description", "Description"),
+                ("revision", "Revision"),
+                ("revision_defaut", "Rev. par defaut"),
+            ]
+        ):
             edit = QLineEdit(getattr(config.cad.properties, field))
             edit.setToolTip(f"Nom exact de la propriete SolidWorks ({label}), accents compris.")
             self.cad_property_edits[field] = edit

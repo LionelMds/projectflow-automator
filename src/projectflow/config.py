@@ -143,7 +143,7 @@ class CadConfig(BaseModel):
 
     solidworks_template_dir: Path | None = None
     autocad_template_dir: Path | None = None
-    destination_subfolder: str = ""
+    destination_subfolder: str = "Plans/Plan d'exécution"
     properties: CadPropertyNames = Field(default_factory=CadPropertyNames)
 
     @field_validator("solidworks_template_dir", "autocad_template_dir", mode="before")

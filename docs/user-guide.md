@@ -137,7 +137,8 @@ Dans `Parametres`, section `Modèles CAO` :
   seraient copies a chaque creation), par exemple
   `C:\Users\Lionel\OneDrive - Balz Metal Sa\Entreprise\00-Bibliothèque CAO\10-Modèles et documents\11-Racine Solidworks` ;
 - `Dossier modele AutoCAD`, par exemple `...\10-Modèles et documents\12-Racine AutoCAD` ;
-- `Sous-dossier dans le projet` : vide pour la racine du projet, ou par exemple `03-CAO` ;
+- `Sous-dossier dans le projet` : `Plans\Plan d'exécution` par defaut ; vide pour la racine du
+  projet. Un dossier existant est reutilise meme si les accents ou la casse different ;
 - `Cle Document Manager` : voir ci-dessous ;
 - `Proprietes` : noms exacts, accents compris, des proprietes SolidWorks renseignees.
 
