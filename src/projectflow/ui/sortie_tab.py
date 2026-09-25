@@ -52,7 +52,7 @@ class SortieDossierTab(QWidget):
 
     def set_project_directory(self, project_dir: Path) -> None:
         self._photo_directory = project_dir / "photos"
-        self._plan_directory = project_dir / "Plans" / "Plan d'execution"
+        self._plan_directory = project_dir / "Plans" / "Plan d'exécution"
         self._refresh_browse_buttons()
 
     def project_identity(self) -> tuple[str, str]:
@@ -60,9 +60,14 @@ class SortieDossierTab(QWidget):
 
     def set_inventory(self, inventory: OutputInventory) -> None:
         self._inventory = inventory
-        if self._photo_directory is None and inventory.photos:
+        # Folders found on disk win over the default names guessed from the project folder.
+        if inventory.photo_directory is not None:
+            self._photo_directory = inventory.photo_directory
+        elif inventory.photos:
             self._photo_directory = inventory.photos[0].path.parent
-        if self._plan_directory is None and inventory.plans:
+        if inventory.plan_directory is not None:
+            self._plan_directory = inventory.plan_directory
+        elif inventory.plans:
             self._plan_directory = inventory.plans[0].path.parent
         self._populate_candidates(self.fiche_list, inventory.fiches, select_first=True)
         self._populate_candidates(self.mesure_list, inventory.mesure_pdfs, select_first=False)

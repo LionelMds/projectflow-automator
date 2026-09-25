@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.49
+
+- Sortie dossier : trouve `Plans\Plan d'exécution` avec son accent. Les plans d'execution
+  sont de nouveau listes et le bouton `Parcourir` s'ouvre dans le vrai dossier des plans et
+  des photos, quels que soient les accents ou la casse des noms de dossiers.
+
 ## 0.1.48
 
 - Corrige l'assemblage copie encore relie aux pieces modeles : Document Manager pouvait

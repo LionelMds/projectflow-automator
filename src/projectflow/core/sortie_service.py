@@ -9,6 +9,7 @@ from pathlib import Path
 from projectflow.core.fiche_service import FicheService
 from projectflow.core.numero import ProjectNumber
 from projectflow.exceptions import ProjectCreationError
+from projectflow.platform.folder_names import find_child_directory
 
 IMAGE_SUFFIXES = frozenset({".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"})
 MAX_MISSING_NAMES = 3
@@ -27,6 +28,9 @@ class OutputInventory:
     mesure_pdfs: tuple[OutputCandidate, ...] = ()
     photos: tuple[OutputCandidate, ...] = ()
     plans: tuple[OutputCandidate, ...] = ()
+    # Existing folders where the file dialogs open, whatever their accents or case.
+    photo_directory: Path | None = None
+    plan_directory: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +103,8 @@ class SortieDossierService:
             mesure_pdfs=tuple(_candidate(path) for path in mesure_paths),
             photos=tuple(_candidate(path) for path in photo_paths),
             plans=tuple(_candidate(path) for path in plan_paths),
+            photo_directory=photo_directories[0] if photo_directories else None,
+            plan_directory=plan_directories[0] if plan_directories else None,
         )
 
     def create_output_folder(
@@ -135,7 +141,7 @@ def _search_directories(project_dir: Path, number: ProjectNumber) -> list[Path]:
 def _find_photo_directories(search_dirs: list[Path]) -> list[Path]:
     result: list[Path] = []
     for directory in search_dirs:
-        direct = _find_child_directory(directory, "photos")
+        direct = find_child_directory(directory, "photos")
         if direct is not None:
             result.append(direct)
     return _unique_paths(result)
@@ -144,24 +150,12 @@ def _find_photo_directories(search_dirs: list[Path]) -> list[Path]:
 def _find_plan_directories(search_dirs: list[Path]) -> list[Path]:
     result: list[Path] = []
     for directory in search_dirs:
-        plans = _find_child_directory(directory, "plans")
+        plans = find_child_directory(directory, "plans")
         if plans is None:
             continue
-        execution = _find_child_directory(plans, "plan d'execution")
+        execution = find_child_directory(plans, "plan d'execution")
         result.append(execution or plans)
     return _unique_paths(result)
-
-
-def _find_child_directory(parent: Path, expected_name: str) -> Path | None:
-    expected = expected_name.casefold()
-    try:
-        children = parent.iterdir()
-    except OSError:
-        return None
-    for child in children:
-        if child.is_dir() and child.name.casefold() == expected:
-            return child
-    return None
 
 
 def _candidate(path: Path) -> OutputCandidate:

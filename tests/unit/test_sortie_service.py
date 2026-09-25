@@ -157,3 +157,23 @@ def test_create_output_folder_uses_a_suffix_when_timestamp_folder_exists(tmp_pat
     )
 
     assert output_dir.name.endswith("(2)")
+
+
+def test_discover_finds_accented_plan_folder_and_reports_directories(tmp_path: Path) -> None:
+    project_dir = tmp_path / "2026" / "2026-5093"
+    plans = project_dir / "Plans" / "Plan d'exécution"
+    plans.mkdir(parents=True)
+    (plans / "2026-5093-ENS-100.pdf").touch()
+    photos = project_dir / "Photos"
+    photos.mkdir()
+    (project_dir / "2026-5093 - Fiche dossier clients.xlsx").touch()
+
+    inventory = SortieDossierService(FicheService()).discover(
+        project_dir,
+        parse_project_number("2026-5093"),
+    )
+
+    assert [candidate.path.name for candidate in inventory.plans] == ["2026-5093-ENS-100.pdf"]
+    assert inventory.mesure_pdfs == ()
+    assert inventory.plan_directory == plans.resolve()
+    assert inventory.photo_directory == photos.resolve()

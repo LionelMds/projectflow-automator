@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import stat
-import unicodedata
 from collections.abc import Callable, Iterable
 from contextlib import ExitStack, suppress
 from dataclasses import dataclass
@@ -31,6 +30,7 @@ from projectflow.core.models import CadFileResult, CadFileStatus, CadOutcome, Pr
 from projectflow.core.numero import ProjectNumber
 from projectflow.exceptions import CadError
 from projectflow.logging import get_logger
+from projectflow.platform.folder_names import find_child_directory
 from projectflow.platform.paths import native_path_text
 
 TEMPORARY_SUFFIXES = frozenset({".bak", ".dwl", ".dwl2"})
@@ -88,26 +88,8 @@ def cad_destination_dir(project_dir: Path, number: ProjectNumber, subfolder: str
     if number.is_subproject and nested.is_dir():
         base = nested
     for part in (part for part in re.split(r"[\\/]", subfolder) if part):
-        base = _existing_child(base, part) or base / part
+        base = find_child_directory(base, part) or base / part
     return base
-
-
-def _existing_child(parent: Path, name: str) -> Path | None:
-    """Reuse ``Plan d'exécution`` when the setting says ``Plan d'execution`` (or other case)."""
-    wanted = _folder_key(name)
-    try:
-        children = sorted(parent.iterdir())
-    except OSError:
-        return None
-    return next(
-        (child for child in children if child.is_dir() and _folder_key(child.name) == wanted),
-        None,
-    )
-
-
-def _folder_key(name: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", name.strip())
-    return "".join(char for char in decomposed if not unicodedata.combining(char)).casefold()
 
 
 def plan_template_copy(

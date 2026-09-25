@@ -290,7 +290,8 @@ les fichiers du projet.
    sous-dossier `photos`; selectionner une ou plusieurs images. Seules les images ajoutees sont
    reprises dans la sortie. Cliquer sur une image pour afficher son apercu simple.
 5. Cliquer sur `Parcourir` dans le groupe `Plans d'execution`. Le dialogue s'ouvre directement
-   dans `Plans/Plan d'execution`; selectionner les PDF a copier.
+   dans `Plans/Plan d'exécution` (le dossier existant est trouve meme si les accents ou la
+   casse different) ; selectionner les PDF a copier.
 6. Cliquer sur `Creer dossier de sortie`.
 
 ProjectFlow cree un dossier horodate sous `Sorties dossier`, avec les sous-dossiers `01 - Fiche
