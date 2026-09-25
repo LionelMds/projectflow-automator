@@ -35,7 +35,7 @@ from projectflow.core.fiche_service import FicheService
 from projectflow.core.models import CadOutcome, ProjectInput
 from projectflow.core.numero import parse_project_number
 from projectflow.core.project_service import ProjectService
-from projectflow.exceptions import CadUnavailableError
+from projectflow.exceptions import CadError, CadUnavailableError
 
 TEMPLATE_PARTS = ["ENV-100.SLDPRT", "PRT-100.SLDPRT", "PRT-200.SLDPRT"]
 TEMPLATE_PROPERTIES = {
@@ -649,3 +649,123 @@ def test_default_destination_reuses_accented_plan_folder(tmp_path: Path) -> None
         parse_project_number("2026-5233"),
         "Plans/Plan d'execution",
     ) == (tmp_path / "vide" / "Plans" / "Plan d'execution")
+
+
+class _CrashingDocument(JsonDocument):
+    def external_references(self) -> list[str]:
+        raise KeyError(13)
+
+
+class _ForgetfulDocument(JsonDocument):
+    """References readable when writing, lost when re-reading: nothing can be verified."""
+
+    def external_references(self) -> list[str]:
+        return [] if self._read_only else super().external_references()
+
+    def reference_report(self) -> str:
+        return "liste : 0 ; composants : KeyError 13" if self._read_only else "liste : 3"
+
+
+def _service_with(document_type: type[JsonDocument]) -> CadTemplateService:
+    class _Manager(JsonDocumentManager):
+        @contextmanager
+        def open_document(
+            self,
+            path: Path,
+            *,
+            read_only: bool = False,
+        ) -> Iterator[JsonDocument]:
+            if path.parent.name == "11-Racine Solidworks":
+                # The license probe reads the template normally.
+                yield JsonDocument(path, read_only=read_only)
+                return
+            yield document_type(path, read_only=read_only)
+
+    @contextmanager
+    def factory(_key: str) -> Iterator[_Manager]:
+        yield _Manager()
+
+    return CadTemplateService(license_key_loader=lambda: "key", manager_factory=factory)
+
+
+def _assembly_result(outcome: CadOutcome) -> str:
+    assembly = next(item for item in outcome.files if item.name.endswith(".SLDASM"))
+    assert assembly.status == "error"
+    return assembly.detail
+
+
+def test_unexpected_error_names_its_type_and_removes_the_copy(tmp_path: Path) -> None:
+    project_dir = tmp_path / "projet"
+
+    outcome = _service_with(_CrashingDocument).apply(
+        _project(add_solidworks=True),
+        project_dir,
+        config=_config(tmp_path),
+        initials="LM",
+    )
+
+    detail = _assembly_result(outcome)
+    assert detail.startswith("KeyError: 13")
+    assert "copie a ete supprimee" in detail
+    assert not (project_dir / "2026-5233-ENS-100.SLDASM").exists()
+
+
+def test_verification_that_cannot_read_references_removes_the_copy(tmp_path: Path) -> None:
+    project_dir = tmp_path / "projet"
+
+    outcome = _service_with(_ForgetfulDocument).apply(
+        _project(add_solidworks=True),
+        project_dir,
+        config=_config(tmp_path),
+        initials="LM",
+    )
+
+    detail = _assembly_result(outcome)
+    assert "aucune reference lue dans 2026-5233-ENS-100.SLDASM" in detail
+    assert "composants : KeyError 13" in detail
+    assert not (project_dir / "2026-5233-ENS-100.SLDASM").exists()
+
+
+def test_check_document_manager_lists_template_assembly_references(tmp_path: Path) -> None:
+    template_dir = _solidworks_templates(tmp_path)
+
+    message = check_document_manager(
+        DEMO_LICENSE_KEY,
+        template_dir,
+        manager_factory=open_json_document_manager,
+    )
+
+    assert "20XX-XXXX-ENS-100.SLDASM : 3 reference(s) lue(s)" in message
+    assert "20XX-XXXX-PRT-200.SLDPRT" in message
+
+
+def test_check_document_manager_reports_unreadable_assembly_references(tmp_path: Path) -> None:
+    template_dir = _solidworks_templates(tmp_path)
+
+    @contextmanager
+    def blind_factory(_key: str) -> Iterator[_BlindManager]:
+        yield _BlindManager()
+
+    with pytest.raises(CadError, match=r"aucune reference lue dans 20XX-XXXX-ENS-100\.SLDASM"):
+        check_document_manager("key", template_dir, manager_factory=blind_factory)
+
+
+def test_check_document_manager_runs_a_real_copy_in_a_temporary_folder(tmp_path: Path) -> None:
+    template_dir = _solidworks_templates(tmp_path)
+
+    message = check_document_manager(
+        DEMO_LICENSE_KEY,
+        template_dir,
+        manager_factory=open_json_document_manager,
+    )
+
+    assert "Essai de copie reussi : 4 fichier(s) copie(s), 1 assemblage(s)" in message
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["11-Racine Solidworks"]
+
+
+def test_check_document_manager_reports_a_failed_copy(tmp_path: Path) -> None:
+    template_dir = _solidworks_templates(tmp_path)
+    factory = _service_with(_ForgetfulDocument)._manager_factory  # noqa: SLF001
+
+    with pytest.raises(CadError, match=r"Essai de copie echoue : 2099-9999-ENS-100\.SLDASM"):
+        check_document_manager("key", template_dir, manager_factory=factory)

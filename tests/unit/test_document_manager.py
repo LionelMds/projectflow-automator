@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ctypes
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -75,7 +77,8 @@ class Interfaced:
         return self
 
 
-class FakeSearch:
+class FakeSearch(Interfaced):
+    supported = (FakeModule.ISwDMSearchOption,)
     SearchFilters = 0
 
 
@@ -403,3 +406,208 @@ def test_document_manager_merges_listed_references_and_components(
         "C:/Modeles/20XX-XXXX-PRT-100.SLDPRT",
         "C:/Modeles/20XX-XXXX-PRT-200.SLDPRT",
     ]
+
+
+class FailingListDocument(AssemblyDocument):
+    """Document Manager versions whose newest method returns unsupported COM arrays."""
+
+    def GetAllExternalReferences4(self, search: FakeSearch) -> tuple[object, ...]:  # noqa: N802
+        del search
+        raise KeyError(13)
+
+    def GetAllExternalReferences(self, search: FakeSearch) -> tuple[str, ...]:  # noqa: N802
+        del search
+        return ("C:/Modeles/20XX-XXXX-ENV-100.SLDPRT",)
+
+
+class FailingComponentsConfiguration(FakeConfiguration):
+    def GetComponents(self) -> tuple[FakeComponent, ...]:  # noqa: N802
+        raise KeyError(13)
+
+
+def test_document_manager_reports_each_reference_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    document = FailingListDocument()
+    _install(monkeypatch, FakeFactory(FakeApplication(document)))
+
+    with (
+        open_document_manager("cle") as manager,
+        manager.open_document(Path("C:/Projet/2026-5233-ENS-100.SLDASM")) as opened,
+    ):
+        references = opened.external_references()
+        report = opened.reference_report()
+
+    assert references[0] == "C:/Modeles/20XX-XXXX-ENV-100.SLDPRT"
+    assert len(references) == 3
+    assert report == "liste : 1 ; composants : 3"
+
+
+def test_document_manager_keeps_listed_references_when_components_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = AssemblyDocument()
+    document.ConfigurationManager.GetConfigurationByName = (  # type: ignore[method-assign]
+        lambda _name: FailingComponentsConfiguration(["unused"])
+    )
+    _install(monkeypatch, FakeFactory(FakeApplication(document)))
+
+    with (
+        open_document_manager("cle") as manager,
+        manager.open_document(Path("C:/Projet/2026-5233-ENS-100.SLDASM")) as opened,
+    ):
+        references = opened.external_references()
+        report = opened.reference_report()
+
+    assert references == ["C:/Modeles/20XX-XXXX-ENV-100.SLDPRT"]
+    assert report == "liste : 1 ; composants : KeyError 13"
+
+
+def test_parts_only_read_the_reference_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    document = FakeDocument()
+    _install(monkeypatch, FakeFactory(FakeApplication(document)))
+
+    with (
+        open_document_manager("cle") as manager,
+        manager.open_document(Path("C:/Projet/2026-5233-PRT-100.SLDPRT")) as opened,
+    ):
+        opened.external_references()
+        assert opened.reference_report() == "liste : 1"
+
+
+_VT_ARRAY_OF_VARIANTS = 0x2000 | 12
+_VT_ARRAY_OF_UNKNOWN = 0x2000 | 13
+
+
+def _target(reference: Any) -> Any:
+    """Return the object a ctypes ``byref()`` argument points to."""
+    return reference._obj  # noqa: SLF001 - ctypes stores the target there
+
+
+class FakeVariant(ctypes.Structure):
+    """VARIANT stand-in: ``index`` selects the COM object an element holds."""
+
+    _fields_ = (("vt", ctypes.c_ushort), ("index", ctypes.c_int))
+    objects: tuple[object, ...] = ()
+
+    @property
+    def _(self) -> SimpleNamespace:
+        return SimpleNamespace(c_void_p=4096)
+
+    @property
+    def value(self) -> object:
+        return self.objects[self.index]
+
+
+class FakeOleAut32:
+    def __init__(self, count: int, *, element_address: list[int] | None = None) -> None:
+        self.count = count
+        self.element_address = element_address
+        self.cleared = 0
+
+    def SafeArrayGetLBound(self, array: Any, dimension: int, out: Any) -> None:  # noqa: N802
+        assert array.value == 4096
+        assert dimension == 1
+        _target(out).value = 0
+
+    def SafeArrayGetUBound(self, array: Any, dimension: int, out: Any) -> None:  # noqa: N802
+        del array, dimension
+        _target(out).value = self.count - 1
+
+    def SafeArrayGetElement(self, array: Any, position: Any, out: Any) -> None:  # noqa: N802
+        del array
+        index = _target(position).value
+        if self.element_address is not None:
+            _target(out).value = self.element_address[index]
+            return
+        _target(out).vt = 13
+        _target(out).index = index
+
+    def VariantClear(self, variant: Any) -> None:  # noqa: N802
+        del variant
+        self.cleared += 1
+
+
+class RawConfiguration:
+    def __init__(self, vartype: int) -> None:
+        self.vartype = vartype
+
+    def _ISwDMConfiguration2__com_GetComponents(self, out: Any) -> None:  # noqa: N802
+        _target(out).vt = self.vartype
+
+    def GetComponents(self) -> None:  # noqa: N802
+        raise KeyError(13)
+
+
+def test_object_array_decodes_variant_array_without_comtypes_conversion() -> None:
+    components = (FakeComponent("C:/a.SLDPRT"), FakeComponent("C:/b.SLDPRT"))
+    FakeVariant.objects = components
+    oleaut32 = FakeOleAut32(2)
+    com = ComApi(
+        FakeComtypes(),
+        FakeClient(None),
+        FakeModule,
+        automation=SimpleNamespace(VARIANT=FakeVariant),
+        oleaut32=oleaut32,
+    )
+
+    items = com.object_array(RawConfiguration(_VT_ARRAY_OF_VARIANTS), "GetComponents")
+
+    assert items == list(components)
+    assert oleaut32.cleared == 3
+
+
+def test_object_array_decodes_array_of_com_pointers() -> None:
+    values = (ctypes.c_int * 2)(7, 9)
+    addresses = [ctypes.addressof(values) + index * ctypes.sizeof(ctypes.c_int) for index in (0, 1)]
+    oleaut32 = FakeOleAut32(2, element_address=addresses)
+    comtypes = FakeComtypes()
+    comtypes.IUnknown = ctypes.c_int  # type: ignore[attr-defined]
+    com = ComApi(
+        comtypes,
+        FakeClient(None),
+        FakeModule,
+        automation=SimpleNamespace(VARIANT=FakeVariant),
+        oleaut32=oleaut32,
+    )
+
+    items = com.object_array(RawConfiguration(_VT_ARRAY_OF_UNKNOWN), "GetComponents")
+
+    assert [item.contents.value for item in items] == [7, 9]
+    assert oleaut32.cleared == 1
+
+
+def test_object_array_empty_variant_and_fallback_without_raw_method() -> None:
+    oleaut32 = FakeOleAut32(0)
+    com = ComApi(
+        FakeComtypes(),
+        FakeClient(None),
+        FakeModule,
+        automation=SimpleNamespace(VARIANT=FakeVariant),
+        oleaut32=oleaut32,
+    )
+
+    assert com.object_array(RawConfiguration(0), "GetComponents") == []
+    assert com.object_array(FakeConfiguration(["C:/a.SLDPRT"]), "GetComponents")[0].PathName == (
+        "C:/a.SLDPRT"
+    )
+    with pytest.raises(CadError, match="tableau COM inattendu"):
+        com.object_array(RawConfiguration(8), "GetComponents")
+
+
+class TypedArrayConfiguration(FakeConfiguration):
+    def _ISwDMConfiguration2__com_GetComponents(self, out: Any) -> None:  # noqa: N802
+        del out
+        raise ctypes.ArgumentError("argument 1: wrong type")
+
+
+def test_object_array_falls_back_when_raw_method_is_not_a_variant() -> None:
+    com = ComApi(
+        FakeComtypes(),
+        FakeClient(None),
+        FakeModule,
+        automation=SimpleNamespace(VARIANT=FakeVariant),
+        oleaut32=FakeOleAut32(0),
+    )
+
+    items = com.object_array(TypedArrayConfiguration(["C:/a.SLDPRT"]), "GetComponents")
+
+    assert [item.PathName for item in items] == ["C:/a.SLDPRT"]

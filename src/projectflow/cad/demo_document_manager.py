@@ -36,6 +36,9 @@ class JsonDocument:
     def external_references(self) -> list[str]:
         return list(self._references)
 
+    def reference_report(self) -> str:
+        return f"fichier de demonstration : {len(self._references)}"
+
     def replace_reference(self, old_path: str, new_path: str) -> None:
         self._references = [new_path if item == old_path else item for item in self._references]
 

@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import stat
+import tempfile
 from collections.abc import Callable, Iterable
 from contextlib import ExitStack, suppress
 from dataclasses import dataclass
@@ -27,12 +28,14 @@ from projectflow.cad.solidworks_properties import (
 )
 from projectflow.config import CadConfig
 from projectflow.core.models import CadFileResult, CadFileStatus, CadOutcome, ProjectInput
-from projectflow.core.numero import ProjectNumber
+from projectflow.core.numero import ProjectNumber, parse_project_number
 from projectflow.exceptions import CadError
 from projectflow.logging import get_logger
 from projectflow.platform.folder_names import find_child_directory
 from projectflow.platform.paths import native_path_text
 
+# Number used by the settings self-test copy, in a temporary folder deleted afterwards.
+SELF_TEST_NUMBER = "2099-9999"
 TEMPORARY_SUFFIXES = frozenset({".bak", ".dwl", ".dwl2"})
 _COPY_CHUNK_SIZE = 1024 * 1024
 _ONEDRIVE_HINT = (
@@ -152,7 +155,11 @@ def check_document_manager(
     *,
     manager_factory: DocumentManagerFactory = open_document_manager,
 ) -> str:
-    """Open Document Manager and one template to validate the key; raise CadError otherwise."""
+    """Validate the key on a template and read the assembly references; raise CadError otherwise.
+
+    Reading the references of the template assembly is what the creation needs: a failure
+    here means assemblies would be refused, so it is reported before creating a project.
+    """
     sample = _first_solidworks_template(template_dir)
     with manager_factory(license_key) as manager:
         if sample is None:
@@ -160,9 +167,58 @@ def check_document_manager(
                 "Document Manager est installe. La cle sera verifiee a la premiere creation : "
                 "aucun fichier SolidWorks modele trouve."
             )
-        with manager.open_document(sample, read_only=True):
-            pass
-    return f"Document Manager et cle de licence valides (test sur {sample.name})."
+        with manager.open_document(sample, read_only=True) as document:
+            if sample.suffix.casefold() not in SOLIDWORKS_LINKED_SUFFIXES:
+                return f"Document Manager et cle de licence valides (test sur {sample.name})."
+            found = _read_references(document, path=sample, stage="test", required=True)
+            sources = document.reference_report()
+    names = ", ".join(_reference_name(reference) for reference in found)
+    copy_report = _self_test_copy(license_key, template_dir or sample.parent, manager_factory)
+    return (
+        "Document Manager et cle de licence valides.\n"
+        f"{sample.name} : {len(found)} reference(s) lue(s) ({names}) [{sources}].\n"
+        f"{copy_report}"
+    )
+
+
+def _self_test_copy(
+    license_key: str,
+    template_dir: Path,
+    manager_factory: DocumentManagerFactory,
+) -> str:
+    """Run the real SolidWorks copy on a temporary folder, then delete it.
+
+    This proves before any project creation that the copied assembly is relinked to the
+    copied parts and verified, with the same code as a creation.
+    """
+    service = CadTemplateService(
+        license_key_loader=lambda: license_key,
+        manager_factory=manager_factory,
+    )
+    project = ProjectInput(number=parse_project_number(SELF_TEST_NUMBER), add_solidworks=True)
+    with tempfile.TemporaryDirectory(
+        prefix="projectflow-cad-test-",
+        ignore_cleanup_errors=True,
+    ) as temporary:
+        outcome = service.apply(
+            project,
+            Path(temporary),
+            config=CadConfig(solidworks_template_dir=template_dir, destination_subfolder=""),
+            initials="",
+        )
+    problems = [f"{item.name} : {item.detail}" for item in outcome.files if item.status == "error"]
+    problems += [*outcome.warnings, *outcome.errors]
+    if problems:
+        raise CadError("Essai de copie echoue : " + " ; ".join(problems))
+    linked = [
+        item
+        for item in outcome.files
+        if Path(item.name).suffix.casefold() in SOLIDWORKS_LINKED_SUFFIXES
+    ]
+    return (
+        f"Essai de copie reussi : {len(outcome.files)} fichier(s) copie(s), "
+        f"{len(linked)} assemblage(s) ou mise(s) en plan relie(s) aux copies puis verifie(s)."
+    )
 
 
 def _first_solidworks_template(template_dir: Path | None) -> Path | None:
@@ -175,7 +231,10 @@ def _first_solidworks_template(template_dir: Path | None) -> Path | None:
         and contains_marker(path.name)
         and not is_temporary_cad_file(path.name)
     )
-    return candidates[0] if candidates else None
+    # The assembly exercises the reference reading as well as the license.
+    assemblies = [path for path in candidates if path.suffix.casefold() == ".sldasm"]
+    preferred = assemblies or candidates
+    return preferred[0] if preferred else None
 
 
 class CadTemplateService:
@@ -212,13 +271,13 @@ class CadTemplateService:
         if project.add_autocad:
             try:
                 self._apply_autocad(run)
-            except (CadError, OSError) as exc:
-                run.errors.append(f"AutoCAD : {exc}")
+            except Exception as exc:  # noqa: BLE001 - one option must not stop the other one
+                run.errors.append(f"AutoCAD : {_error_text(exc)}")
         if project.add_solidworks:
             try:
                 self._apply_solidworks(run)
-            except (CadError, OSError) as exc:
-                run.errors.append(f"SolidWorks : {exc}")
+            except Exception as exc:  # noqa: BLE001 - reported with the project result
+                run.errors.append(f"SolidWorks : {_error_text(exc)}")
         outcome = run.outcome()
         get_logger(__name__).info(
             "cad.apply",
@@ -282,10 +341,10 @@ class CadTemplateService:
             # Validates the license: Document Manager only refuses an invalid key on open.
             with manager.open_document(documents[0].source, read_only=True):
                 pass
-        except CadError as exc:
+        except Exception as exc:  # noqa: BLE001 - any failure falls back to the safe copy
             run.warnings.append(
-                f"Document Manager indisponible ({exc}) : assemblages et mises en plan "
-                "non copies, pieces copiees sans proprietes.",
+                f"Document Manager indisponible ({_error_text(exc)}) : assemblages et mises "
+                "en plan non copies, pieces copiees sans proprietes.",
             )
             return None
         return manager
@@ -319,9 +378,9 @@ class CadTemplateService:
                     document.set_custom_property(name, value)
                 if references_changed or updates:
                     document.save()
-            _verify_no_template_links(manager, item.destination, references)
+            _verify_no_template_links(manager, item.destination, references, required=linked)
         except Exception as exc:  # noqa: BLE001 - one file must not stop the others
-            detail = str(exc).strip() or type(exc).__name__
+            detail = _error_text(exc)
             if linked or isinstance(exc, _TemplateLinkError):
                 with suppress(OSError):
                     item.destination.unlink()
@@ -414,19 +473,7 @@ def _rewrite_references(
     path: Path,
     required: bool,
 ) -> bool:
-    current = document.external_references()
-    get_logger(__name__).info(
-        "cad.references",
-        file=path.name,
-        references=[_reference_name(reference) for reference in current],
-    )
-    if required and not current:
-        # An assembly or drawing always references documents: an empty list means they could
-        # not be read, and the copy could still open (and modify) the templates.
-        raise _TemplateLinkError(
-            "Document Manager n'a renvoye aucune reference : impossible de relier la copie "
-            "aux fichiers du projet.",
-        )
+    current = _read_references(document, path=path, stage="copie", required=required)
     changed = False
     for reference in current:
         target = references.replacement_for(reference)
@@ -441,16 +488,55 @@ def _verify_no_template_links(
     manager: SolidWorksDocumentManager,
     path: Path,
     references: _ReferenceMap,
+    *,
+    required: bool,
 ) -> None:
     """Re-read the saved file; raise when a reference still points to the templates."""
     with manager.open_document(path, read_only=True) as document:
-        remaining = references.template_links(document.external_references())
+        found = _read_references(document, path=path, stage="verification", required=required)
+        report = document.reference_report()
+    remaining = references.template_links(found)
     if remaining:
         raise _TemplateLinkError(
             "reference(s) encore liee(s) au dossier modele : "
             + ", ".join(_reference_name(reference) for reference in remaining)
-            + ".",
+            + (f" (lecture : {report})." if report else "."),
         )
+
+
+def _read_references(
+    document: SolidWorksDocument,
+    *,
+    path: Path,
+    stage: str,
+    required: bool,
+) -> list[str]:
+    found = document.external_references()
+    report = document.reference_report()
+    get_logger(__name__).info(
+        "cad.references",
+        file=path.name,
+        stage=stage,
+        references=[_reference_name(reference) for reference in found],
+        sources=report,
+    )
+    if required and not found:
+        # An assembly or drawing always references documents: an empty list means they could
+        # not be read, and the copy could still open (and modify) the templates.
+        raise _TemplateLinkError(
+            f"aucune reference lue dans {path.name} par Document Manager"
+            + (f" ({report})" if report else "")
+            + " : impossible de relier la copie aux fichiers du projet.",
+        )
+    return found
+
+
+def _error_text(error: BaseException) -> str:
+    """Name the error type when its message alone is unclear (``KeyError: 13``)."""
+    message = str(error).strip()
+    if isinstance(error, CadError | OSError) and message:
+        return message
+    return f"{type(error).__name__}: {message}" if message else type(error).__name__
 
 
 class _TemplateLinkError(CadError):

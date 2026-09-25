@@ -32,6 +32,9 @@ class SolidWorksDocument(Protocol):
     def external_references(self) -> list[str]:
         """Return the paths of the documents referenced by this document."""
 
+    def reference_report(self) -> str:
+        """Describe what each reference source returned during the last read (for the log)."""
+
     def replace_reference(self, old_path: str, new_path: str) -> None:
         """Point one external reference to another file."""
 

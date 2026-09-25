@@ -186,8 +186,17 @@ SolidWorks. Document Manager s'installe avec `swdocmgr.exe`, telecharge avec la 
 2. Demander une cle `Document Manager API` (menu API Support / Document Manager Key Request).
 3. Coller la cle recue dans `Parametres` -> `Modèles CAO` -> `Cle Document Manager`, puis `OK`.
 
-Le bouton `Tester`, a cote de la cle, verifie que Document Manager est installe et que la cle
-ouvre un fichier du dossier modele SolidWorks. En cas d'echec, le message donne la cause :
+Le bouton `Tester`, a cote de la cle, verifie en arriere-plan, sans creer de projet :
+
+1. que Document Manager est installe et que la cle ouvre l'assemblage modele ;
+2. que les references de cet assemblage sont lisibles (le message indique le nombre lu par
+   chaque source : `liste` et `composants`) ;
+3. qu'une copie complete fonctionne : les modeles sont copies dans un dossier temporaire sous
+   le numero `2099-9999`, l'assemblage est relie aux pieces copiees puis verifie, et le dossier
+   temporaire est efface. Les modeles ne sont ouverts qu'en lecture.
+
+Si le test reussit, la creation d'un projet avec `Ajouter arborescence SolidWorks` fonctionnera.
+En cas d'echec, le message donne la cause :
 
 - `SwDocumentMgr.dll est introuvable` : Document Manager n'est pas installe sur ce poste ;
   installer SOLIDWORKS ou le SOLIDWORKS Document Manager fourni avec la cle ;

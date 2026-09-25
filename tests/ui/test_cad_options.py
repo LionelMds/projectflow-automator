@@ -358,3 +358,39 @@ def test_settings_dialog_tests_document_manager_with_stored_key(
 
     assert calls == [("cle-stockee", tmp_path)]
     assert messages == ["Document Manager et cle de licence valides."]
+
+
+@pytest.mark.asyncio
+async def test_settings_dialog_runs_document_manager_test_in_background(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    errors: list[str] = []
+
+    def failing_check(key: str, template_dir: Path | None) -> str:
+        assert key == "cle-saisie"
+        assert template_dir == tmp_path
+        raise KeyError(13)
+
+    monkeypatch.setattr("projectflow.ui.dialogs.settings.check_document_manager", failing_check)
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, _title, text: errors.append(text),
+    )
+    dialog = SettingsDialog(AppConfig())
+    qtbot.addWidget(dialog)
+    dialog.cad_solidworks_edit.setText(str(tmp_path))
+    dialog.solidworks_license_edit.setText("cle-saisie")
+
+    dialog.solidworks_license_test_button.click()
+    task = dialog._cad_test_task  # noqa: SLF001
+
+    assert task is not None
+    assert not dialog.solidworks_license_test_button.isEnabled()
+    assert dialog.solidworks_license_test_button.text() == "Test en cours..."
+    await task
+    assert dialog.solidworks_license_test_button.isEnabled()
+    assert dialog.solidworks_license_test_button.text() == "Tester"
+    assert errors == ["KeyError: 13"]

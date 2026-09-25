@@ -68,6 +68,7 @@ class SettingsDialog(QDialog):
         self._reconnect_repertoire = False
         self._microsoft_sign_in_requested = False
         self._planner_task: asyncio.Task[None] | None = None
+        self._cad_test_task: asyncio.Task[None] | None = None
         self._finished = False
         self._build_ui(config)
         self.finished.connect(self._cancel_planner_action)
@@ -315,18 +316,42 @@ class SettingsDialog(QDialog):
         return group
 
     def _test_document_manager(self) -> None:
+        if self._finished or self._cad_test_task is not None:
+            return
         key = self.solidworks_license_edit.text().strip()
         if not key and not self._license_clear_requested:
             key = self._license_storage.load()
+        template_dir = _optional_path(self.cad_solidworks_edit.text())
         try:
-            message = check_document_manager(
-                key,
-                _optional_path(self.cad_solidworks_edit.text()),
-            )
-        except ProjectFlowError as exc:
-            self._show_error("Document Manager", str(exc))
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._show_document_manager_result(*_document_manager_check(key, template_dir))
             return
-        QMessageBox.information(self, "Document Manager", message)
+        # The test copies the templates and drives COM: keep the window responsive.
+        self.solidworks_license_test_button.setEnabled(False)
+        self.solidworks_license_test_button.setText("Test en cours...")
+        self._cad_test_task = loop.create_task(self._run_document_manager_test(key, template_dir))
+
+    async def _run_document_manager_test(self, key: str, template_dir: Path | None) -> None:
+        try:
+            succeeded, message = await asyncio.to_thread(
+                _document_manager_check,
+                key,
+                template_dir,
+            )
+        finally:
+            self._cad_test_task = None
+            if not self._finished:
+                self.solidworks_license_test_button.setText("Tester")
+                self.solidworks_license_test_button.setEnabled(True)
+        if not self._finished:
+            self._show_document_manager_result(succeeded, message)
+
+    def _show_document_manager_result(self, succeeded: bool, message: str) -> None:  # noqa: FBT001
+        if succeeded:
+            QMessageBox.information(self, "Document Manager", message)
+        else:
+            self._show_error("Document Manager", message)
 
     def _request_license_clear(self) -> None:
         self._license_clear_requested = True
@@ -487,8 +512,10 @@ class SettingsDialog(QDialog):
 
     async def aclose(self) -> None:
         self._cancel_planner_action()
-        if self._planner_task is not None:
-            await asyncio.gather(self._planner_task, return_exceptions=True)
+        # A running Document Manager test cannot be interrupted: let its thread finish.
+        pending = [task for task in (self._planner_task, self._cad_test_task) if task is not None]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     def _show_error(self, title: str, message: str) -> None:
         if not self._finished:
@@ -682,6 +709,16 @@ def _browse_row(edit: QLineEdit, *, directory: bool) -> QWidget:
     layout.addWidget(edit, 1)
     layout.addWidget(button)
     return widget
+
+
+def _document_manager_check(key: str, template_dir: Path | None) -> tuple[bool, str]:
+    """Run the Document Manager test; the result is shown by the dialog thread."""
+    try:
+        return True, check_document_manager(key, template_dir)
+    except ProjectFlowError as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001 - the test reports any failure to the user
+        return False, f"{type(exc).__name__}: {exc}"
 
 
 def _validation_message(error: ValidationError) -> str:

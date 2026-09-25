@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Corrige l'erreur `13` lors de la copie SolidWorks : Document Manager renvoie les composants
+  d'un assemblage dans un tableau d'objets COM que comtypes ne sait pas convertir
+  (`KeyError: 13`). Le tableau est maintenant decode directement.
+- Lit les references de facon plus sure : option de recherche interrogee sur son interface
+  (sinon le filtre pouvait etre ignore sans erreur), essai des methodes
+  `GetAllExternalReferences4`, `2` puis de base avec deux filtres de recherche, et lecture des
+  composants de chaque configuration. Une source en echec n'empeche plus l'autre d'etre lue.
+- Verification finale renforcee : un assemblage dont les references ne peuvent pas etre relues
+  apres enregistrement n'est pas conserve. Les messages nomment le type d'erreur et ce que
+  chaque source a renvoye ; le journal note les references lues a chaque etape.
+- Le bouton `Tester` des `Modèles CAO` fait maintenant un essai complet en arriere-plan : lecture
+  des references de l'assemblage modele, puis copie reelle dans un dossier temporaire, liaison
+  et verification, sans creer de projet.
+
 ## 0.1.49
 
 - Sortie dossier : trouve `Plans\Plan d'exécution` avec son accent. Les plans d'execution
