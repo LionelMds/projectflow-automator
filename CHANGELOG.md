@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Corrige la verification apres le remplacement par SolidWorks : Document Manager relisait les
+  anciennes fiches de composants et refusait a tort un assemblage correctement relie (constate
+  dans SolidWorks sur la copie d'essai). La verification demande maintenant a SolidWorks ce que
+  la copie reference (`GetDocumentDependencies2`, comme `Chercher les references`).
+
 ## 0.1.52
 
 - Corrige l'assemblage copie reste lie aux pieces modeles : `ReplaceReference` de Document

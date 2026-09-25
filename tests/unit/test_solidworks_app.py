@@ -26,6 +26,22 @@ class FakeSolidWorks:
     def ExitApp(self) -> None:  # noqa: N802
         self.exited = True
 
+    def GetDocumentDependencies2(  # noqa: N802
+        self,
+        document: str,
+        traverse: bool,  # noqa: FBT001 - COM positional signature
+        search: bool,  # noqa: FBT001
+        read_only_info: bool,  # noqa: FBT001
+    ) -> tuple[str, ...]:
+        assert (traverse, search, read_only_info) == (False, False, False)
+        self.calls.append((document, "dependencies", ""))
+        return (
+            "2026-5233-ENV-100.SLDPRT",
+            r"C:\Projet\2026-5233-ENV-100.SLDPRT",
+            "2026-5233-PRT-100.SLDPRT",
+            r"C:\Projet\2026-5233-PRT-100.SLDPRT",
+        )
+
 
 class FakePythoncom:
     def __init__(self) -> None:
@@ -109,3 +125,13 @@ def test_nothing_to_replace_does_not_start_solidworks() -> None:
         raise AssertionError("SolidWorks ne doit pas etre demarre")
 
     SolidWorksReferenceReplacer(com_loader=fail).replace_references(Path("a.SLDASM"), {})
+
+
+def test_references_are_read_by_solidworks() -> None:
+    running = FakeSolidWorks()
+    replacer, _pythoncom = _replacer(FakeClient(running=running, started=None))
+
+    assert replacer.references(Path("C:/Projet/2026-5233-ENS-100.SLDASM")) == [
+        r"C:\Projet\2026-5233-ENV-100.SLDPRT",
+        r"C:\Projet\2026-5233-PRT-100.SLDPRT",
+    ]

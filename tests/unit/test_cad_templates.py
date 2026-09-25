@@ -880,6 +880,9 @@ class _JsonReplacer:
             [replacements.get(reference, reference) for reference in references],
         )
 
+    def references(self, document: Path) -> list[str]:
+        return read_demo_document(document)[1]
+
 
 def test_solidworks_replacer_relinks_the_closed_copy(tmp_path: Path) -> None:
     replacer = _JsonReplacer()
@@ -930,3 +933,46 @@ def test_self_test_reports_a_busy_folder(
             template_dir,
             manager_factory=open_json_document_manager,
         )
+
+
+class _StaleComponentsDocument(JsonDocument):
+    """Document Manager after SolidWorks relinked the copy: stale template component paths."""
+
+    def external_references(self, search_paths: Sequence[Path] = ()) -> list[str]:
+        del search_paths
+        if self._read_only:
+            return [f"C:/Modeles/20XX-XXXX-{name}" for name in TEMPLATE_PARTS]
+        return super().external_references()
+
+
+def test_solidworks_verification_ignores_stale_document_manager_components(
+    tmp_path: Path,
+) -> None:
+    replacer = _JsonReplacer()
+    project_dir = tmp_path / "projet"
+
+    outcome = CadTemplateService(
+        license_key_loader=lambda: DEMO_LICENSE_KEY,
+        manager_factory=_service_with(_StaleComponentsDocument)._manager_factory,  # noqa: SLF001
+        reference_replacer=replacer,
+    ).apply(_project(add_solidworks=True), project_dir, config=_config(tmp_path), initials="LM")
+
+    assert all(item.status == "created" for item in outcome.files), outcome
+
+
+def test_solidworks_verification_detects_a_remaining_template_link(tmp_path: Path) -> None:
+    class _IgnoringReplacer(_JsonReplacer):
+        def replace_references(self, document: Path, replacements: dict[str, str]) -> None:
+            self.calls.append((document, dict(replacements)))
+
+    project_dir = tmp_path / "projet"
+    outcome = CadTemplateService(
+        license_key_loader=lambda: DEMO_LICENSE_KEY,
+        manager_factory=open_json_document_manager,
+        reference_replacer=_IgnoringReplacer(),
+    ).apply(_project(add_solidworks=True), project_dir, config=_config(tmp_path), initials="LM")
+
+    detail = _assembly_result(outcome)
+    assert "encore liee(s) au dossier modele" in detail
+    assert "lecture : SolidWorks" in detail
+    assert not (project_dir / "2026-5233-ENS-100.SLDASM").exists()

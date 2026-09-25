@@ -26,6 +26,9 @@ class ReferenceReplacer(Protocol):
     def replace_references(self, document: Path, replacements: Mapping[str, str]) -> None:
         """Point the references of a closed document (old path -> new path); raise CadError."""
 
+    def references(self, document: Path) -> list[str]:
+        """Return the documents a closed document references, as SolidWorks sees them."""
+
 
 class SolidWorksReferenceReplacer:
     def __init__(self, com_loader: Callable[[], _Com] | None = None) -> None:
@@ -45,6 +48,28 @@ class SolidWorksReferenceReplacer:
         if refused:
             names = ", ".join(_file_name(old) for old in refused)
             raise CadError(f"SolidWorks a refuse de remplacer : {names}")
+
+    def references(self, document: Path) -> list[str]:
+        """Read the references like ``Fichier > Chercher les references``.
+
+        Document Manager keeps reading the old component records after the replacement, so
+        the verification must ask SolidWorks what it actually uses.
+        """
+        com = self._com_loader()
+        com.initialize()
+        application = _solidworks_application(com)
+        try:
+            # Direct references only, stored paths without the search rules.
+            traverse, search_rules, read_only_info = False, False, False
+            result = application.GetDocumentDependencies2(
+                str(document),
+                traverse,
+                search_rules,
+                read_only_info,
+            )
+        except com.errors as exc:
+            raise CadError(f"SolidWorks : lecture des references impossible ({exc})") from exc
+        return _dependency_paths(result)
 
 
 class _Com:
@@ -84,6 +109,14 @@ def _replace(com: _Com, application: Any, document: Path, old: str, new: str) ->
         raise CadError(
             f"SolidWorks : remplacement impossible de {_file_name(old)} ({exc})"
         ) from exc
+
+
+def _dependency_paths(result: Any) -> list[str]:
+    """Keep the full paths of ``GetDocumentDependencies2`` (pairs of file name and path)."""
+    if not result:
+        return []
+    items = [str(item) for item in result if item]
+    return list(dict.fromkeys(item for item in items if "\\" in item or "/" in item))
 
 
 def _file_name(path: str) -> str:

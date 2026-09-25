@@ -424,10 +424,7 @@ class CadTemplateService:
             if replacements and self._reference_replacer is not None:
                 # The document is closed: SolidWorks refuses to relink an open document.
                 self._reference_replacer.replace_references(item.destination, replacements)
-            # A new Document Manager session: the first one may answer from what it read
-            # before the save, which would hide (or invent) a remaining template link.
-            with self._manager_factory(self._license_key_loader()) as verifier:
-                _verify_no_template_links(verifier, item.destination, references, required=linked)
+            self._verify_copy(item, references, required=linked)
         except Exception as exc:  # noqa: BLE001 - one file must not stop the others
             detail = _error_text(exc)
             if (linked or isinstance(exc, _TemplateLinkError)) and self._keep_failed_copies:
@@ -439,6 +436,27 @@ class CadTemplateService:
             else:
                 detail = f"copie, mais proprietes non renseignees : {detail}"
             run.record(item.destination, "error", detail)
+
+    def _verify_copy(
+        self, item: TemplateFile, references: _ReferenceMap, *, required: bool
+    ) -> None:
+        if self._reference_replacer is not None:
+            # Document Manager keeps reading the old component records after SolidWorks
+            # relinked the copy: ask SolidWorks what the copy really references.
+            found = self._reference_replacer.references(item.destination)
+            _log_references(item.destination, "verification SolidWorks", found, "")
+            _check_template_links(
+                found,
+                references,
+                path=item.destination,
+                required=required,
+                report="SolidWorks",
+            )
+            return
+        # A new Document Manager session: the first one may answer from what it read before
+        # the save, which would hide (or invent) a remaining template link.
+        with self._manager_factory(self._license_key_loader()) as verifier:
+            _verify_no_template_links(verifier, item.destination, references, required=required)
 
 
 class _CadRun:
@@ -568,6 +586,22 @@ def _verify_no_template_links(
             search_paths=references.search_paths(path),
         )
         report = document.reference_report()
+    _check_template_links(found, references, path=path, required=False, report=report)
+
+
+def _check_template_links(
+    found: list[str],
+    references: _ReferenceMap,
+    *,
+    path: Path,
+    required: bool,
+    report: str,
+) -> None:
+    if required and not found:
+        raise _TemplateLinkError(
+            f"aucune reference relue dans {path.name} ({report}) : impossible de verifier "
+            "que la copie ne pointe plus vers les modeles.",
+        )
     remaining = references.template_links(found)
     if remaining:
         example = remaining[0]
@@ -596,13 +630,7 @@ def _read_references(
 ) -> list[str]:
     found = document.external_references(search_paths)
     report = document.reference_report()
-    get_logger(__name__).info(
-        "cad.references",
-        file=path.name,
-        stage=stage,
-        references=found,
-        sources=report,
-    )
+    _log_references(path, stage, found, report)
     if required and not found:
         # An assembly or drawing always references documents: an empty list means they could
         # not be read, and the copy could still open (and modify) the templates.
@@ -612,6 +640,16 @@ def _read_references(
             + " : impossible de relier la copie aux fichiers du projet.",
         )
     return found
+
+
+def _log_references(path: Path, stage: str, found: list[str], report: str) -> None:
+    get_logger(__name__).info(
+        "cad.references",
+        file=path.name,
+        stage=stage,
+        references=found,
+        sources=report,
+    )
 
 
 def _error_text(error: BaseException) -> str:

@@ -227,7 +227,8 @@ SolidWorks (`ReplaceReferencedDocument`, le remplacement a fichier ferme de SOLI
 l'assemblage n'est pas ouvert a l'ecran). Document Manager seul ne sait pas modifier les
 composants d'un assemblage SolidWorks 2026. Si SolidWorks est deja ouvert, sa session est
 utilisee ; sinon il est demarre et laisse ouvert (une connexion 3DEXPERIENCE peut etre demandee).
-ProjectFlow relit ensuite les references dans une nouvelle session Document Manager. Si une reference pointe encore vers le dossier modele, la copie de l'assemblage est
+ProjectFlow demande ensuite a SolidWorks les references de la copie, comme `Chercher les
+references`, pour verifier qu'aucune ne pointe encore vers les modeles. Si une reference pointe encore vers le dossier modele, la copie de l'assemblage est
 supprimee et une erreur explicite est affichee : les modeles ne peuvent pas etre modifies par
 erreur depuis un projet. Les references enregistrees sur un autre poste (autre chemin
 OneDrive) sont reconnues par le nom du fichier.
