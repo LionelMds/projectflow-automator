@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.51
+
 - Assemblage encore lie aux modeles avec `liste : 0 ; composants : 3` : Document Manager ne
   listait aucune reference. La recherche des references inclut maintenant le dossier modele et
   le dossier de la copie, et le remplacement essaie aussi les variantes d'ecriture du chemin
