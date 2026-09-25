@@ -860,3 +860,73 @@ def test_copy_searches_template_folder_and_verifies_in_a_new_session(tmp_path: P
         str(template_dir / "20XX-XXXX-ENV-100.SLDPRT"),
         str(project_dir / "2026-5233-ENV-100.SLDPRT"),
     )
+
+
+class _JsonReplacer:
+    """SolidWorks stand-in: rewrites the references of the closed demo document."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[Path, dict[str, str]]] = []
+
+    def replace_references(self, document: Path, replacements: dict[str, str]) -> None:
+        self.calls.append((document, dict(replacements)))
+        if self.fail:
+            raise CadError("SolidWorks a refuse de remplacer : 20XX-XXXX-ENV-100.SLDPRT")
+        properties, references = read_demo_document(document)
+        write_demo_document(
+            document,
+            properties,
+            [replacements.get(reference, reference) for reference in references],
+        )
+
+
+def test_solidworks_replacer_relinks_the_closed_copy(tmp_path: Path) -> None:
+    replacer = _JsonReplacer()
+    project_dir = tmp_path / "projet"
+
+    outcome = CadTemplateService(
+        license_key_loader=lambda: DEMO_LICENSE_KEY,
+        manager_factory=_service_with(_StubbornDocument)._manager_factory,  # noqa: SLF001
+        reference_replacer=replacer,
+    ).apply(_project(add_solidworks=True), project_dir, config=_config(tmp_path), initials="LM")
+
+    assert all(item.status == "created" for item in outcome.files), outcome
+    assembly = project_dir / "2026-5233-ENS-100.SLDASM"
+    assert [call[0] for call in replacer.calls] == [assembly]
+    properties, references = read_demo_document(assembly)
+    assert references == [str(project_dir / f"2026-5233-{name}") for name in TEMPLATE_PARTS]
+    assert properties["Projet"] == "2026-5233"
+
+
+def test_solidworks_replacer_failure_removes_the_copy(tmp_path: Path) -> None:
+    project_dir = tmp_path / "projet"
+
+    outcome = CadTemplateService(
+        license_key_loader=lambda: DEMO_LICENSE_KEY,
+        manager_factory=open_json_document_manager,
+        reference_replacer=_JsonReplacer(fail=True),
+    ).apply(_project(add_solidworks=True), project_dir, config=_config(tmp_path), initials="LM")
+
+    detail = _assembly_result(outcome)
+    assert detail.startswith("SolidWorks a refuse de remplacer")
+    assert not (project_dir / "2026-5233-ENS-100.SLDASM").exists()
+
+
+def test_self_test_reports_a_busy_folder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template_dir = _solidworks_templates(tmp_path / "modeles")
+    monkeypatch.setattr(templates.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    monkeypatch.setattr(templates.shutil, "rmtree", lambda *_args, **_kwargs: None)
+    busy = tmp_path / "temp" / "ProjectFlow-essai-CAO"
+    busy.mkdir(parents=True)
+    (busy / "2099-9999-ENS-100.SLDASM").write_text("ouvert dans SolidWorks", encoding="utf-8")
+
+    with pytest.raises(CadError, match="fermez la copie d'essai"):
+        check_document_manager(
+            DEMO_LICENSE_KEY,
+            template_dir,
+            manager_factory=open_json_document_manager,
+        )

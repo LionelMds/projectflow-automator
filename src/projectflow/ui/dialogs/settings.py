@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.cad.license_storage import SolidWorksLicenseStorage
+from projectflow.cad.solidworks_app import SolidWorksReferenceReplacer
 from projectflow.cad.templates import check_document_manager
 from projectflow.config import AppConfig, CadConfig, CadPropertyNames, RepertoireChantierConfig
 from projectflow.exceptions import ProjectFlowError
@@ -714,7 +715,11 @@ def _browse_row(edit: QLineEdit, *, directory: bool) -> QWidget:
 def _document_manager_check(key: str, template_dir: Path | None) -> tuple[bool, str]:
     """Run the Document Manager test; the result is shown by the dialog thread."""
     try:
-        return True, check_document_manager(key, template_dir)
+        return True, check_document_manager(
+            key,
+            template_dir,
+            reference_replacer=SolidWorksReferenceReplacer(),
+        )
     except ProjectFlowError as exc:
         return False, str(exc)
     except Exception as exc:  # noqa: BLE001 - the test reports any failure to the user

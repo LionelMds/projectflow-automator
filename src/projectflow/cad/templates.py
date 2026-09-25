@@ -14,6 +14,7 @@ from pathlib import Path
 
 from projectflow.cad.document_manager import open_document_manager
 from projectflow.cad.license_storage import load_solidworks_license_key
+from projectflow.cad.solidworks_app import ReferenceReplacer
 from projectflow.cad.solidworks_properties import (
     SOLIDWORKS_LINKED_SUFFIXES,
     SOLIDWORKS_SUFFIXES,
@@ -155,6 +156,7 @@ def check_document_manager(
     template_dir: Path | None,
     *,
     manager_factory: DocumentManagerFactory = open_document_manager,
+    reference_replacer: ReferenceReplacer | None = None,
 ) -> str:
     """Validate the key on a template and read the assembly references; raise CadError otherwise.
 
@@ -180,7 +182,12 @@ def check_document_manager(
             )
             sources = document.reference_report()
     names = ", ".join(_reference_name(reference) for reference in found)
-    copy_report = _self_test_copy(license_key, template_dir or sample.parent, manager_factory)
+    copy_report = _self_test_copy(
+        license_key,
+        template_dir or sample.parent,
+        manager_factory,
+        reference_replacer=reference_replacer,
+    )
     return (
         "Document Manager et cle de licence valides.\n"
         f"{sample.name} : {len(found)} reference(s) lue(s) ({names}) [{sources}].\n"
@@ -193,6 +200,7 @@ def _self_test_copy(
     template_dir: Path,
     manager_factory: DocumentManagerFactory,
     *,
+    reference_replacer: ReferenceReplacer | None = None,
     work_dir: Path | None = None,
 ) -> str:
     """Run the real SolidWorks copy on a temporary folder.
@@ -207,6 +215,7 @@ def _self_test_copy(
     service = CadTemplateService(
         license_key_loader=lambda: license_key,
         manager_factory=manager_factory,
+        reference_replacer=reference_replacer,
         keep_failed_copies=True,
     )
     project = ProjectInput(number=parse_project_number(SELF_TEST_NUMBER), add_solidworks=True)
@@ -216,6 +225,11 @@ def _self_test_copy(
         config=CadConfig(solidworks_template_dir=template_dir, destination_subfolder=""),
         initials="",
     )
+    if any(item.status == "skipped" for item in outcome.files):
+        raise CadError(
+            f"Le dossier d'essai {folder} n'a pas pu etre vide : fermez la copie d'essai "
+            "dans SolidWorks, puis relancez le test.",
+        )
     problems = [f"{item.name} : {item.detail}" for item in outcome.files if item.status == "error"]
     problems += [*outcome.warnings, *outcome.errors]
     if problems:
@@ -260,10 +274,14 @@ class CadTemplateService:
         *,
         license_key_loader: Callable[[], str] = load_solidworks_license_key,
         manager_factory: DocumentManagerFactory = open_document_manager,
+        reference_replacer: ReferenceReplacer | None = None,
         keep_failed_copies: bool = False,
     ) -> None:
         self._license_key_loader = license_key_loader
         self._manager_factory = manager_factory
+        # SolidWorks relinks the references when given: Document Manager's ReplaceReference
+        # leaves the components of SolidWorks 2026 assemblies on the templates.
+        self._reference_replacer = reference_replacer
         # Only for the settings self-test: its copies live in a temporary folder.
         self._keep_failed_copies = keep_failed_copies
 
@@ -379,12 +397,17 @@ class CadTemplateService:
         linked = item.suffix in SOLIDWORKS_LINKED_SUFFIXES
         try:
             with manager.open_document(item.destination) as document:
-                references_changed = _rewrite_references(
+                replacements = _planned_replacements(
                     document,
                     references,
                     path=item.destination,
                     required=linked,
                 )
+                if self._reference_replacer is None:
+                    for old_path, new_path in replacements.items():
+                        # The stored path must match exactly: try its usual spellings.
+                        for spelling in _path_spellings(old_path):
+                            document.replace_reference(spelling, new_path)
                 updates = compute_property_updates(
                     document.custom_properties(),
                     number=run.number,
@@ -396,8 +419,11 @@ class CadTemplateService:
                 )
                 for name, value in updates.items():
                     document.set_custom_property(name, value)
-                if references_changed or updates:
+                if updates or (replacements and self._reference_replacer is None):
                     document.save()
+            if replacements and self._reference_replacer is not None:
+                # The document is closed: SolidWorks refuses to relink an open document.
+                self._reference_replacer.replace_references(item.destination, replacements)
             # A new Document Manager session: the first one may answer from what it read
             # before the save, which would hide (or invent) a remaining template link.
             with self._manager_factory(self._license_key_loader()) as verifier:
@@ -496,13 +522,14 @@ class _ReferenceMap:
         return key == self._template_key or key.startswith(prefix)
 
 
-def _rewrite_references(
+def _planned_replacements(
     document: SolidWorksDocument,
     references: _ReferenceMap,
     *,
     path: Path,
     required: bool,
-) -> bool:
+) -> dict[str, str]:
+    """Map each reference read in the copy to the project file that replaces it."""
     current = _read_references(
         document,
         path=path,
@@ -510,16 +537,12 @@ def _rewrite_references(
         required=required,
         search_paths=references.search_paths(path),
     )
-    changed = False
+    replacements: dict[str, str] = {}
     for reference in current:
         target = references.replacement_for(reference)
-        if target is None or _path_key(reference) == _path_key(str(target)):
-            continue
-        # The stored path must match exactly; component paths may be spelled differently.
-        for old_path in _path_spellings(reference):
-            document.replace_reference(old_path, str(target))
-        changed = True
-    return changed
+        if target is not None and _path_key(reference) != _path_key(str(target)):
+            replacements[reference] = str(target)
+    return replacements
 
 
 def _path_spellings(reference: str) -> list[str]:

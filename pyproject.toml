@@ -88,6 +88,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/projectflow/cad/document_manager.py" = ["ANN401"]
+"src/projectflow/cad/solidworks_app.py" = ["ANN401"]
 "src/projectflow/outlook/windows.py" = ["ANN401"]
 "tests/**/*.py" = [
   "ANN001",

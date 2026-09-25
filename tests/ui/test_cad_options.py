@@ -340,7 +340,7 @@ def test_settings_dialog_tests_document_manager_with_stored_key(
     calls: list[tuple[str, Path | None]] = []
     messages: list[str] = []
 
-    def fake_check(key: str, template_dir: Path | None) -> str:
+    def fake_check(key: str, template_dir: Path | None, **_options: object) -> str:
         calls.append((key, template_dir))
         return "Document Manager et cle de licence valides."
 
@@ -368,7 +368,7 @@ async def test_settings_dialog_runs_document_manager_test_in_background(
 ) -> None:
     errors: list[str] = []
 
-    def failing_check(key: str, template_dir: Path | None) -> str:
+    def failing_check(key: str, template_dir: Path | None, **_options: object) -> str:
         assert key == "cle-saisie"
         assert template_dir == tmp_path
         raise KeyError(13)

@@ -177,8 +177,9 @@ faire echouer la copie ; ProjectFlow l'indique alors dans le journal.
 
 ### Cle SolidWorks Document Manager
 
-ProjectFlow modifie les fichiers SolidWorks avec SolidWorks Document Manager, sans lancer
-SolidWorks. Document Manager s'installe avec `swdocmgr.exe`, telecharge avec la cle (le kit
+ProjectFlow copie les fichiers SolidWorks et renseigne leurs proprietes avec SolidWorks Document
+Manager, sans lancer SolidWorks. Seul le remplacement des references de l'assemblage passe par
+SolidWorks (voir plus bas). Document Manager s'installe avec `swdocmgr.exe`, telecharge avec la cle (le kit
 `apisdk.exe` n'est pas necessaire). Il faut aussi une cle de licence Document Manager :
 
 1. Se connecter au portail client SOLIDWORKS (`customerportal.solidworks.com`) avec un compte
@@ -220,9 +221,13 @@ avertissement. L'option AutoCAD fonctionne partout.
 
 ### References de l'assemblage
 
-L'assemblage modele pointe vers les pieces modeles. Apres la copie, ProjectFlow remplace chaque
-reference vers un fichier modele par le fichier renomme du projet, enregistre, puis relit les
-references. Si une reference pointe encore vers le dossier modele, la copie de l'assemblage est
+L'assemblage modele pointe vers les pieces modeles. Apres la copie, ProjectFlow lit ces
+references avec Document Manager, puis les remplace par les fichiers renommes du projet avec
+SolidWorks (`ReplaceReferencedDocument`, le remplacement a fichier ferme de SOLIDWORKS Explorer :
+l'assemblage n'est pas ouvert a l'ecran). Document Manager seul ne sait pas modifier les
+composants d'un assemblage SolidWorks 2026. Si SolidWorks est deja ouvert, sa session est
+utilisee ; sinon il est demarre et laisse ouvert (une connexion 3DEXPERIENCE peut etre demandee).
+ProjectFlow relit ensuite les references dans une nouvelle session Document Manager. Si une reference pointe encore vers le dossier modele, la copie de l'assemblage est
 supprimee et une erreur explicite est affichee : les modeles ne peuvent pas etre modifies par
 erreur depuis un projet. Les references enregistrees sur un autre poste (autre chemin
 OneDrive) sont reconnues par le nom du fichier.

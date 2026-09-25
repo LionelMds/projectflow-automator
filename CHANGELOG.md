@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Corrige l'assemblage copie reste lie aux pieces modeles : `ReplaceReference` de Document
+  Manager ne modifie pas les composants d'un assemblage SolidWorks 2026 (verifie dans
+  SolidWorks sur la copie d'essai). Les references sont maintenant remplacees par SolidWorks
+  avec `ReplaceReferencedDocument`, sur l'assemblage ferme. Document Manager garde la copie,
+  les proprietes et la verification. Une session SolidWorks ouverte est reutilisee ; sinon
+  SolidWorks est demarre visible et laisse ouvert.
+- `Tester` valide aussi ce remplacement dans son essai de copie, et signale un dossier d'essai
+  encore ouvert dans SolidWorks.
+
 ## 0.1.51
 
 - Assemblage encore lie aux modeles avec `liste : 0 ; composants : 3` : Document Manager ne

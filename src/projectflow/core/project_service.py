@@ -5,6 +5,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
+from projectflow.cad.solidworks_app import SolidWorksReferenceReplacer
 from projectflow.cad.templates import CadTemplateService
 from projectflow.config import AppConfig, CadConfig, OutlookFolderConfig
 from projectflow.core.background_io import file_io_lock, run_file_io
@@ -69,7 +70,9 @@ class ProjectService:
         cad: CadGateway | None = None,
     ) -> None:
         self._config = config
-        self._cad: CadGateway = cad or CadTemplateService()
+        self._cad: CadGateway = cad or CadTemplateService(
+            reference_replacer=SolidWorksReferenceReplacer(),
+        )
         self._fiche_service = fiche_service
         self._repertoire_service = repertoire_service
         self._outlook = outlook
