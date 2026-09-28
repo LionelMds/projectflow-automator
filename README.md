@@ -219,6 +219,10 @@ Le MVP couvre :
 - onglet `Repertoire chantier` avec recherche, positionnement pres de la prochaine ligne
   disponible, defilement vers les anciennes lignes et edition sure de `A:E` uniquement,
 - `Charger`, `Ouvrir dossier`, `Ouvrir fiche`, `Mettre a jour`,
+- impression de la fiche en A4, ajustee sur une page, sur l'imprimante choisie a chaque
+  impression : fleche du bouton `Ouvrir fiche` -> `Imprimer fiche` (Ctrl+P), ou case
+  `Imprimer fiche` a cote de `Creer`, appliquee apres `Creer` et `Mettre a jour`.
+  Windows uniquement, via une instance Excel invisible qui ouvre la fiche en lecture seule,
 - onglet `Sortie dossier` pour selectionner la fiche, la prise de cote, les photos et les plans,
   avec selection manuelle des photos/plans, apercu photo simple et creation d'un dossier de sortie,
 - relance de `Creer` sur projet existant pour reappliquer Outlook/epingle sans ecraser,

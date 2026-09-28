@@ -69,6 +69,11 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.creation_tab.open_fiche_requested.emit)
         self.addAction(open_action)
 
+        print_action = QAction(self)
+        print_action.setShortcut(QKeySequence.StandardKey.Print)
+        print_action.triggered.connect(self.creation_tab.print_fiche_requested.emit)
+        self.addAction(print_action)
+
         open_repertoire_action = QAction(self)
         open_repertoire_action.setShortcut(QKeySequence("Ctrl+R"))
         open_repertoire_action.triggered.connect(self.creation_tab.open_repertoire_requested.emit)

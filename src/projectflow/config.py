@@ -167,6 +167,13 @@ class CadConfig(BaseModel):
         return "/".join(parts)
 
 
+class PrintingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    print_fiche_on_save: bool = False
+    printer_name: str = ""
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -176,6 +183,7 @@ class AppConfig(BaseModel):
     outlook: OutlookConfig = Field(default_factory=OutlookConfig)
     planner: PlannerConfig = Field(default_factory=PlannerConfig)
     cad: CadConfig = Field(default_factory=CadConfig)
+    printing: PrintingConfig = Field(default_factory=PrintingConfig)
 
     @property
     def is_onboarded(self) -> bool:

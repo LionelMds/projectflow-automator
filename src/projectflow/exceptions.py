@@ -45,6 +45,10 @@ class OutlookError(ProjectFlowError):
     """Raised when local Outlook automation fails."""
 
 
+class PrintError(ProjectFlowError):
+    """Raised when a fiche cannot be sent to a printer."""
+
+
 class ProjectNumberError(ProjectFlowError, ValueError):
     """Raised when a project number is malformed."""
 

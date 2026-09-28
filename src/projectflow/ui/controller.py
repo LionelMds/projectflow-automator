@@ -35,16 +35,22 @@ from projectflow.core.numero import (
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireRow, RepertoireService, RepertoireSnapshot
 from projectflow.core.sortie_service import SortieDossierService
-from projectflow.exceptions import ProjectFlowError
+from projectflow.exceptions import PrintError, ProjectFlowError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
 from projectflow.graph.workbook_opening import excel_document_uri
 from projectflow.logging import redact_sensitive_links
 from projectflow.platform.filemanager import open_excel_uri, open_file_default_app, open_path
+from projectflow.platform.printing import print_workbook_a4
 from projectflow.platform.sync_paths import is_excel_recovery_copy
 from projectflow.services import ServiceContainer, resolve_repertoire_open_url
 from projectflow.ui.creation_tab import CreationFormData
 from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
+from projectflow.ui.dialogs.print_fiche import (
+    PrintFicheDialog,
+    PrintFicheOptions,
+    installed_printers,
+)
 from projectflow.ui.dialogs.quick_confirmation import QuickCreationConfirmationDialog
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
@@ -159,6 +165,9 @@ class ProjectFlowController:
         tab.load_requested.connect(self.load_project)
         tab.open_folder_requested.connect(self.open_folder)
         tab.open_fiche_requested.connect(self.open_fiche)
+        tab.print_fiche_requested.connect(self.print_fiche)
+        tab.print_after_save_checkbox.setChecked(self._config.printing.print_fiche_on_save)
+        tab.print_after_save_checkbox.toggled.connect(self._remember_print_after_save)
         tab.open_repertoire_requested.connect(self.open_repertoire)
         tab.next_available_requested.connect(lambda: self._schedule_task(self.next_available()))
         self._window.sortie_tab.load_requested.connect(
@@ -415,6 +424,7 @@ class ProjectFlowController:
         self._save_config_if_available()
         self._log_creation_result(result, existing_update=existing_update)
         self._log_creation_integrations(result)
+        await self._print_saved_fiche(result, project.number)
         self._open_project_folder(result)
         self._show_creation_confirmation(result)
 
@@ -462,6 +472,7 @@ class ProjectFlowController:
         self._save_config_if_available()
         self._log(f"+ Projet mis a jour: {result.fiche_path or result.project_dir}")
         self._log_creation_integrations(result)
+        await self._print_saved_fiche(result, project.number)
 
     async def next_available(self) -> None:
         generation = self._repertoire_generation
@@ -998,11 +1009,7 @@ class ProjectFlowController:
             self._log("-> Patientez jusqu'a la fin de l'operation avant d'ouvrir la fiche.")
             return
         try:
-            number = parse_project_number(self._number_from_form())
-            project_dir = self._project_dir(number)
-            fiche_path = standard_fiche_path(project_dir, number)
-            if not fiche_path.exists():
-                fiche_path = self._services.fiche().locate_fiche(project_dir, number)
+            fiche_path = self._form_fiche_path()
             opened = open_file_default_app(fiche_path)
         except (ProjectFlowError, ValueError, OSError) as exc:
             self._error(str(exc))
@@ -1011,6 +1018,86 @@ class ProjectFlowController:
             self._error("Impossible d'ouvrir la fiche avec l'application par defaut.")
             return
         self._log(f"+ Fiche ouverte: {fiche_path.name}")
+
+    def print_fiche(self) -> None:
+        if self._mutation_busy:
+            self._log("-> Patientez jusqu'a la fin de l'operation avant d'imprimer la fiche.")
+            return
+        try:
+            fiche_path = self._form_fiche_path()
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            self._error(str(exc))
+            return
+        self._schedule_task(self._print_fiche(fiche_path))
+
+    async def _print_saved_fiche(
+        self,
+        result: ProjectCreationResult,
+        number: ProjectNumber,
+    ) -> None:
+        if not self._window.creation_tab.print_after_save_checkbox.isChecked():
+            return
+        try:
+            fiche_path = self._fiche_path_from_result(result, number)
+        except (ProjectFlowError, OSError) as exc:
+            self._error(f"Fiche non imprimée: {exc}")
+            return
+        await self._print_fiche(fiche_path)
+
+    async def _print_fiche(self, fiche_path: Path) -> None:
+        if self._closing:
+            return
+        try:
+            options = self._ask_print_options(fiche_path)
+        except ProjectFlowError as exc:
+            self._error(str(exc))
+            return
+        if options is None:
+            self._log("-> Impression de la fiche annulée")
+            return
+        self._log(f"-> Impression de {fiche_path.name} sur {options.printer_name}...")
+        try:
+            await run_file_io(
+                print_workbook_a4,
+                fiche_path,
+                printer_name=options.printer_name,
+                copies=options.copies,
+            )
+        except (ProjectFlowError, OSError) as exc:
+            self._error(f"Fiche non imprimée: {exc}")
+            return
+        self._log(f"+ Fiche envoyée à l'imprimante {options.printer_name}")
+
+    def _ask_print_options(self, fiche_path: Path) -> PrintFicheOptions | None:
+        printers, default_printer = installed_printers()
+        if not printers:
+            raise PrintError("Aucune imprimante n'est installée sur ce poste.")
+        dialog = PrintFicheDialog(
+            fiche_name=fiche_path.name,
+            printers=printers,
+            preferred_printer=self._config.printing.printer_name,
+            default_printer=default_printer,
+            parent=self._window,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return None
+        options = dialog.options()
+        if options.printer_name != self._config.printing.printer_name:
+            self._config.printing.printer_name = options.printer_name
+            self._save_config_if_available()
+        return options
+
+    def _remember_print_after_save(self, checked: bool) -> None:  # noqa: FBT001
+        self._config.printing.print_fiche_on_save = checked
+        self._save_config_if_available()
+
+    def _form_fiche_path(self) -> Path:
+        number = parse_project_number(self._number_from_form())
+        project_dir = self._project_dir(number)
+        fiche_path = standard_fiche_path(project_dir, number)
+        if not fiche_path.exists():
+            fiche_path = self._services.fiche().locate_fiche(project_dir, number)
+        return fiche_path
 
     def open_folder(self) -> None:
         try:
@@ -1460,16 +1547,7 @@ class ProjectFlowController:
         project: ProjectInput,
     ) -> None:
         try:
-            fiche_path = (
-                Path(result.fiche_path)
-                if result.fiche_path is not None
-                else standard_fiche_path(Path(result.project_dir), project.number)
-            )
-            if not fiche_path.exists():
-                fiche_path = self._services.fiche().locate_fiche(
-                    Path(result.project_dir),
-                    project.number,
-                )
+            fiche_path = self._fiche_path_from_result(result, project.number)
             opened = open_file_default_app(fiche_path)
         except (ProjectFlowError, OSError) as exc:
             self._error(str(exc))
@@ -1478,6 +1556,20 @@ class ProjectFlowController:
             self._error("Impossible d'ouvrir la fiche avec l'application par defaut.")
             return
         self._log(f"+ Fiche ouverte: {fiche_path.name}")
+
+    def _fiche_path_from_result(
+        self,
+        result: ProjectCreationResult,
+        number: ProjectNumber,
+    ) -> Path:
+        fiche_path = (
+            Path(result.fiche_path)
+            if result.fiche_path is not None
+            else standard_fiche_path(Path(result.project_dir), number)
+        )
+        if not fiche_path.exists():
+            fiche_path = self._services.fiche().locate_fiche(Path(result.project_dir), number)
+        return fiche_path
 
     def _save_config_if_available(self) -> None:
         if self._save_config is not None:

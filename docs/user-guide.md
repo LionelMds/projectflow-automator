@@ -340,3 +340,19 @@ disponible, mais ses valeurs viennent uniquement du formulaire.
 Le bouton `Mettre a jour` reecrit la fiche et la ligne du repertoire apres confirmation. Il ne
 recree pas le dossier projet, mais reapplique les integrations selectionnees sans doublon :
 Outlook pour les projets principaux, Planner pour les projets principaux et les sous-projets.
+
+## Imprimer la fiche
+
+La fleche du bouton `Ouvrir fiche` propose `Imprimer fiche` (raccourci `Ctrl+P`) pour la fiche du
+projet saisi dans le formulaire. Cochez `Imprimer fiche`, a cote de `Creer`, pour imprimer
+automatiquement la fiche apres `Creer` ou `Mettre a jour` ; ce choix est memorise.
+
+A chaque impression, une fenetre demande l'imprimante et le nombre de copies. La derniere
+imprimante utilisee est proposee, sinon l'imprimante par defaut de Windows. La fiche est toujours
+imprimee en A4, ajustee sur une seule page, quel que soit le reglage de l'imprimante.
+
+L'impression necessite Microsoft Excel sous Windows. ProjectFlow ouvre la fiche en lecture seule
+dans une instance Excel invisible, separee des fenetres Excel deja ouvertes, puis la referme sans
+l'enregistrer : la fiche n'est jamais modifiee. Si Windows est regle pour gerer lui-meme
+l'imprimante par defaut, il retient la derniere imprimante utilisee, comme pour une impression
+depuis Excel.

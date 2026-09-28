@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "projectflow-automator"
-version = "0.1.54"
+version = "0.1.55"
 description = "Application desktop cross-platform pour automatiser la creation des projets Balz Metal Sa."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -90,6 +90,7 @@ ignore = [
 "src/projectflow/cad/document_manager.py" = ["ANN401"]
 "src/projectflow/cad/solidworks_app.py" = ["ANN401"]
 "src/projectflow/outlook/windows.py" = ["ANN401"]
+"src/projectflow/platform/printing.py" = ["ANN401"]
 "tests/**/*.py" = [
   "ANN001",
   "ANN401",

@@ -5,15 +5,18 @@ from dataclasses import dataclass, field
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -46,6 +49,7 @@ class CreationTab(QWidget):
     load_requested = Signal()
     open_folder_requested = Signal()
     open_fiche_requested = Signal()
+    print_fiche_requested = Signal()
     open_repertoire_requested = Signal()
     next_available_requested = Signal()
     settings_requested = Signal()
@@ -254,7 +258,12 @@ class CreationTab(QWidget):
         self.reset_button = QPushButton("Reinitialiser")
         self.load_button = QPushButton("Charger")
         self.open_folder_button = QPushButton("Ouvrir dossier")
-        self.open_button = QPushButton("Ouvrir fiche")
+        self.open_button = QToolButton()
+        self.open_button.setText("Ouvrir fiche")
+        self.open_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        open_menu = QMenu(self.open_button)
+        self.print_fiche_action = open_menu.addAction("Imprimer fiche")
+        self.open_button.setMenu(open_menu)
         self.open_repertoire_button = QPushButton("Ouvrir repertoire")
         self.create_button = QPushButton("Creer")
         self.update_button = QPushButton("Mettre a jour")
@@ -263,6 +272,7 @@ class CreationTab(QWidget):
         self.load_button.clicked.connect(self.load_requested.emit)
         self.open_folder_button.clicked.connect(self.open_folder_requested.emit)
         self.open_button.clicked.connect(self.open_fiche_requested.emit)
+        self.print_fiche_action.triggered.connect(self.print_fiche_requested.emit)
         self.open_repertoire_button.clicked.connect(self.open_repertoire_requested.emit)
         self.create_button.clicked.connect(self.create_requested.emit)
         self.update_button.clicked.connect(self.update_requested.emit)
@@ -271,8 +281,18 @@ class CreationTab(QWidget):
         actions.addWidget(self.open_folder_button)
         actions.addWidget(self.open_button)
         actions.addWidget(self.open_repertoire_button)
+        # Beside Creer / Mettre a jour rather than on its own row: the tab is
+        # already taller than the default window height.
+        self.print_after_save_checkbox = QCheckBox("Imprimer fiche")
+        self.print_after_save_checkbox.setToolTip(
+            "Après Créer ou Mettre à jour, propose le choix de l'imprimante "
+            "et imprime la fiche en A4.",
+        )
+        actions.addWidget(self.print_after_save_checkbox)
         actions.addWidget(self.create_button)
         actions.addWidget(self.update_button)
+        # Match the neighbouring push buttons, which are taller than a tool button.
+        self.open_button.setFixedHeight(self.update_button.sizeHint().height())
         root_layout.addLayout(actions)
 
 

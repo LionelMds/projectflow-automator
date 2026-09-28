@@ -40,6 +40,11 @@
   `02 - Prise de cote`, `03 - Photos` et `04 - Plans`, sans modifier les sources.
 - Apres creation, une confirmation propose d'ouvrir le dossier de sortie ; `Non` le laisse ferme.
 - `Ouvrir fiche` ouvre Excel via l'application par defaut.
+- La fleche de `Ouvrir fiche` -> `Imprimer fiche` (ou `Ctrl+P`) demande l'imprimante et le
+  nombre de copies, propose la derniere imprimante utilisee et imprime la fiche en A4 sur une
+  page, sans modifier le fichier ni les fenetres Excel ouvertes.
+- Avec la case `Imprimer fiche` cochee, `Creer` et `Mettre a jour` proposent l'impression
+  apres l'enregistrement ; `Annuler` n'imprime rien. La case reste cochee au redemarrage.
 - L'icone ProjectFlow apparait dans la zone de notification Windows ou la barre des menus macOS.
 - Fermer la fenetre principale masque l'application ; `Quitter ProjectFlow` dans le menu de
   l'icone ferme vraiment le processus.

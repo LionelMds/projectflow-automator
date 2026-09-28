@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.1.55
+
+- Ajoute l'impression de la fiche dossier. La fleche du bouton `Ouvrir fiche` propose
+  `Imprimer fiche` (raccourci Ctrl+P). La case `Imprimer fiche`, juste avant les boutons
+  `Creer` et `Mettre a jour`, lance l'impression une fois la fiche enregistree ; son etat est
+  memorise.
+- L'imprimante et le nombre de copies se choisissent a chaque impression ; la derniere
+  imprimante utilisee est proposee. La fiche est toujours imprimee en A4, ajustee sur une page.
+- L'impression passe par une instance Excel invisible et separee : la fiche est ouverte en
+  lecture seule et n'est jamais modifiee, les fenetres Excel deja ouvertes ne sont pas
+  touchees. Necessite Microsoft Excel sous Windows.
+
 ## 0.1.54
 
 - La Description (designation du projet) de l'`ENS-100` est ecrite dans les proprietes de chaque
