@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.1.56
+
+- Affiche la fenetre `Connexion Microsoft` avant d'ouvrir le navigateur, et ouvre le
+  navigateur sans jamais bloquer la connexion. Sur certains postes, l'ouverture du
+  navigateur depuis un traitement en arriere-plan ne rendait pas la main : aucune page ni
+  fenetre n'apparaissait et le repertoire chargeait indefiniment.
+- `Se reconnecter au compte Microsoft` annule une connexion restee en attente et relance
+  le chargement du repertoire, meme si un chargement precedent est encore bloque.
+- Limite a 30 secondes les echanges reseau de la connexion Microsoft et a quelques
+  minutes l'attente d'une autre connexion en cours. Journalise chaque etape.
+
 ## 0.1.55
 
 - Ajoute l'impression de la fiche dossier. La fleche du bouton `Ouvrir fiche` propose

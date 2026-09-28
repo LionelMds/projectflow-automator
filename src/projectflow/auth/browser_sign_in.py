@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import sys
 import threading
 import urllib.request
 import webbrowser
-from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager
 from importlib import import_module
 from typing import Protocol, cast
 from urllib.parse import urlencode
@@ -54,8 +55,15 @@ class AuthCodeFlowApplication(Protocol):
         """Exchange the received code for tokens."""
 
 
+# Opening the browser must never delay the ProjectFlow window; after this delay
+# the sign-in goes on and the user can use the window's buttons instead.
+BROWSER_OPEN_WAIT_SECONDS = 5
+_COINIT_APARTMENTTHREADED = 0x2
+_COINIT_DISABLE_OLE1DDE = 0x4
+
 _prompt_lock = threading.Lock()
 _prompt: SignInPrompt | None = None
+_pending_cancels: dict[int, Callable[[], None]] = {}
 
 
 def set_sign_in_prompt(prompt: SignInPrompt | None) -> None:
@@ -69,21 +77,68 @@ def _current_prompt() -> SignInPrompt | None:
         return _prompt
 
 
+def cancel_pending_sign_ins() -> None:
+    """Stop every browser sign-in still waiting, e.g. before signing in again."""
+    with _prompt_lock:
+        cancels = list(_pending_cancels.values())
+    for cancel in cancels:
+        cancel()
+
+
 def open_sign_in_page(url: str) -> bool:
     """Open the page with the system handler, which also works when Edge runs hidden."""
     startfile = getattr(os, "startfile", None)
     if sys.platform == "win32" and callable(startfile):
-        try:
-            startfile(url)
-        except OSError:
-            get_logger(__name__).warning("auth.browser.startfile_failed")
-        else:
-            return True
+        # ShellExecute requires COM on the calling thread; without it, some browser
+        # handlers never return and the sign-in was stuck before any window appeared.
+        with _com_initialized():
+            try:
+                startfile(url)
+            except OSError:
+                get_logger(__name__).warning("auth.browser.startfile_failed")
+            else:
+                return True
     try:
         return webbrowser.open(url)
     except webbrowser.Error:
         get_logger(__name__).warning("auth.browser.open_failed")
         return False
+
+
+def open_sign_in_page_in_background(
+    url: str,
+    open_url: Callable[[str], bool] = open_sign_in_page,
+    *,
+    wait_seconds: float = BROWSER_OPEN_WAIT_SECONDS,
+) -> bool | None:
+    """Open the page without ever blocking the caller; None if still opening."""
+    outcome: list[bool] = []
+    thread = threading.Thread(
+        target=lambda: outcome.append(open_url(url)),
+        name="projectflow-open-sign-in",
+        daemon=True,
+    )
+    thread.start()
+    thread.join(wait_seconds)
+    if thread.is_alive():
+        get_logger(__name__).warning("auth.browser.open_slow", waited_s=wait_seconds)
+        return None
+    return outcome[0] if outcome else False
+
+
+@contextmanager
+def _com_initialized() -> Iterator[None]:
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:
+        yield
+        return
+    ole32 = windll.ole32
+    result = ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED | _COINIT_DISABLE_OLE1DDE)
+    try:
+        yield
+    finally:
+        if result >= 0:  # S_OK or S_FALSE must be balanced by CoUninitialize.
+            ole32.CoUninitialize()
 
 
 def run_browser_sign_in(
@@ -114,15 +169,24 @@ def run_browser_sign_in(
         cancelled = threading.Event()
 
         def cancel() -> None:
-            cancelled.set()
-            _abort_receiver(port, state)
+            if not cancelled.is_set():
+                cancelled.set()
+                _abort_receiver(port, state)
 
-        opened = open_url(sign_in_url)
-        logger.info("auth.interactive.started", browser_opened=opened)
+        with _prompt_lock:
+            _pending_cancels[id(cancel)] = cancel
+        # Show ProjectFlow's window first: whatever the browser does, the user can
+        # reopen the page, copy the link or cancel.
         ui = _current_prompt()
         if ui is not None:
             ui.sign_in_started(sign_in_url, cancel)
         try:
+            opened = open_sign_in_page_in_background(
+                sign_in_url,
+                open_url,
+                wait_seconds=BROWSER_OPEN_WAIT_SECONDS,
+            )
+            logger.info("auth.interactive.started", browser_opened=opened, prompt=ui is not None)
             response = receiver.get_auth_response(
                 timeout=timeout,
                 state=state,
@@ -130,6 +194,8 @@ def run_browser_sign_in(
                 error_template=ERROR_PAGE,
             )
         finally:
+            with _prompt_lock:
+                _pending_cancels.pop(id(cancel), None)
             if ui is not None:
                 ui.sign_in_finished(sign_in_url)
 

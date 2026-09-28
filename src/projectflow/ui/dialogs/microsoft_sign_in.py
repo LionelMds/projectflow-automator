@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from projectflow.auth.browser_sign_in import open_sign_in_page
+from projectflow.auth.browser_sign_in import open_sign_in_page, open_sign_in_page_in_background
 
 
 class MicrosoftSignInDialog(QDialog):
@@ -74,10 +74,17 @@ class MicrosoftSignInDialog(QDialog):
         super().reject()
 
     def _open_page(self) -> None:
-        if self._open_url(self._sign_in_url):
-            self.status_label.setText("Page de connexion ouverte dans le navigateur.")
-        else:
+        opened = open_sign_in_page_in_background(
+            self._sign_in_url,
+            self._open_url,
+            wait_seconds=1,
+        )
+        if opened is False:
             self.status_label.setText("Navigateur introuvable : copiez le lien.")
+        else:
+            self.status_label.setText(
+                "Page de connexion demandee au navigateur. Si rien ne s'affiche, copiez le lien.",
+            )
 
     def _copy_link(self) -> None:
         QApplication.clipboard().setText(self._sign_in_url)

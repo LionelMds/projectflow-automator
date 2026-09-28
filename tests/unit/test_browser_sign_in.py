@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Callable
 from types import TracebackType
 from typing import Self
@@ -7,7 +9,11 @@ from typing import Self
 import pytest
 
 from projectflow.auth import browser_sign_in
-from projectflow.auth.browser_sign_in import run_browser_sign_in, set_sign_in_prompt
+from projectflow.auth.browser_sign_in import (
+    cancel_pending_sign_ins,
+    run_browser_sign_in,
+    set_sign_in_prompt,
+)
 from projectflow.exceptions import AuthError
 
 
@@ -156,3 +162,60 @@ def test_cancel_from_prompt_aborts_sign_in(
 
     assert aborted == [(50123, "abc")]
     assert not app.exchanged
+
+
+def test_window_is_shown_before_a_browser_that_never_returns(
+    prompt: RecordingPrompt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(browser_sign_in, "BROWSER_OPEN_WAIT_SECONDS", 0.2)
+    release = threading.Event()
+    order: list[str] = []
+
+    def stuck_browser(_url: str) -> bool:
+        order.append(f"browser after {len(prompt.events)} prompt event(s)")
+        release.wait(5)
+        return True
+
+    started = time.monotonic()
+    result = run_browser_sign_in(
+        FakeApp(),
+        ["Files.ReadWrite.All"],
+        timeout=300,
+        prompt="select_account",
+        login_hint=None,
+        receiver_factory=lambda: FakeReceiver({"code": "abc-code", "state": "abc"}),
+        open_url=stuck_browser,
+    )
+    release.set()
+
+    assert result == {"access_token": "token"}
+    assert order == ["browser after 1 prompt event(s)"]
+    assert time.monotonic() - started < 2
+
+
+def test_pending_sign_in_can_be_cancelled_from_settings(
+    prompt: RecordingPrompt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    aborted: list[int] = []
+    monkeypatch.setattr(
+        browser_sign_in, "_abort_receiver", lambda port, _state: aborted.append(port)
+    )
+    receiver = FakeReceiver({"error": "access_denied", "state": "abc"})
+    receiver.on_wait = cancel_pending_sign_ins
+
+    with pytest.raises(AuthError, match="annulee"):
+        run_browser_sign_in(
+            FakeApp(),
+            ["Files.ReadWrite.All"],
+            timeout=300,
+            prompt="select_account",
+            login_hint=None,
+            receiver_factory=lambda: receiver,
+            open_url=lambda _url: True,
+        )
+
+    assert aborted == [50123]
+    cancel_pending_sign_ins()  # Nothing left pending: no second abort.
+    assert aborted == [50123]

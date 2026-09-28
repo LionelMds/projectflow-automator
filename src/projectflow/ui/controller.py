@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
+from projectflow.auth.browser_sign_in import cancel_pending_sign_ins
 from projectflow.auth.msal_client import (
     PLANNER_GRAPH_SCOPES,
     MsalAccessTokenProvider,
@@ -155,7 +156,8 @@ class ProjectFlowController:
         self._sortie_service = SortieDossierService(self._services.fiche())
         self._sortie_project_dir: Path | None = None
         self._sortie_number: ProjectNumber | None = None
-        self._repertoire_loading = False
+        # A load stuck on a retired connection must not block the next configuration.
+        self._repertoire_loading_generation: int | None = None
         self._connect()
 
     def _connect(self) -> None:
@@ -506,7 +508,7 @@ class ProjectFlowController:
         self._schedule_task(self.load_repertoire())
 
     async def load_repertoire(self) -> None:
-        if self._repertoire_loading or self._closing:
+        if self._repertoire_loading_generation == self._repertoire_generation or self._closing:
             return
         tab = self._window.repertoire_tab
         try:
@@ -514,8 +516,8 @@ class ProjectFlowController:
         except ValueError:
             tab.set_error("L'année doit être un nombre valide.")
             return
-        self._repertoire_loading = True
         generation = self._repertoire_generation
+        self._repertoire_loading_generation = generation
         tab.set_loading(loading=True)
         try:
             snapshot = await self._read_snapshot(year)
@@ -527,8 +529,9 @@ class ProjectFlowController:
                 tab.set_snapshot(snapshot)
                 self._remember_client_directory(snapshot.year, snapshot.rows)
         finally:
-            self._repertoire_loading = False
-            tab.set_loading(loading=False)
+            if self._repertoire_loading_generation == generation:
+                self._repertoire_loading_generation = None
+                tab.set_loading(loading=False)
 
     def _request_client_suggestions(self, target: ClientSuggestionsTarget) -> None:
         try:
@@ -1225,6 +1228,9 @@ class ProjectFlowController:
             self._log("-> Planner desactive")
 
     def _sign_out_microsoft(self) -> None:
+        # A sign-in still waiting (browser never shown) would otherwise keep the
+        # repertoire loading and delay the new sign-in for several minutes.
+        cancel_pending_sign_ins()
         try:
             sign_out_microsoft()
         except OSError as exc:

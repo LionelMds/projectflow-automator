@@ -27,6 +27,8 @@ INTERACTIVE_TIMEOUT_SECONDS = 300
 # Refresh before Microsoft rejects the token (access tokens last about one hour).
 TOKEN_REFRESH_MARGIN_SECONDS = 300
 DEFAULT_TOKEN_LIFETIME_SECONDS = 3600
+# MSAL has no network timeout by default: a stalled request froze the sign-in.
+MSAL_HTTP_TIMEOUT_SECONDS = 30
 # One browser sign-in at a time for the whole application: the repertoire and
 # Planner connections otherwise opened concurrent sign-in pages.
 _INTERACTIVE_SIGN_IN_LOCK = threading.Lock()
@@ -134,11 +136,18 @@ class MsalAccessTokenProvider:
             )
 
         started = time.monotonic()
+        get_logger(__name__).info("auth.token.refreshing", scopes=self._scopes)
         app, cache = self._application()
         try:
             result = self._acquire_token(app, cache)
         except (AssertionError, ValueError) as exc:
             raise AuthError(f"Connexion Microsoft impossible: {exc}") from exc
+        except OSError as exc:  # requests' network errors, bounded by the MSAL timeout.
+            get_logger(__name__).warning("auth.token.network_error", error=type(exc).__name__)
+            raise AuthError(
+                "Microsoft ne repond pas pour la connexion. Verifiez la connexion internet "
+                "puis actualisez.",
+            ) from exc
 
         token = result.get("access_token")
         get_logger(__name__).info(
@@ -176,6 +185,7 @@ class MsalAccessTokenProvider:
                 self._client_id,
                 authority=AUTHORITY,
                 token_cache=self._cache,
+                timeout=MSAL_HTTP_TIMEOUT_SECONDS,
             )
         return self._app, self._cache
 
@@ -184,10 +194,18 @@ class MsalAccessTokenProvider:
         app: PublicClientApplicationProtocol,
         cache: SerializableTokenCacheProtocol,
     ) -> dict[str, object]:
+        logger = get_logger(__name__)
         result, login_hint = self._acquire_token_silent(app, cache)
         if result is not None:
             return result
-        with _INTERACTIVE_SIGN_IN_LOCK:
+        logger.info("auth.interactive.waiting_for_turn", scopes=self._scopes)
+        wait = (self._interactive_timeout or INTERACTIVE_TIMEOUT_SECONDS) + 60
+        if not _INTERACTIVE_SIGN_IN_LOCK.acquire(timeout=wait):
+            raise AuthError(
+                "Une autre connexion Microsoft est deja en cours. Terminez-la ou "
+                "utilisez Parametres > Se reconnecter au compte Microsoft.",
+            )
+        try:
             # Another connection may have completed a sign-in while this one waited.
             result, login_hint = self._acquire_token_silent(app, cache)
             if result is not None:
@@ -204,6 +222,8 @@ class MsalAccessTokenProvider:
             if "access_token" in result:
                 _keep_only_signed_in_account(app, result)
             return result
+        finally:
+            _INTERACTIVE_SIGN_IN_LOCK.release()
 
     def _acquire_token_silent(
         self,

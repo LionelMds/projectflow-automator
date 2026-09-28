@@ -521,6 +521,11 @@ async def test_microsoft_sign_in_forgets_account_and_reconnects_services(
         "projectflow.ui.controller.sign_out_microsoft",
         lambda: signed_out.append(True),
     )
+    cancelled: list[bool] = []
+    monkeypatch.setattr(
+        "projectflow.ui.controller.cancel_pending_sign_ins",
+        lambda: cancelled.append(True),
+    )
 
     class AcceptedSettings(SettingsDialog):
         def exec(self) -> int:
@@ -532,7 +537,33 @@ async def test_microsoft_sign_in_forgets_account_and_reconnects_services(
     controller.open_settings()
 
     assert signed_out == [True]
+    assert cancelled == [True]
     assert services.repertoire_service is None
     assert services.planner_service is None
     assert window.tabs.currentWidget() is window.repertoire_tab
+    await controller.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stuck_repertoire_load_does_not_block_reload_after_reconnection(qtbot) -> None:
+    config = AppConfig()
+    window = MainWindow(config)
+    qtbot.addWidget(window)
+    stuck = ControlledRepertoire()
+    services = ServiceContainer(config, repertoire_service=stuck)  # type: ignore[arg-type]
+    controller = ProjectFlowController(window=window, config=config, services=services)
+    first = asyncio.create_task(controller.load_repertoire())
+    await asyncio.wait_for(stuck.entered.get(), timeout=2)
+
+    fresh = ControlledRepertoire()
+    services.repertoire_service = fresh  # type: ignore[assignment]
+    controller._invalidate_repertoire_data()  # noqa: SLF001
+    second = asyncio.create_task(controller.load_repertoire())
+    await asyncio.wait_for(fresh.entered.get(), timeout=2)
+    fresh.releases[0].set()
+    await asyncio.wait_for(second, timeout=2)
+
+    assert window.repertoire_tab.original_rows()
+    stuck.releases[0].set()
+    await asyncio.wait_for(first, timeout=2)
     await controller.aclose()
