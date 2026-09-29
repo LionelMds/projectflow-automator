@@ -52,6 +52,12 @@ Seul un projet dont les colonnes B:E du repertoire sont renseignees recoit un do
 fournisseur MSAL : une session expiree devient une erreur explicite au lieu d'une page
 de connexion. Les appels Outlook se font sur le fil principal du processus.
 
+Avant de creer un dossier projet Outlook, `WindowsLocalOutlookClient` verifie son
+emplacement habituel ; s'il n'y est pas, il cherche le numero dans tout le dossier de
+base (six niveaux au plus, sans descendre dans les dossiers projet, hors Elements
+supprimes et Courrier indesirable) et reutilise le dossier trouve, par exemple dans
+`00-Archives/2026`, sans le renommer. Mail sur macOS garde le comportement precedent.
+
 ## Premier lancement
 
 ```mermaid

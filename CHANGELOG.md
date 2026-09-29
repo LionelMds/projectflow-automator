@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.1.58
+
+- Ne recree plus le dossier Outlook d'un projet archive. Avant de creer le dossier d'un
+  projet absent de son emplacement habituel (`Annee/Projet`), ProjectFlow le cherche dans
+  toute la boite, par exemple dans `00-Archives/2026`, et reutilise ce dossier tel quel.
+  Les Elements supprimes et le Courrier indesirable sont ignores. A son emplacement
+  habituel, le dossier est toujours renomme quand la designation change.
+- S'applique a `Creer`, `Mettre a jour` et aux demandes de MailFlow Archivist.
+
 ## 0.1.57
 
 - Ajoute le lien avec MailFlow Archivist. Quand MailFlow trouve des mails d'un projet

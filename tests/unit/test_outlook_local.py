@@ -35,6 +35,7 @@ class FakeCollection:
 class FakeFolder:
     def __init__(self, name: str, parent: FakeCollection | None = None) -> None:
         self.Name = name
+        self.EntryID = f"id-{name}-{id(self)}"
         self.Folders = FakeCollection()
         self.parent = parent
 
@@ -49,11 +50,14 @@ class FakeStore:
         self.DisplayName = display_name
         self.root = FakeFolder(display_name)
         self.inbox = FakeFolder("Boite de reception")
+        self.deleted: FakeFolder | None = None
 
     def GetRootFolder(self) -> FakeFolder:  # noqa: N802
         return self.root
 
     def GetDefaultFolder(self, folder_type: int) -> FakeFolder:  # noqa: N802
+        if folder_type == 3 and self.deleted is not None:
+            return self.deleted
         assert folder_type == 6
         return self.inbox
 
@@ -305,3 +309,74 @@ def test_local_outlook_uses_macos_mail_client(monkeypatch: pytest.MonkeyPatch) -
     client = create_local_outlook_client(config)
 
     assert isinstance(client, MacNativeMailClient)
+
+
+def archived_store() -> tuple[FakeStore, FakeFolder]:
+    store = FakeStore("store-1", "Boite Balz")
+    archives = store.inbox.Folders.Add("00-Archives")
+    year = archives.Folders.Add("2026")
+    project = year.Folders.Add("2026-4952 (Protections platelage)")
+    store.inbox.Folders.Add("2026")
+    return store, project
+
+
+def inbox_client(store: FakeStore) -> WindowsLocalOutlookClient:
+    namespace = FakeNamespace([store], [FakeAccount(store, "lionel@balzmetal.ch")])
+    return WindowsLocalOutlookClient(
+        target_store_id="store-1",
+        base_folder="inbox",
+        app_factory=lambda: FakeApp(namespace),
+    )
+
+
+def test_windows_outlook_reuses_an_archived_project_folder() -> None:
+    store, project = archived_store()
+
+    folder = inbox_client(store).ensure_folder_path_sync(
+        ["2026", "2026-4952 (Nouvelle designation)"],
+    )
+
+    assert folder is project
+    # Neither a second folder in 2026 nor a rename of the archived folder.
+    assert store.inbox.Folders.Item(2).Folders.Count == 0
+    assert project.Name == "2026-4952 (Protections platelage)"
+
+
+def test_windows_outlook_creates_children_inside_the_archived_project_folder() -> None:
+    store, project = archived_store()
+
+    folder = inbox_client(store).ensure_folder_path_sync(
+        ["2026", "2026-4952 (Protections platelage)", "Fournisseurs"],
+    )
+
+    assert folder is project.Folders.Item(1)
+    assert project.Folders.Item(1).Name == "Fournisseurs"
+
+
+def test_windows_outlook_keeps_renaming_the_project_folder_at_its_place() -> None:
+    store, archived = archived_store()
+    active = store.inbox.Folders.Item(2).Folders.Add("2026-4952")
+
+    folder = inbox_client(store).ensure_folder_path_sync(["2026", "2026-4952 (Platelage)"])
+
+    assert folder is active
+    assert active.Name == "2026-4952 (Platelage)"
+    assert archived.Name == "2026-4952 (Protections platelage)"
+
+
+def test_windows_outlook_ignores_deleted_items_when_searching_archives() -> None:
+    store = FakeStore("store-1", "Boite Balz")
+    deleted = store.root.Folders.Add("Elements supprimes")
+    deleted.Folders.Add("2026-4952 (Ancien)")
+    store.deleted = deleted
+    namespace = FakeNamespace([store], [FakeAccount(store, "lionel@balzmetal.ch")])
+    client = WindowsLocalOutlookClient(
+        target_store_id="store-1",
+        app_factory=lambda: FakeApp(namespace),
+    )
+
+    folder = client.ensure_folder_path_sync(["2026", "2026-4952"])
+
+    assert isinstance(folder, FakeFolder)
+    assert folder.Name == "2026-4952"
+    assert folder is not deleted.Folders.Item(1)

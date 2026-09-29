@@ -11,6 +11,10 @@ from projectflow.outlook.models import OutlookAccount
 
 OutlookAppFactory = Callable[[], Any]
 OL_FOLDER_INBOX = 6
+OL_FOLDER_DELETED_ITEMS = 3
+OL_FOLDER_JUNK = 23
+# Deep enough for "Boite de reception/00-Archives/2026/<projet>" and a few more levels.
+MAX_PROJECT_SEARCH_DEPTH = 6
 PROJECT_FOLDER_RE = re.compile(r"^(?P<number>\d{4}-\d+(?:-\d+)?)(?:\s|\(|$)")
 
 
@@ -65,10 +69,55 @@ class WindowsLocalOutlookClient:
     def ensure_folder_path_sync(self, names: list[str]) -> object:
         if not names:
             raise ValueError("La liste de dossiers Outlook ne peut pas etre vide.")
-        current = self._base_target_folder()
+        base = self._base_target_folder()
+        project_index = next(
+            (index for index, name in enumerate(names) if _project_number_prefix(name)),
+            None,
+        )
+        if project_index is not None:
+            moved = self._project_folder_elsewhere(base, names[: project_index + 1])
+            if moved is not None:
+                # An archived project keeps its folder: never create a second one.
+                current = moved
+                for name in names[project_index + 1 :]:
+                    current = _ensure_child_folder(current, name)
+                return current
+        current = base
         for name in names:
             current = _ensure_child_folder(current, name)
         return current
+
+    def _project_folder_elsewhere(self, base: Any, path: list[str]) -> Any | None:
+        """Find the project folder moved away from its configured place (archives).
+
+        At its configured place the usual rules apply, including the rename when the
+        designation changes; only a folder found elsewhere is reused as it is.
+        """
+        parent = base
+        for name in path[:-1]:
+            parent = _find_folder(parent.Folders, name)
+            if parent is None:
+                break
+        else:
+            if _find_folder(parent.Folders, path[-1]) or _find_project_folder(
+                parent.Folders,
+                path[-1],
+            ):
+                return None
+        return _search_project_folder(
+            base,
+            _project_number_prefix(path[-1]),
+            excluded=self._excluded_folder_ids(),
+            depth=MAX_PROJECT_SEARCH_DEPTH,
+        )
+
+    def _excluded_folder_ids(self) -> set[str]:
+        store = self._selected_store()
+        excluded: set[str] = set()
+        for folder_type in (OL_FOLDER_DELETED_ITEMS, OL_FOLDER_JUNK):
+            excluded.add(_default_folder_id(store, folder_type))
+        excluded.discard("")
+        return excluded
 
     def _delete_folder_path_sync(self, names: list[str]) -> bool:
         if not names:
@@ -227,6 +276,43 @@ def _find_project_folder(folders: Any, name: str) -> Any | None:
         folder = folders.Item(index)
         if _project_number_prefix(_clean_text(folder.Name)) == project_number:
             return folder
+    return None
+
+
+def _default_folder_id(store: Any, folder_type: int) -> str:
+    try:
+        return _clean_text(store.GetDefaultFolder(folder_type).EntryID)
+    except Exception:  # noqa: BLE001 - a store without this folder has nothing to skip
+        return ""
+
+
+def _search_project_folder(
+    parent: Any,
+    project_number: str,
+    *,
+    excluded: set[str],
+    depth: int,
+) -> Any | None:
+    if depth <= 0:
+        return None
+    folders = parent.Folders
+    children = [folders.Item(index) for index in range(1, int(folders.Count) + 1)]
+    for child in children:
+        if _project_number_prefix(_clean_text(child.Name)) == project_number:
+            return child
+    for child in children:
+        if _project_number_prefix(_clean_text(child.Name)):
+            continue
+        if _clean_text(getattr(child, "EntryID", "")) in excluded:
+            continue
+        found = _search_project_folder(
+            child,
+            project_number,
+            excluded=excluded,
+            depth=depth - 1,
+        )
+        if found is not None:
+            return found
     return None
 
 
