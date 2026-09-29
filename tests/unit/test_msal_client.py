@@ -311,3 +311,20 @@ class FakeMsalModule:
     ) -> FakePublicClientApplication:
         self.applications_created += 1
         return self.app
+
+
+def test_headless_provider_reports_expired_session_without_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_module = FakeMsalModule(accounts=[ACCOUNT])
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+        allow_interactive=False,
+    )
+
+    with pytest.raises(AuthError, match="ouvrez ProjectFlow"):
+        provider._access_token_sync()  # noqa: SLF001
+
+    assert fake_module.app.interactive_calls == 0

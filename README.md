@@ -24,6 +24,22 @@ Document Manager (cle de licence dans les parametres). Voir la section
 Le responsable saisi dans **Gere par** est inscrit en **C6**. Les **Initiales utilisateur**,
 definies dans les parametres et affichees a cote, sont inscrites separement en **C9**.
 
+## Lien avec MailFlow Archivist
+
+MailFlow Archivist range les mails Outlook dans les dossiers projet. Quand un mail cite
+un projet sans dossier Outlook, MailFlow demande a ProjectFlow de le creer :
+
+```text
+ProjectFlowAutomator.exe --mailflow-request demande.json --mailflow-result resultat.json
+```
+
+ProjectFlow cherche chaque numero dans le repertoire chantier et cree le dossier avec
+l'arborescence Outlook de ses parametres. Les numeros absents du repertoire ne sont
+jamais crees. Ce mode ne montre aucune fenetre, ne passe pas par l'instance deja
+ouverte et n'ouvre jamais de connexion Microsoft interactive. Le format d'echange
+(protocole 1) est decrit dans `docs/architecture.md` et dans la documentation de
+MailFlow (`docs/projectflow.md`). Outlook doit etre active dans les parametres.
+
 ## Developpement
 
 ```powershell

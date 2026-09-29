@@ -93,6 +93,7 @@ class MsalAccessTokenProvider:
         cache_storage: TokenCacheStorage | None = None,
         interactive_timeout: int | None = INTERACTIVE_TIMEOUT_SECONDS,
         clock: Callable[[], float] = time.monotonic,
+        allow_interactive: bool = True,
     ) -> None:
         self._client_id = client_id.strip()
         self._scopes = list(scopes)
@@ -101,6 +102,7 @@ class MsalAccessTokenProvider:
         self._token_expires_at = 0.0
         self._interactive_timeout = interactive_timeout
         self._clock = clock
+        self._allow_interactive = allow_interactive
         self._lock = threading.Lock()
         self._app: PublicClientApplicationProtocol | None = None
         self._cache: SerializableTokenCacheProtocol | None = None
@@ -198,6 +200,12 @@ class MsalAccessTokenProvider:
         result, login_hint = self._acquire_token_silent(app, cache)
         if result is not None:
             return result
+        if not self._allow_interactive:
+            # Headless requests (MailFlow) must never open a browser nor wait for one.
+            raise AuthError(
+                "Connexion Microsoft a renouveler: ouvrez ProjectFlow, reconnectez-vous "
+                "au compte Microsoft, puis relancez la demande.",
+            )
         logger.info("auth.interactive.waiting_for_turn", scopes=self._scopes)
         wait = (self._interactive_timeout or INTERACTIVE_TIMEOUT_SECONDS) + 60
         if not _INTERACTIVE_SIGN_IN_LOCK.acquire(timeout=wait):

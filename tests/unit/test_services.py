@@ -10,6 +10,7 @@ import httpx
 import pytest
 from openpyxl import Workbook
 
+from projectflow import services
 from projectflow.application_settings import ApplicationSettings
 from projectflow.config import AppConfig, RepertoireChantierConfig
 from projectflow.exceptions import ConfigError
@@ -292,3 +293,25 @@ async def test_container_does_not_take_ownership_of_injected_planner_client() ->
         await container.close()
 
         assert not http.is_closed
+
+
+def test_headless_service_container_never_prompts_for_microsoft_sign_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[dict[str, object]] = []
+
+    class RecordingProvider:
+        def __init__(self, **kwargs: object) -> None:
+            created.append(kwargs)
+
+    monkeypatch.setattr(services, "MsalAccessTokenProvider", RecordingProvider)
+    config = AppConfig()
+    config.paths.repertoire_chantier = RepertoireChantierConfig(drive_id="drive", item_id="item")
+
+    ServiceContainer(
+        config,
+        application_settings=ApplicationSettings(microsoft_client_id="client-id"),
+        interactive_sign_in=False,
+    ).repertoire()
+
+    assert created[0]["allow_interactive"] is False

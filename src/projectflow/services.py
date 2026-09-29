@@ -30,6 +30,8 @@ class ServiceContainer:
     fiche_service: FicheService | None = None
     repertoire_service: RepertoireService | None = None
     planner_service: ConfiguredPlannerGateway | None = None
+    # False for headless requests: an expired session is reported, never prompted.
+    interactive_sign_in: bool = True
     _graph_clients: list[GraphClient] = field(default_factory=list, init=False, repr=False)
 
     def fiche(self) -> FicheService:
@@ -58,6 +60,7 @@ class ServiceContainer:
                 )
             token_provider = MsalAccessTokenProvider(
                 client_id=settings.microsoft_client_id,
+                allow_interactive=self.interactive_sign_in,
             )
             graph = GraphClient(token_provider=token_provider, request_timeout=60.0)
             self._graph_clients.append(graph)
@@ -100,6 +103,7 @@ class ServiceContainer:
         token_provider = MsalAccessTokenProvider(
             client_id=settings.microsoft_client_id,
             scopes=PLANNER_GRAPH_SCOPES,
+            allow_interactive=self.interactive_sign_in,
         )
         graph = GraphClient(token_provider=token_provider, request_timeout=60.0)
         self._graph_clients.append(graph)

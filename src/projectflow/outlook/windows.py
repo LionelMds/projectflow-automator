@@ -51,7 +51,7 @@ class WindowsLocalOutlookClient:
         return accounts
 
     async def ensure_folder_path(self, names: list[str]) -> object:
-        return await asyncio.to_thread(self._ensure_folder_path_sync, names)
+        return await asyncio.to_thread(self.ensure_folder_path_sync, names)
 
     async def delete_folder_path(self, names: list[str]) -> bool:
         return await asyncio.to_thread(self._delete_folder_path_sync, names)
@@ -62,7 +62,7 @@ class WindowsLocalOutlookClient:
     def validate_target_sync(self) -> None:
         self._base_target_folder()
 
-    def _ensure_folder_path_sync(self, names: list[str]) -> object:
+    def ensure_folder_path_sync(self, names: list[str]) -> object:
         if not names:
             raise ValueError("La liste de dossiers Outlook ne peut pas etre vide.")
         current = self._base_target_folder()

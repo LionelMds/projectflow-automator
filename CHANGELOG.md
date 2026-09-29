@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.1.57
+
+- Ajoute le lien avec MailFlow Archivist. Quand MailFlow trouve des mails d'un projet
+  sans dossier Outlook, il demande a ProjectFlow de le creer : ProjectFlow cherche le
+  projet dans le repertoire chantier et cree le dossier avec l'arborescence Outlook de
+  ses parametres, comme a la creation du projet. Un numero absent ou vide du
+  repertoire n'est jamais cree.
+- Cette demande tourne sans fenetre (`--mailflow-request` / `--mailflow-result`), a
+  cote de l'instance deja ouverte, et n'ouvre jamais de page de connexion Microsoft :
+  une session expiree est signalee pour se reconnecter depuis ProjectFlow.
+
 ## 0.1.56
 
 - Affiche la fenetre `Connexion Microsoft` avant d'ouvrir le navigateur, et ouvre le
