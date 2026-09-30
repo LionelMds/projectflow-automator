@@ -6,14 +6,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QDialogButtonBox,
-    QFormLayout,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
-    QPushButton,
-    QSizePolicy,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -23,6 +17,15 @@ from projectflow.core.client_directory import ClientDirectory
 from projectflow.ui.creation_tab import CreationFormData
 from projectflow.ui.widgets.cad import CadOptionsWidget
 from projectflow.ui.widgets.client_autocomplete import ClientAutocomplete
+from projectflow.ui.widgets.industry import (
+    CheckChip,
+    LogoLabel,
+    PrimaryButton,
+    button,
+    field,
+    label,
+    rule,
+)
 from projectflow.ui.widgets.planner import PlannerSelectionWidget
 
 
@@ -89,6 +92,8 @@ class QuickCreateDialog(QDialog):
 
     def set_user_initials(self, initials: str) -> None:
         self.user_initials_edit.setText(initials)
+        caption = self._gere_par_field.caption_label  # type: ignore[attr-defined]
+        caption.setText(f"Géré par · {initials}" if initials else "Géré par")
 
     def apply_planner_config(
         self,
@@ -119,38 +124,49 @@ class QuickCreateDialog(QDialog):
         self.activateWindow()
 
     def _build_ui(self) -> None:
-        self.resize(560, 430)
+        self.setMinimumWidth(560)
+        self.resize(560, 470)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         header = QHBoxLayout()
-        title = QLabel("Nouveau projet rapide")
-        title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.classic_button = QToolButton()
-        self.classic_button.setArrowType(Qt.ArrowType.RightArrow)
-        self.classic_button.setToolTip("Ouvrir la fenetre complete")
+        header.setContentsMargins(18, 12, 12, 12)
+        header.setSpacing(10)
+        header.addWidget(LogoLabel(26))
+        header.addWidget(label("Nouveau projet rapide", "h4"), 1)
+        self.classic_button = button("Fenêtre complète", "ghost", icon="arrow-right", size="sm")
+        self.classic_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.classic_button.setToolTip("Ouvrir la fenêtre complète")
         self.classic_button.clicked.connect(self.classic_requested.emit)
-        header.addWidget(title)
         header.addWidget(self.classic_button)
         layout.addLayout(header)
+        layout.addWidget(rule())
 
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-
+        body = QVBoxLayout()
+        body.setContentsMargins(18, 16, 18, 16)
+        body.setSpacing(12)
         identity = QHBoxLayout()
+        identity.setSpacing(8)
         self.year_combo = QComboBox()
         self.year_combo.setEditable(True)
         self.year_combo.addItems([str(date.today().year), str(date.today().year + 1)])
         self.project_id_edit = QLineEdit()
         self.project_id_edit.setPlaceholderText("4995")
         self.subproject_edit = QLineEdit()
-        self.subproject_edit.setPlaceholderText("Sous-projet")
-        self.next_available_button = QPushButton("Suivant disponible")
+        self.subproject_edit.setPlaceholderText("—")
+        self.next_available_button = button("Suivant")
+        self.next_available_button.setToolTip("Suivant disponible")
         self.next_available_button.clicked.connect(self.next_available_requested.emit)
-        identity.addWidget(self.year_combo, 1)
-        identity.addWidget(self.project_id_edit, 2)
-        identity.addWidget(self.subproject_edit, 1)
-        identity.addWidget(self.next_available_button)
-        form.addRow("Numero", _wrap_layout(identity))
+        year = field("Année", self.year_combo)
+        year.setFixedWidth(96)
+        subproject = field("Sous-projet", self.subproject_edit)
+        subproject.setFixedWidth(90)
+        identity.addWidget(year)
+        identity.addWidget(field("Numéro", self.project_id_edit), 1)
+        identity.addWidget(subproject)
+        identity.addWidget(self.next_available_button, 0, Qt.AlignmentFlag.AlignBottom)
+        body.addLayout(identity)
 
         self.designation_edit = QLineEdit()
         self.societe_edit = QLineEdit()
@@ -167,46 +183,60 @@ class QuickCreateDialog(QDialog):
         )
         self.localisation_edit = QLineEdit()
         self.gere_par_edit = QLineEdit()
+        # Holds the C9 initials; they show in the "Géré par" caption.
         self.user_initials_edit = QLineEdit()
         self.user_initials_edit.setReadOnly(True)
-        self.user_initials_edit.setPlaceholderText("Parametres")
-        self.user_initials_edit.setToolTip(
-            "Initiales de l'utilisateur definies dans les parametres."
-        )
-        self.user_initials_edit.setFixedWidth(
-            self.user_initials_edit.fontMetrics().horizontalAdvance("MMMMMM") + 24,
-        )
-        form.addRow("Designation", self.designation_edit)
-        form.addRow("Societe", self.societe_edit)
-        form.addRow("Contact", self.contact_edit)
-        form.addRow("Localisation", self.localisation_edit)
-        responsibility = QHBoxLayout()
-        responsibility.setSpacing(8)
-        responsibility.addWidget(self.gere_par_edit, 1)
-        responsibility.addWidget(QLabel("Initiales utilisateur"))
-        responsibility.addWidget(self.user_initials_edit)
-        form.addRow("Géré par", _wrap_layout(responsibility))
-        layout.addLayout(form)
+        self.user_initials_edit.hide()
+        body.addWidget(field("Désignation", self.designation_edit))
+        client = QHBoxLayout()
+        client.setSpacing(8)
+        client.addWidget(field("Société", self.societe_edit), 1)
+        client.addWidget(field("Contact", self.contact_edit), 1)
+        body.addLayout(client)
+        place = QHBoxLayout()
+        place.setSpacing(8)
+        place.addWidget(field("Localisation", self.localisation_edit), 1)
+        self._gere_par_field = field("Géré par", self.gere_par_edit)
+        self._gere_par_field.setFixedWidth(170)
+        place.addWidget(self._gere_par_field)
+        body.addLayout(place)
 
         self.planner_widget = PlannerSelectionWidget()
         self.planner_widget.options_requested.connect(self.planner_options_requested.emit)
-        layout.addWidget(self.planner_widget)
-
         self.cad_options = CadOptionsWidget()
-        layout.addWidget(self.cad_options)
+        self.cad_options.hide()
+        chips = QHBoxLayout()
+        chips.setSpacing(6)
+        self.planner_chip = CheckChip("Planner", self.planner_widget.enabled_checkbox)
+        self.solidworks_chip = CheckChip("SolidWorks", self.cad_options.solidworks_checkbox)
+        self.autocad_chip = CheckChip("AutoCAD", self.cad_options.autocad_checkbox)
+        for chip in (self.planner_chip, self.solidworks_chip, self.autocad_chip):
+            chips.addWidget(chip)
+        chips.addStretch(1)
+        body.addLayout(chips)
+        # Column, members and due date only matter once a Planner task is requested.
+        self.planner_widget.enabled_checkbox.hide()
+        self.planner_widget.setVisible(self.planner_widget.enabled_checkbox.isChecked())
+        self.planner_widget.enabled_checkbox.toggled.connect(self._show_planner_details)
+        body.addWidget(self.planner_widget)
+        body.addWidget(self.cad_options)
+        body.addStretch(1)
+        layout.addLayout(body, 1)
+        layout.addWidget(rule())
 
-        buttons = QDialogButtonBox()
-        create_button = QPushButton("Creer")
+        footer = QHBoxLayout()
+        footer.setContentsMargins(18, 6, 12, 6)
+        footer.setSpacing(8)
+        footer.addStretch(1)
+        cancel_button = button("Annuler")
+        cancel_button.clicked.connect(self.reject)
+        create_button = PrimaryButton("Créer")
         create_button.setDefault(True)
-        buttons.addButton(create_button, QDialogButtonBox.ButtonRole.AcceptRole)
-        buttons.addButton("Annuler", QDialogButtonBox.ButtonRole.RejectRole)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        create_button.clicked.connect(self.accept)
+        footer.addWidget(cancel_button)
+        footer.addWidget(create_button)
+        layout.addLayout(footer)
 
-
-def _wrap_layout(layout: QHBoxLayout) -> QWidget:
-    widget = QWidget()
-    widget.setLayout(layout)
-    widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    return widget
+    def _show_planner_details(self, checked: bool) -> None:  # noqa: FBT001
+        self.planner_widget.setVisible(checked)
+        self.adjustSize()

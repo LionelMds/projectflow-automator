@@ -535,6 +535,7 @@ QPushButton[variant="chip"] {{
   font-family: "{BODY_FAMILY}"; font-weight: 400; font-size: 13px; color: {t["neutral-800"]};
   padding: 4px 10px; min-height: 18px;
 }}
+QPushButton[variant="chip"]:disabled {{ color: {disabled_text}; border-color: {disabled_border}; }}
 QPushButton[variant="chip"]:checked {{
   color: {t["accent-800"]}; background: {t["accent-100"]}; border-color: {t["accent"]};
 }}
@@ -566,7 +567,10 @@ QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
 }}
 QLineEdit:read-only {{ background: {t["bg"]}; }}
 QLineEdit[role="bare"] {{ background: transparent; border: 0; padding: 2px 0; }}
-QComboBox {{ padding-right: 28px; }}
+QComboBox {{ padding-right: 4px; }}
+QComboBox QLineEdit, QSpinBox QLineEdit {{
+  background: transparent; border: 0; padding: 0; min-height: 0; margin: 0;
+}}
 QComboBox::drop-down {{
   border: 0; width: 26px; subcontrol-origin: padding; subcontrol-position: right;
 }}

@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPointF, QRectF, QSize, Qt
+from PySide6.QtCore import (
+    QEvent,
+    QModelIndex,
+    QObject,
+    QPersistentModelIndex,
+    QPointF,
+    QRectF,
+    QSignalBlocker,
+    QSize,
+    Qt,
+)
 from PySide6.QtGui import QFont, QPainter, QPaintEvent, QPen, QResizeEvent
 from PySide6.QtWidgets import (
     QBoxLayout,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -558,3 +569,40 @@ class FileItemDelegate(QStyledItemDelegate):
             elided,
         )
         painter.restore()
+
+
+class CheckChip(QPushButton):
+    """A compact toggle mirroring a (hidden) checkbox, including its enabled state."""
+
+    def __init__(self, text: str, checkbox: QCheckBox, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._text = text
+        self._checkbox = checkbox
+        self.setProperty("variant", "chip")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.toggled.connect(self._push)
+        checkbox.toggled.connect(self._pull)
+        checkbox.installEventFilter(self)
+        self._pull()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if watched is self._checkbox and event.type() == QEvent.Type.EnabledChange:
+            self._pull()
+        return super().eventFilter(watched, event)
+
+    def _push(self, checked: bool) -> None:  # noqa: FBT001
+        if self._checkbox.isChecked() != checked:
+            self._checkbox.setChecked(checked)
+        self._refresh_text()
+
+    def _pull(self) -> None:
+        self.setEnabled(self._checkbox.isEnabled())
+        self.setToolTip(self._checkbox.toolTip())
+        blocker = QSignalBlocker(self)
+        self.setChecked(self._checkbox.isChecked())
+        del blocker
+        self._refresh_text()
+
+    def _refresh_text(self) -> None:
+        self.setText(f"{'✓' if self.isChecked() else '+'}  {self._text}")
