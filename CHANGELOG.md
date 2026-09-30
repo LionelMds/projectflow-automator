@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.59
+
 - Nouvelle interface au style Industry (maquettes ProjectFlow, variante A) : en-tete avec
   logo, onglets Creation / Sortie / Repertoire, etiquette du repertoire, bouton
   « Projet rapide » et menu Parametres / mise a jour / a propos (plus de barre de menus).
