@@ -1,0 +1,50 @@
+name: Mobile
+
+on:
+  push:
+    branches: ["main"]
+    paths: ["mobile/**", ".github/workflows/mobile.yml"]
+    tags: ["mobile-v*"]
+  pull_request:
+    paths: ["mobile/**", ".github/workflows/mobile.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Tests et build PWA
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_MS_CLIENT_ID: ${{ vars.PROJECTFLOW_MOBILE_CLIENT_ID }}
+          VITE_MS_TENANT: ${{ vars.PROJECTFLOW_MOBILE_TENANT }}
+      - name: Archive
+        run: cd dist && zip -qr "../projectflow-mobile-${GITHUB_REF_NAME//\//-}.zip" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: projectflow-mobile
+          path: mobile/projectflow-mobile-*.zip
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/mobile-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ProjectFlow Mobile ${{ github.ref_name }}
+          body: |
+            Compagnon mobile (PWA) de ProjectFlow Automator.
+            Publier le contenu du zip sur un serveur HTTPS déclaré comme URI de redirection SPA
+            de l'App Registration Microsoft. Voir mobile/README.md.
+          files: mobile/projectflow-mobile-*.zip

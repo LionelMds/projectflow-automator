@@ -40,6 +40,12 @@ ouverte et n'ouvre jamais de connexion Microsoft interactive. Le format d'echang
 (protocole 1) est decrit dans `docs/architecture.md` et dans la documentation de
 MailFlow (`docs/projectflow.md`). Outlook doit etre active dans les parametres.
 
+## Compagnon mobile
+
+Le dossier `mobile/` contient ProjectFlow Mobile, une application web installable (PWA) qui
+reprend la creation de projet, la sortie dossier et le repertoire chantier directement dans
+Microsoft 365 (OneDrive, Excel, Planner, Outlook). Voir [mobile/README.md](mobile/README.md).
+
 ## Developpement
 
 ```powershell

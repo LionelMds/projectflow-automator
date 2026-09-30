@@ -1,0 +1,123 @@
+/* Mise en page mobile de ProjectFlow, reprise de « ProjectFlow Mobile.dc.html ».
+   Couleurs, polices et composants viennent du système Industry (industry.css). */
+
+html, body, #root { height: 100%; }
+body { margin: 0; background: var(--color-surface); -webkit-tap-highlight-color: transparent; }
+button, input, select, textarea { font: inherit; }
+
+.pf-shell {
+  position: relative; height: 100dvh; max-width: 480px; margin: 0 auto;
+  background: var(--color-bg); color: var(--color-text); font-family: var(--font-body);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+@media (min-width: 520px) { .pf-shell { box-shadow: var(--shadow-lg); } }
+
+.pf-scroll { flex: 1; min-height: 0; overflow: auto; padding: 22px 20px 24px; -webkit-overflow-scrolling: touch; }
+.pf-scroll::-webkit-scrollbar { display: none; }
+.pf-scroll { scrollbar-width: none; }
+
+/* header */
+.pf-header { padding: calc(env(safe-area-inset-top, 0px) + 14px) 20px 12px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--color-divider); }
+.pf-mark { width: 32px; height: 32px; flex: none; background: var(--color-accent); color: var(--color-bg); display: grid; place-items: center; font-family: var(--font-heading); font-weight: 700; font-size: 16px; letter-spacing: .02em; }
+.pf-brand { font-family: var(--font-heading); font-weight: 600; font-size: 22px; line-height: 1; }
+.pf-company { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-700); margin-top: 3px; }
+.pf-dot { width: 6px; height: 6px; background: var(--color-accent-700); }
+
+/* type */
+.pf-h1 { font-size: 36px; margin: 0 0 4px; line-height: 1.05; }
+.pf-lead { font-size: 13px; color: var(--color-neutral-700); margin: 0 0 22px; }
+.pf-lead b { color: var(--color-text); font-weight: 600; }
+.pf-muted { color: var(--color-neutral-700); }
+.pf-small { font-size: 12px; color: var(--color-neutral-700); }
+.pf-danger-text { color: #B42318; }
+
+/* sections */
+.pf-card { padding: 16px; margin-bottom: 22px; }
+.pf-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
+.pf-num { font-family: var(--font-heading); font-weight: 600; font-size: 13px; letter-spacing: .1em; color: var(--color-accent-700); }
+.pf-title { font-family: var(--font-heading); font-weight: 600; font-size: 19px; }
+.pf-kicker { font-family: var(--font-heading); font-weight: 600; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-neutral-700); }
+.pf-grid { display: grid; gap: 8px; }
+.pf-stack { display: flex; flex-direction: column; gap: 12px; }
+.pf-input { min-height: 44px; }
+.pf-readonly { color: var(--color-neutral-700); text-align: center; letter-spacing: .08em; }
+
+/* checkbox rows */
+.pf-check { width: 22px; height: 22px; flex: none; border: 1.5px solid var(--color-accent); display: grid; place-items: center; box-sizing: border-box; }
+.pf-check.on { background: var(--color-accent); color: var(--color-bg); }
+.pf-row { display: flex; align-items: center; gap: 12px; min-height: 52px; cursor: pointer; width: 100%; background: none; border: 0; padding: 0; text-align: left; color: inherit; }
+.pf-row.ruled { border-top: 1px solid var(--color-divider); }
+.pf-row:focus-visible, .pf-tap:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.pf-row[aria-disabled="true"] { opacity: .45; }
+.pf-row-title { font-size: 15px; }
+.pf-row-sub { font-size: 12px; color: var(--color-neutral-700); }
+.pf-sub { padding: 4px 0 12px 34px; display: flex; flex-direction: column; gap: 12px; }
+
+.pf-chip { font-size: 13px; padding: 6px 12px; min-height: 36px; }
+
+/* error & journal */
+.pf-error { padding: 12px 14px; margin-bottom: 22px; border-color: #B42318; color: #B42318; font-size: 14px; }
+.pf-journal { border: 1px solid var(--color-divider); padding: 10px 12px; font-size: 12px; line-height: 1.7; color: var(--color-neutral-800); }
+
+/* sortie */
+.pf-empty { border: 1px dashed var(--color-divider); padding: 26px 16px; text-align: center; font-size: 14px; color: var(--color-neutral-700); }
+.pf-hatch { background: repeating-linear-gradient(135deg, transparent 0 8px, color-mix(in srgb, var(--color-text) 7%, transparent) 8px 9px); }
+.pf-preview { height: 150px; border: 1px solid var(--color-divider); display: grid; place-items: center; text-align: center; padding: 10px; font-size: 13px; color: var(--color-neutral-700); position: relative; overflow: hidden; }
+.pf-preview img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: grayscale(1) contrast(1.05); mix-blend-mode: multiply; }
+.pf-preview .pf-preview-label { position: relative; background: color-mix(in srgb, var(--color-bg) 85%, transparent); padding: 4px 8px; }
+.pf-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.pf-tile { position: relative; aspect-ratio: 1; border: 1px solid var(--color-divider); display: flex; align-items: flex-end; padding: 5px; font-size: 10px; color: var(--color-neutral-800); word-break: break-all; cursor: pointer; background-size: cover; background-position: center; overflow: hidden; text-align: left; }
+.pf-tile span.pf-tile-name { position: relative; background: color-mix(in srgb, var(--color-bg) 80%, transparent); padding: 1px 3px; }
+.pf-tile .pf-sel { position: absolute; inset: -1px; border: 2px solid var(--color-accent); pointer-events: none; }
+.pf-radio-row { width: 100%; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--color-divider); box-sizing: border-box; }
+
+/* répertoire */
+.pf-rep-card { padding: 12px 14px; cursor: pointer; min-height: 44px; display: block; width: 100%; text-align: left; background: none; color: inherit; font: inherit; }
+.pf-rep-n { font-family: var(--font-heading); font-weight: 600; font-size: 22px; letter-spacing: .01em; }
+.pf-next { border: 1.5px dashed var(--color-accent); background: var(--color-accent-100); padding: 12px 14px; cursor: pointer; display: flex; align-items: center; gap: 10px; min-height: 56px; width: 100%; font: inherit; color: inherit; text-align: left; box-sizing: border-box; }
+.pf-free { border: 1px dashed var(--color-divider); padding: 10px 14px; display: flex; align-items: center; gap: 10px; min-height: 44px; color: var(--color-neutral-700); cursor: pointer; width: 100%; background: none; font: inherit; text-align: left; box-sizing: border-box; }
+
+/* bars */
+.pf-actionbar { padding: 12px 20px; display: flex; gap: 8px; border-top: 1px solid var(--color-divider); background: var(--color-bg); }
+.pf-big { min-height: 48px; font-size: 16px; }
+.pf-tabbar { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--color-divider); padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px); background: var(--color-bg); }
+.pf-tab { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px 8px; cursor: pointer; min-height: 54px; background: none; border: 0; color: var(--color-neutral-700); }
+.pf-tab.on { color: var(--color-accent-700); }
+.pf-tab .pf-tab-bar { position: absolute; top: -1px; left: 16%; right: 16%; height: 2px; background: transparent; }
+.pf-tab.on .pf-tab-bar { background: var(--color-accent); }
+.pf-tab-label { font-family: var(--font-heading); font-weight: 600; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; }
+
+/* overlays */
+.pf-toast { position: absolute; left: 20px; right: 20px; bottom: calc(150px + env(safe-area-inset-bottom, 0px)); background: var(--color-accent-900); color: var(--color-bg); padding: 12px 14px; font-size: 14px; z-index: 30; display: flex; gap: 10px; align-items: center; box-shadow: var(--shadow-md); }
+.pf-scrim { position: absolute; inset: 0; background: color-mix(in srgb, var(--color-neutral-900) 50%, transparent); z-index: 40; }
+.pf-sheet { position: absolute; left: 0; right: 0; bottom: 0; max-height: 82%; display: flex; flex-direction: column; background: var(--color-bg); border-top: 1px solid var(--color-divider); box-shadow: var(--shadow-lg); padding-bottom: max(env(safe-area-inset-bottom, 0px), 20px); z-index: 41; }
+.pf-sheet-head { display: flex; align-items: center; gap: 10px; padding: 14px 20px 10px; }
+.pf-sheet-title { flex: 1; font-family: var(--font-heading); font-weight: 600; font-size: 24px; }
+.pf-sheet-body { overflow: auto; padding: 0 20px 8px; }
+.pf-sheet-body::-webkit-scrollbar { display: none; }
+.pf-confirm { position: absolute; inset: 0; background: color-mix(in srgb, var(--color-neutral-900) 55%, transparent); z-index: 50; display: grid; place-items: center; padding: 24px; }
+
+/* settings */
+.pf-path { border: 1px solid var(--color-divider); padding: 10px 12px; font-size: 13px; word-break: break-all; background: var(--color-surface); text-align: left; width: 100%; color: inherit; cursor: pointer; box-sizing: border-box; }
+.pf-path.unset { color: var(--color-neutral-700); font-style: italic; }
+
+/* progress */
+.pf-bar { height: 4px; background: var(--color-neutral-300); margin: 2px 0 16px; }
+.pf-bar > div { height: 100%; background: var(--color-accent); transition: width .25s; }
+.pf-step { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; border-top: 1px solid var(--color-divider); padding: 11px 0; box-sizing: border-box; }
+.pf-step-icon { width: 20px; height: 20px; flex: none; display: grid; place-items: center; box-sizing: border-box; }
+.pf-step-icon.done { background: var(--color-accent); color: var(--color-bg); }
+.pf-step-icon.run { border: 1.5px solid var(--color-accent); }
+.pf-step-icon.run > span { width: 8px; height: 8px; background: var(--color-accent); animation: pf-pulse 1s ease-in-out infinite; }
+.pf-step-icon.wait, .pf-step-icon.skip { border: 1px solid var(--color-divider); }
+.pf-step-icon.warn { border: 1.5px solid var(--color-accent-700); color: var(--color-accent-700); font-weight: 700; font-size: 13px; }
+.pf-step-icon.error { background: #B42318; color: var(--color-bg); }
+@keyframes pf-pulse { 50% { opacity: .35; } }
+.pf-result { padding: 14px; margin: 16px 0 10px; background: var(--color-accent-100); }
+.pf-result.fail { background: color-mix(in srgb, #B42318 8%, var(--color-bg)); border-color: #B42318; }
+
+/* sign in */
+.pf-signin { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 32px 24px calc(env(safe-area-inset-bottom, 0px) + 32px); gap: 22px; }
+
+.pf-spinner { width: 18px; height: 18px; border: 2px solid var(--color-neutral-300); border-top-color: var(--color-accent); border-radius: 50%; animation: pf-spin .8s linear infinite; }
+@keyframes pf-spin { to { transform: rotate(360deg); } }
