@@ -115,7 +115,7 @@ def test_sortie_tab_has_browse_controls(qtbot) -> None:  # type: ignore[no-untyp
     tab = SortieDossierTab()
     qtbot.addWidget(tab)
 
-    assert tab.create_output_button.text() == "Creer dossier de sortie"
+    assert tab.create_output_button.text() == "Créer dossier de sortie"
     assert not tab.create_output_button.isEnabled()
     assert tab.photo_browse_button.text() == "Parcourir"
     assert tab.plan_browse_button.text() == "Parcourir"

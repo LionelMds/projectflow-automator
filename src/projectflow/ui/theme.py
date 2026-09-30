@@ -456,6 +456,10 @@ QLabel[role="tag-outline"] {{
 QWidget[role="tagbox"] {{ background: {t["accent-100"]}; }}
 QFrame[role="dot"] {{ background: {t["accent"]}; border: 0; }}
 QLabel[role="tag-text"] {{ color: {t["accent-800"]}; font-size: 11px; }}
+QLabel[role="step-cell"] {{
+  font-family: {heading}; font-weight: 600; font-size: 22px; color: {t["neutral-700"]};
+  border: 1px solid {divider};
+}}
 QLabel[role="initials"] {{
   background: {t["neutral-100"]}; color: {t["neutral-800"]}; font-size: 13px; font-weight: 500;
   padding: 5px 12px;

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QFont, QPainter, QPaintEvent, QPen, QResizeEvent
 from PySide6.QtWidgets import (
     QBoxLayout,
@@ -10,9 +10,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
+    QListView,
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
@@ -443,3 +447,114 @@ class ElidedLabel(QLabel):
     def _refresh_elided_text(self) -> None:
         width = max(40, self.width() - 4)
         super().setText(self.fontMetrics().elidedText(self._full_text, self._mode, width))
+
+
+META_ROLE = Qt.ItemDataRole.UserRole + 1
+"""Item data role holding the secondary text (size, date) of a file row."""
+
+
+class FileItemDelegate(QStyledItemDelegate):
+    """Paint file rows as the mockups do: name on the left, size and date on the right.
+
+    ``style`` is ``"card"`` (framed row, optional radio dot) or ``"rail"``
+    (accent bar on the left of the selected row). ``columns`` lays a wrapping
+    list out as a grid of equal cells.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        style: str = "card",
+        radio: bool = False,
+        columns: int = 1,
+    ) -> None:
+        super().__init__(parent)
+        self._style = style
+        self._radio = radio
+        self._columns = columns
+
+    def sizeHint(  # noqa: N802
+        self,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> QSize:
+        height = 40 if self._style == "card" else 34
+        width = super().sizeHint(option, index).width()
+        view = option.widget
+        if self._columns > 1 and isinstance(view, QListView):
+            spacing = view.spacing()
+            available = view.viewport().width() - spacing * 2 * self._columns - 4
+            width = max(120, available // self._columns)
+        return QSize(width, height)
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
+        theme = current_theme()
+        rect = QRectF(option.rect).adjusted(0.5, 0.5, -0.5, -0.5)
+        state = option.state
+        selected = bool(state & QStyle.StateFlag.State_Selected)
+        hovered = bool(state & QStyle.StateFlag.State_MouseOver)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if selected:
+            painter.fillRect(rect, theme.color("accent-100"))
+        elif hovered:
+            painter.fillRect(rect, theme.color("text", 0.04))
+        if self._style == "card":
+            pen = QPen(theme.color("accent") if selected else theme.color("text", 0.30))
+            painter.setPen(pen)
+            painter.drawRect(rect)
+        elif selected:
+            painter.fillRect(
+                QRectF(rect.left(), rect.top(), 2, rect.height()), theme.color("accent")
+            )
+        left = rect.left() + 10
+        if self._radio:
+            dot = QRectF(left, rect.center().y() - 7, 14, 14)
+            pen = QPen(theme.color("accent"))
+            pen.setWidthF(1.5)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(dot)
+            if selected:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(theme.color("accent"))
+                painter.drawEllipse(dot.adjusted(3.5, 3.5, -3.5, -3.5))
+            left = dot.right() + 10
+        meta = str(index.data(META_ROLE) or "")
+        name = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        right = rect.right() - 10
+        base_font = option.font
+        if meta:
+            meta_font = QFont(base_font)
+            meta_font.setPixelSize(12)
+            painter.setFont(meta_font)
+            painter.setPen(theme.color("neutral-800"))
+            meta_width = painter.fontMetrics().horizontalAdvance(meta)
+            if meta_width < (right - left) * 0.55:
+                painter.drawText(
+                    QRectF(right - meta_width, rect.top(), meta_width, rect.height()),
+                    int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight),
+                    meta,
+                )
+                right -= meta_width + 12
+        name_font = QFont(base_font)
+        name_font.setPixelSize(14)
+        painter.setFont(name_font)
+        painter.setPen(theme.color("text"))
+        elided = painter.fontMetrics().elidedText(
+            name,
+            Qt.TextElideMode.ElideRight,
+            max(10, int(right - left)),
+        )
+        painter.drawText(
+            QRectF(left, rect.top(), right - left, rect.height()),
+            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            elided,
+        )
+        painter.restore()
