@@ -121,3 +121,8 @@ button, input, select, textarea { font: inherit; }
 
 .pf-spinner { width: 18px; height: 18px; border: 2px solid var(--color-neutral-300); border-top-color: var(--color-accent); border-radius: 50%; animation: pf-spin .8s linear infinite; }
 @keyframes pf-spin { to { transform: rotate(360deg); } }
+
+/* iOS zoome sur tout champ en dessous de 16 px : on garde 14 px ailleurs, 16 px sur écran tactile iOS. */
+@supports (-webkit-touch-callout: none) {
+  .input, select.input, textarea.input { font-size: 16px; }
+}

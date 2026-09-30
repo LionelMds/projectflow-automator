@@ -73,6 +73,9 @@ Les paramètres sont conservés sur le téléphone.
 
 ## Publication
 
+**iPhone, sans App Store** : voir [DEPLOIEMENT-IOS.md](DEPLOIEMENT-IOS.md) (GitHub Pages,
+Entra ID, installation manuelle ou via Intune).
+
 Pousser un tag `mobile-vX.Y.Z` : le workflow `.github/workflows/mobile.yml` lance les tests,
 compile et joint `projectflow-mobile-mobile-vX.Y.Z.zip` à la release GitHub. Les variables de
 dépôt `PROJECTFLOW_MOBILE_CLIENT_ID` et `PROJECTFLOW_MOBILE_TENANT` remplacent les valeurs

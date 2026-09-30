@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { errorMessage } from '../core/text';
+import { InstallHint } from './InstallHint';
 import { Blueprint, DotsIcon, Icon, ICONS } from './kit';
 import { CreerScreen } from './screens/Creer';
 import { RepertoireScreen } from './screens/Repertoire';
@@ -42,6 +43,7 @@ export function App() {
             <div className="pf-company">Balz Métal SA</div>
           </div>
         </div>
+        {state !== 'loading' && <InstallHint />}
         {state === 'loading' ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }} className="pf-muted"><span className="pf-spinner" /> Connexion…</div>
         ) : (
