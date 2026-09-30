@@ -68,5 +68,5 @@ def test_planner_widget_accepts_options_after_background_load(qtbot: Any) -> Non
     )
 
     assert widget.bucket_combo.currentText() == "A faire"
-    assert widget.members_label.text() == "Utilisateur connecte"
+    assert widget.members_label.text() == "Utilisateur connecté"
     assert widget.members_button.isEnabled()

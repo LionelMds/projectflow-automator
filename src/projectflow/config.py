@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -174,6 +174,15 @@ class PrintingConfig(BaseModel):
     printer_name: str = ""
 
 
+class AppearanceConfig(BaseModel):
+    """Interface theme: light/dark mode and one of the neutral palettes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["light", "dark", "system"] = "light"
+    palette: Literal["acier", "graphite", "papier", "ardoise"] = "acier"
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -184,6 +193,7 @@ class AppConfig(BaseModel):
     planner: PlannerConfig = Field(default_factory=PlannerConfig)
     cad: CadConfig = Field(default_factory=CadConfig)
     printing: PrintingConfig = Field(default_factory=PrintingConfig)
+    appearance: AppearanceConfig = Field(default_factory=AppearanceConfig)
 
     @property
     def is_onboarded(self) -> bool:

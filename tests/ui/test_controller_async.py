@@ -299,7 +299,7 @@ async def test_double_creation_runs_one_mutation_and_restores_action_buttons(
         window.creation_tab.open_button,
     )
     assert all(not button.isEnabled() for button in buttons)
-    assert window.creation_tab.create_button.text() == "Operation en cours..."
+    assert window.creation_tab.create_button.text() == "Opération en cours…"
     fiche_calls: list[bool] = []
 
     def forbidden_fiche_access() -> FicheService:
@@ -318,7 +318,7 @@ async def test_double_creation_runs_one_mutation_and_restores_action_buttons(
     assert project.completed
     assert not project.cancelled
     assert all(button.isEnabled() for button in buttons)
-    assert window.creation_tab.create_button.text() == "Creer"
+    assert window.creation_tab.create_button.text() == "Créer"
     assert confirmations == ["Projet cree"]
 
 

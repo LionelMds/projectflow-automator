@@ -22,6 +22,7 @@ from projectflow.ui.controller import ProjectFlowController, ServiceProvider
 from projectflow.ui.dialogs.microsoft_sign_in import MicrosoftSignInPrompt
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.onboarding.wizard import OnboardingWizard
+from projectflow.ui.theme import apply_theme
 from projectflow.ui.tray import ProjectFlowTray
 
 
@@ -60,6 +61,7 @@ def run(argv: Sequence[str]) -> int:
         config = AppConfig.load()
         services = ServiceContainer(config)
         save_config = config.save
+    apply_theme(app, config.appearance)
 
     if not config.is_onboarded:
         wizard = OnboardingWizard(config)

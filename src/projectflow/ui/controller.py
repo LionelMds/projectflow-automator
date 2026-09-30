@@ -212,6 +212,7 @@ class ProjectFlowController:
             lambda: self._request_client_suggestions(tab),
         )
         self._window.settings_requested.connect(self.open_settings)
+        self._window.quick_create_requested.connect(self.show_quick_create)
         self._window.update_check_requested.connect(
             self.request_update_check,
         )
@@ -264,7 +265,11 @@ class ProjectFlowController:
         tab.reset_button.setEnabled(not busy)
         tab.load_button.setEnabled(not busy)
         tab.open_button.setEnabled(not busy)
-        tab.create_button.setText("Operation en cours..." if busy else "Creer")
+        tab.create_button.setText("Opération en cours…" if busy else "Créer")
+        if busy:
+            tab.show_operation_progress("Opération en cours")
+        else:
+            tab.clear_operation_progress()
 
     def show_quick_create(self, *, reset: bool = False) -> None:
         if self._quick_dialog is not None:
@@ -415,6 +420,9 @@ class ProjectFlowController:
     async def create_project(self) -> None:
         try:
             project = self._project_from_form()
+            self._window.creation_tab.show_operation_progress(
+                f"Création en cours — {project.number}",
+            )
             created = await self._create_project_for_input(project)
             if created is None:
                 return
@@ -422,6 +430,11 @@ class ProjectFlowController:
             self._error(str(exc))
             return
         result, existing_update = created
+        self._window.creation_tab.show_operation_success(
+            f"Projet {project.number} créé"
+            if result.project_dir_created
+            else f"Projet {project.number} prêt",
+        )
         self._window.creation_tab.reset_cad_options()
         self._save_config_if_available()
         self._log_creation_result(result, existing_update=existing_update)
@@ -1619,6 +1632,7 @@ class ProjectFlowController:
     def _error(self, message: str) -> None:
         message = redact_sensitive_links(message)
         self._window.creation_tab.append_log(f"! {message}")
+        self._window.creation_tab.show_operation_error(message)
         if not self._closing:
             QMessageBox.critical(self._window, "ProjectFlow", message)
 

@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -23,6 +22,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from projectflow.ui.widgets.industry import field
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +61,7 @@ class PlannerSelectionWidget(QGroupBox):
     options_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("Microsoft Planner", parent)
+        super().__init__("", parent)
         self._planner_available = False
         self._options_loaded = False
         self._options_loading = False
@@ -174,13 +175,12 @@ class PlannerSelectionWidget(QGroupBox):
         self._refresh_enabled_state()
 
     def _build_ui(self) -> None:
-        layout = QFormLayout(self)
-        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        layout.setHorizontalSpacing(14)
-        layout.setVerticalSpacing(8)
+        self.setFlat(True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
 
-        self.enabled_checkbox = QCheckBox("Creer une tache Planner")
+        self.enabled_checkbox = QCheckBox("Créer une tâche Planner")
         self.enabled_checkbox.toggled.connect(self._handle_enabled_toggled)
 
         self.bucket_combo = PlannerBucketComboBox()
@@ -190,7 +190,7 @@ class PlannerSelectionWidget(QGroupBox):
         self.load_options_button.setVisible(False)
         self.load_options_button.clicked.connect(self.options_requested.emit)
 
-        self.members_label = QLabel("Utilisateur connecte")
+        self.members_label = QLabel("Utilisateur connecté")
         self.members_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.members_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.members_button = QPushButton("Choisir")
@@ -202,11 +202,17 @@ class PlannerSelectionWidget(QGroupBox):
         self.due_days_spin.setRange(1, 365)
         self.due_days_spin.setSuffix(" jours")
         self.due_days_spin.setValue(self._default_due_days)
+        self.due_days_spin.setMinimumWidth(110)
 
-        layout.addRow("", self.enabled_checkbox)
-        layout.addRow("Colonne", self._bucket_row())
-        layout.addRow("Membres", self._members_row())
-        layout.addRow("Echeance", self._due_row())
+        layout.addWidget(self.enabled_checkbox)
+        self._details = QWidget()
+        details = QVBoxLayout(self._details)
+        details.setContentsMargins(0, 0, 0, 0)
+        details.setSpacing(10)
+        details.addWidget(field("Colonne", self._bucket_row()))
+        details.addWidget(field("Membres", self._members_row()))
+        details.addWidget(field("Échéance", self._due_row()))
+        layout.addWidget(self._details)
 
     def _bucket_row(self) -> QWidget:
         widget = QWidget()
@@ -232,7 +238,8 @@ class PlannerSelectionWidget(QGroupBox):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         layout.addWidget(self.due_checkbox)
-        layout.addWidget(self.due_days_spin, 1)
+        layout.addWidget(self.due_days_spin)
+        layout.addStretch(1)
         return widget
 
     def _seed_default_bucket(self) -> None:
@@ -319,14 +326,14 @@ class PlannerSelectionWidget(QGroupBox):
             self.members_label.setText("Chargement Planner...")
             return
         if not self._selected_member_ids:
-            self.members_label.setText("Utilisateur connecte")
+            self.members_label.setText("Utilisateur connecté")
             return
         labels = [
             self._members[member_id].label
             for member_id in self._selected_member_ids
             if member_id in self._members
         ]
-        self.members_label.setText(", ".join(labels) if labels else "Membres selectionnes")
+        self.members_label.setText(", ".join(labels) if labels else "Membres sélectionnés")
 
     def _refresh_enabled_state(self) -> None:
         active = self._planner_available and self.enabled_checkbox.isChecked()
@@ -335,6 +342,8 @@ class PlannerSelectionWidget(QGroupBox):
         self.members_label.setEnabled(active)
         self.due_checkbox.setEnabled(active)
         self.due_days_spin.setEnabled(active and self.due_checkbox.isChecked())
+        # The mockups dim the whole detail block while the task is not requested.
+        self._details.setEnabled(self._planner_available)
 
 
 def _selected_combo_id(combo: QComboBox) -> str:
