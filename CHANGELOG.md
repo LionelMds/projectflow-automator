@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Nouvelle interface au style Industry (maquettes ProjectFlow, variante A) : en-tete avec
+  logo, onglets Creation / Sortie / Repertoire, etiquette du repertoire, bouton
+  « Projet rapide » et menu Parametres / mise a jour / a propos (plus de barre de menus).
+- Creation projet en sections numerotees 01-04, colonne Chemins et Journal horodate,
+  titre du projet en cours et bandeau de progression / succes / erreur.
+- Sortie dossier avec etat vide, listes nom + taille + date et apercu photo encadre.
+- Repertoire chantier : tableau epure, etiquette « Disponible », compteur de cellules
+  modifiees avec Annuler ; « Enregistrer la ligne » n'est actif qu'apres une modification.
+- Parametres en navigation laterale avec nouvelle section Apparence : mode Clair, Sombre
+  ou Systeme et quatre palettes de neutres (Acier, Graphite, Papier, Ardoise), apercu
+  immediat.
+- Nouveau projet rapide et assistant de premier lancement redessines ; l'assistant
+  ajoute une etape de verification des chemins.
+- Polices Barlow / Barlow Condensed embarquees (licence OFL).
+
 ## 0.1.58
 
 - Ne recree plus le dossier Outlook d'un projet archive. Avant de creer le dossier d'un

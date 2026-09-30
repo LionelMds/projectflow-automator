@@ -471,6 +471,41 @@ QLabel[tone="error"] {{ color: {t["err-ink"]}; }}
 QLabel[tone="danger"] {{ color: {t["err"]}; }}
 QLabel a {{ color: {t["accent-700"]}; }}
 
+/* first-run assistant */
+QWidget[role="onb-aside"] {{ background: {t["accent-900"]}; }}
+QWidget[role="onb-aside"] QFrame[role="rule"] {{ background: {theme.rgba("bg", 0.22)}; }}
+QWidget[role="onb-logo"] {{ background: {t["bg"]}; }}
+QLabel[role="onb-brand"] {{
+  font-family: {heading}; font-weight: 600; font-size: 24px; color: {t["bg"]};
+}}
+QPushButton[variant="onb-step"] {{
+  background: transparent; border: 0; padding: 0; text-align: left; min-height: 78px;
+}}
+QPushButton[variant="onb-step"]:hover {{ background: {theme.rgba("bg", 0.05)}; }}
+QLabel[role="onb-num"] {{
+  font-family: {heading}; font-weight: 600; font-size: 32px; color: {t["bg"]};
+}}
+QLabel[role="onb-title"] {{
+  font-family: {heading}; font-weight: 600; font-size: 19px; color: {t["bg"]};
+}}
+QLabel[role="onb-detail"] {{ font-size: 13px; color: {t["accent-300"]}; }}
+QLabel[role="onb-num"][state="done"], QLabel[role="onb-title"][state="done"] {{
+  color: {theme.rgba("bg", 0.75)};
+}}
+QLabel[role="onb-num"][state="todo"], QLabel[role="onb-title"][state="todo"],
+QLabel[role="onb-detail"][state="todo"] {{ color: {theme.rgba("bg", 0.45)}; }}
+QLabel[role="display"] {{ font-family: {heading}; font-weight: 600; font-size: 38px; }}
+QLabel[role="num-xl"] {{
+  font-family: {heading}; font-weight: 600; font-size: 28px; color: {t["accent-800"]};
+}}
+QLabel[role="field-lg"] {{ font-size: 14px; font-weight: 500; }}
+QLabel[role="check-title"] {{ font-size: 15px; }}
+QWidget[role="cell"] {{ border: 1px solid {divider}; margin-right: -1px; }}
+QWidget[role="notice"] {{ background: {t["accent-100"]}; border: 1px solid {t["accent-300"]}; }}
+QWidget[role="check-box"] {{ border: 1px solid {t["accent"]}; }}
+QWidget[role="check-box-warn"] {{ border: 1px solid {t["err"]}; }}
+QPushButton[size="lg"] {{ font-size: 16px; min-height: 30px; padding: 7px 26px; }}
+
 /* rules */
 QFrame[role="rule"] {{ background: {divider}; border: 0; min-height: 1px; max-height: 1px; }}
 QFrame[role="vrule"] {{ background: {divider}; border: 0; min-width: 1px; max-width: 1px; }}
