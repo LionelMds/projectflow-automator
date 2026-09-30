@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#5980a6"/>
+  <g stroke="#f2f2f3" stroke-opacity=".55" stroke-width="6" fill="none">
+    <path d="M96 64v64M64 96h64M416 64v64M384 96h64M96 384v64M64 416h64M416 384v64M384 416h64"/>
+  </g>
+  <text x="256" y="318" text-anchor="middle" font-family="'Barlow Condensed','Arial Narrow',Arial,sans-serif" font-weight="700" font-size="200" letter-spacing="4" fill="#f2f2f3">PF</text>
+</svg>
