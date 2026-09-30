@@ -7,6 +7,9 @@ on:
     tags: ["mobile-v*"]
   pull_request:
     paths: ["mobile/**", ".github/workflows/mobile.yml"]
+  # Release créée depuis l'interface GitHub avec un tag mobile-vX.Y.Z : le zip y est joint.
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -14,6 +17,7 @@ permissions:
 jobs:
   build:
     name: Tests et build PWA
+    if: github.event_name != 'release' || startsWith(github.ref_name, 'mobile-v')
     runs-on: ubuntu-latest
     defaults:
       run:
