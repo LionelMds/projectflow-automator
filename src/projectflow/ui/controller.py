@@ -56,6 +56,7 @@ from projectflow.ui.dialogs.quick_confirmation import QuickCreationConfirmationD
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow
+from projectflow.ui.theme import apply_theme
 from projectflow.ui.widgets.planner import (
     PlannerBucketOption,
     PlannerMemberOption,
@@ -1193,6 +1194,9 @@ class ProjectFlowController:
         previous_repertoire = self._config.paths.repertoire_chantier.model_copy(deep=True)
         previous_planner = self._config.planner.model_copy(deep=True)
         dialog.apply_to_config(self._config)
+        app = QApplication.instance()
+        if isinstance(app, QApplication) and app.styleSheet():
+            apply_theme(app, self._config.appearance)
         current_repertoire = self._config.paths.repertoire_chantier
         # Opening a different local copy or changing initials does not require
         # reconnecting the cloud workbook or throwing away its client directory.

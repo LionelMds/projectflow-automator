@@ -544,6 +544,10 @@ QPushButton[variant="seg"] {{
 QPushButton[variant="seg"]:checked {{
   background: {t["accent"]}; color: {t["bg"]}; border-color: {t["accent"]};
 }}
+QPushButton[variant="swatch"] {{
+  min-width: 132px; max-width: 132px; min-height: 78px; max-height: 78px;
+  padding: 0; border: 0; background: transparent;
+}}
 QToolButton::menu-button {{ border: 0; border-left: 1px solid {divider}; width: 22px; }}
 QToolButton::menu-arrow, QToolButton::menu-indicator {{
   image: url({assets}/chevron-down.svg); width: 12px; height: 12px;

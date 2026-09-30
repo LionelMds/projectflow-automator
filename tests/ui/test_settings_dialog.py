@@ -600,7 +600,7 @@ async def test_unexpected_planner_failure_is_consumed_and_controls_restored(
     assert dialog.planner_refresh_button.isEnabled()
     assert dialog.planner_bucket_refresh_button.isEnabled()
     assert dialog.planner_test_button.isEnabled()
-    assert dialog.planner_refresh_button.text() == "Detecter"
+    assert dialog.planner_refresh_button.text() == "Détecter"
 
 
 @pytest.mark.asyncio

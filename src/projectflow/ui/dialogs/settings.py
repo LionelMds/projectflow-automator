@@ -9,12 +9,15 @@ from pathlib import Path
 from typing import Protocol
 
 from pydantic import ValidationError
-from PySide6.QtCore import QSignalBlocker
+from PySide6.QtCore import QRectF, QSignalBlocker, Qt
+from PySide6.QtGui import QFont, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -24,23 +27,49 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.cad.license_storage import SolidWorksLicenseStorage
 from projectflow.cad.solidworks_app import SolidWorksReferenceReplacer
 from projectflow.cad.templates import check_document_manager
-from projectflow.config import AppConfig, CadConfig, CadPropertyNames, RepertoireChantierConfig
+from projectflow.config import (
+    AppConfig,
+    AppearanceConfig,
+    CadConfig,
+    CadPropertyNames,
+    RepertoireChantierConfig,
+)
 from projectflow.exceptions import ProjectFlowError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
 from projectflow.logging import redact_sensitive_links
 from projectflow.outlook.local import detect_local_outlook_accounts, validate_local_outlook_account
 from projectflow.platform.paths import native_path_text
+from projectflow.ui.theme import (
+    HEADING_FAMILY,
+    MODES,
+    PALETTES,
+    apply_theme,
+    build_theme,
+    current_theme,
+)
+from projectflow.ui.widgets.industry import (
+    BlueprintFrame,
+    PrimaryButton,
+    button,
+    field,
+    label,
+    paint_corner_marks,
+    rule,
+)
 
 
 class LicenseKeyStorage(Protocol):
@@ -63,7 +92,7 @@ class SettingsDialog(QDialog):
         license_storage: LicenseKeyStorage | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Parametres")
+        self.setWindowTitle("Paramètres")
         self._license_storage = license_storage or SolidWorksLicenseStorage()
         self._license_clear_requested = False
         self._reconnect_repertoire = False
@@ -105,6 +134,7 @@ class SettingsDialog(QDialog):
         config.planner.bucket_name = self.planner_bucket_combo.currentText().strip()
         config.planner.due_days = self.planner_due_days_spin.value()
         config.cad = self._cad_config()
+        config.appearance = self.selected_appearance()
 
     def accept(self) -> None:
         if "://" in self.repertoire_open_path_edit.text():
@@ -193,39 +223,235 @@ class SettingsDialog(QDialog):
         )
 
     def _build_ui(self, config: AppConfig) -> None:
+        self.setMinimumSize(900, 600)
+        self.resize(1080, 760)
+        self._initial_appearance = config.appearance.model_copy()
         root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        body = QHBoxLayout()
+        body.setSpacing(0)
+
         user_group = QGroupBox("Utilisateur")
         user_layout = QFormLayout(user_group)
         self.user_initials_edit = QLineEdit(config.user.initials)
+        self.user_initials_edit.setMaximumWidth(240)
         user_layout.addRow("Initiales utilisateur", self.user_initials_edit)
-        root.addWidget(user_group)
-        root.addWidget(self._paths_group(config))
-        root.addWidget(self._outlook_group(config))
-        root.addWidget(self._planner_group(config))
-        root.addWidget(self._cad_group(config))
-        root.addWidget(self._microsoft_group())
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+        user_layout.addRow(
+            "",
+            label(
+                "Inscrites en C9 de chaque fiche. Le responsable saisi dans « Géré par » "
+                "reste en C6.",
+                "muted",
+                wrap=True,
+            ),
         )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
+        sections = [
+            ("user", "Utilisateur", user_group),
+            ("paths", "Chemins", self._paths_group(config)),
+            ("outlook", "Outlook", self._outlook_group(config)),
+            ("planner", "Microsoft Planner", self._planner_group(config)),
+            ("cad", "Modèles CAO", self._cad_group(config)),
+            ("ms", "Compte Microsoft", self._microsoft_group()),
+            ("appearance", "Apparence", self._appearance_group(config)),
+        ]
+
+        nav = QWidget()
+        nav.setFixedWidth(230)
+        nav_layout = QVBoxLayout(nav)
+        nav_layout.setContentsMargins(0, 22, 0, 22)
+        nav_layout.setSpacing(0)
+        heading = QVBoxLayout()
+        heading.setContentsMargins(22, 0, 22, 14)
+        heading.setSpacing(2)
+        heading.addWidget(label("Configuration", "kicker"))
+        heading.addWidget(label("Paramètres", "h3"))
+        nav_layout.addLayout(heading)
+        self.pages = QStackedWidget()
+        self._section_buttons = QButtonGroup(self)
+        self._section_buttons.setExclusive(True)
+        self._section_meta: dict[str, QLabel] = {}
+        for index, (key, title, group) in enumerate(sections):
+            self.pages.addWidget(_settings_page(title, group))
+            nav_button = button("", "side")
+            nav_button.setCheckable(True)
+            nav_button.setChecked(index == 0)
+            row = QHBoxLayout(nav_button)
+            row.setContentsMargins(19, 0, 16, 0)
+            row.addWidget(QLabel(title))
+            row.addStretch(1)
+            meta = label("", "small")
+            row.addWidget(meta)
+            self._section_meta[key] = meta
+            nav_button.setMinimumHeight(40)
+            self._section_buttons.addButton(nav_button, index)
+            nav_layout.addWidget(nav_button)
+        self._section_buttons.idClicked.connect(self.pages.setCurrentIndex)
+        nav_layout.addStretch(1)
+        version = label(f"ProjectFlow {__version__}", "small")
+        version.setContentsMargins(22, 0, 22, 0)
+        nav_layout.addWidget(version)
+        body.addWidget(nav)
+        body.addWidget(rule(vertical=True))
+        body.addWidget(self.pages, 1)
+        root.addLayout(body, 1)
+        root.addWidget(rule())
+
+        footer = QHBoxLayout()
+        footer.setContentsMargins(26, 6, 20, 6)
+        footer.setSpacing(8)
+        footer.addStretch(1)
+        cancel_button = button("Annuler")
+        cancel_button.clicked.connect(self.reject)
+        save_button = PrimaryButton("Enregistrer")
+        save_button.setDefault(True)
+        save_button.clicked.connect(self.accept)
+        footer.addWidget(cancel_button)
+        footer.addWidget(save_button)
+        root.addLayout(footer)
+
+        self.user_initials_edit.textChanged.connect(self._refresh_section_meta)
+        self.outlook_enabled_checkbox.toggled.connect(self._refresh_section_meta)
+        self.planner_enabled_checkbox.toggled.connect(self._refresh_section_meta)
+        self._refresh_section_meta()
+
+    def show_section(self, key: str) -> None:
+        keys = ["user", "paths", "outlook", "planner", "cad", "ms", "appearance"]
+        if key in keys:
+            index = keys.index(key)
+            self.pages.setCurrentIndex(index)
+            section_button = self._section_buttons.button(index)
+            if section_button is not None:
+                section_button.setChecked(True)
+
+    def _refresh_section_meta(self) -> None:
+        self._section_meta["user"].setText(self.user_initials_edit.text().strip().upper())
+        self._section_meta["outlook"].setText(
+            "Actif" if self.outlook_enabled_checkbox.isChecked() else "Inactif",
+        )
+        self._section_meta["planner"].setText(
+            "Actif" if self.planner_enabled_checkbox.isChecked() else "Inactif",
+        )
+        self._section_meta["appearance"].setText(
+            f"{MODES[self._appearance_mode]} · {PALETTES[self._appearance_palette][0]}",
+        )
+
+    def _appearance_group(self, config: AppConfig) -> QGroupBox:
+        group = QGroupBox("Apparence")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(18)
+        self._appearance_mode = config.appearance.mode
+        self._appearance_palette = config.appearance.palette
+
+        self.appearance_mode_buttons = QButtonGroup(self)
+        self.appearance_mode_buttons.setExclusive(True)
+        modes = QHBoxLayout()
+        modes.setSpacing(-1)
+        for key, text in MODES.items():
+            mode_button = button(text, "seg")
+            mode_button.setCheckable(True)
+            mode_button.setChecked(key == self._appearance_mode)
+            mode_button.setProperty("appearance_key", key)
+            self.appearance_mode_buttons.addButton(mode_button)
+            modes.addWidget(mode_button)
+        modes.addStretch(1)
+        self.appearance_mode_buttons.buttonClicked.connect(self._appearance_mode_clicked)
+        layout.addWidget(
+            field(
+                "Mode",
+                modes,
+                help_text="« Système » suit le réglage clair / sombre de Windows ou macOS.",
+            ),
+        )
+
+        self.appearance_palette_buttons = QButtonGroup(self)
+        self.appearance_palette_buttons.setExclusive(True)
+        palettes = QHBoxLayout()
+        palettes.setSpacing(10)
+        for key in PALETTES:
+            swatch = PaletteSwatch(key)
+            swatch.setChecked(key == self._appearance_palette)
+            self.appearance_palette_buttons.addButton(swatch)
+            palettes.addWidget(swatch)
+        palettes.addStretch(1)
+        self.appearance_palette_buttons.buttonClicked.connect(self._appearance_palette_clicked)
+        layout.addWidget(
+            field(
+                "Palette de neutres",
+                palettes,
+                help_text="Teinte des fonds, bordures et textes secondaires. "
+                "L'accent acier reste identique.",
+            ),
+        )
+        layout.addWidget(
+            label(
+                "L'aperçu s'applique immédiatement ; Annuler rétablit l'apparence précédente.",
+                "muted",
+            ),
+        )
+        return group
+
+    def _appearance_mode_clicked(self, clicked: QAbstractButton) -> None:
+        key = str(clicked.property("appearance_key"))
+        if key in MODES:
+            self._appearance_mode = key  # type: ignore[assignment]
+            self._preview_appearance()
+
+    def _appearance_palette_clicked(self, clicked: QAbstractButton) -> None:
+        if isinstance(clicked, PaletteSwatch):
+            self._appearance_palette = clicked.palette_key  # type: ignore[assignment]
+            self._preview_appearance()
+
+    def selected_appearance(self) -> AppearanceConfig:
+        return AppearanceConfig(mode=self._appearance_mode, palette=self._appearance_palette)
+
+    def _preview_appearance(self) -> None:
+        self._refresh_section_meta()
+        app = QApplication.instance()
+        if isinstance(app, QApplication) and app.styleSheet():
+            apply_theme(app, self.selected_appearance())
+
+    def reject(self) -> None:
+        app = QApplication.instance()
+        if (
+            isinstance(app, QApplication)
+            and app.styleSheet()
+            and self.selected_appearance() != self._initial_appearance
+        ):
+            apply_theme(app, self._initial_appearance)
+        super().reject()
 
     def _paths_group(self, config: AppConfig) -> QGroupBox:
         group = QGroupBox("Chemins")
-        layout = QFormLayout(group)
+        layout = QVBoxLayout(group)
+        layout.setSpacing(16)
         self.racine_edit = QLineEdit(native_path_text(config.paths.racine_projets))
         self.reference_edit = QLineEdit(native_path_text(config.paths.dossier_reference))
         self.repertoire_path_edit = QLineEdit(
             native_path_text(config.paths.repertoire_chantier.display_path),
         )
         self.repertoire_path_edit.setPlaceholderText("Chemin Excel ou lien OneDrive / SharePoint")
-        layout.addRow("Racine projets", _browse_row(self.racine_edit, directory=True))
-        layout.addRow("Dossier de reference", _browse_row(self.reference_edit, directory=True))
-        layout.addRow(
-            "Repertoire chantier",
-            _browse_row(self.repertoire_path_edit, directory=False),
+        layout.addWidget(
+            field(
+                "Racine projets",
+                _browse_row(self.racine_edit, directory=True),
+                help_text="Les dossiers projet sont créés sous Racine\\Année.",
+            ),
+        )
+        layout.addWidget(
+            field(
+                "Dossier de référence",
+                _browse_row(self.reference_edit, directory=True),
+                help_text="Copié sans rien écraser à chaque création.",
+            ),
+        )
+        layout.addWidget(
+            field(
+                "Répertoire chantier",
+                _browse_row(self.repertoire_path_edit, directory=False),
+                help_text="Chemin Excel ou lien OneDrive / SharePoint — "
+                "utilisé pour les écritures.",
+            ),
         )
         self.repertoire_open_path_edit = QLineEdit(
             native_path_text(config.paths.repertoire_chantier.open_path),
@@ -235,11 +461,15 @@ class SettingsDialog(QDialog):
             "Fichier synchronise a ouvrir dans Excel. "
             "Le repertoire chantier ci-dessus reste utilise pour les modifications partagees.",
         )
-        layout.addRow(
-            "Fichier synchronise pour ouverture Excel",
-            _browse_row(self.repertoire_open_path_edit, directory=False),
+        layout.addWidget(
+            field(
+                "Fichier synchronisé pour ouverture Excel",
+                _browse_row(self.repertoire_open_path_edit, directory=False),
+                help_text="Ouvert par « Ouvrir répertoire » ; les modifications passent par "
+                "le lien cloud.",
+            ),
         )
-        self.repertoire_cloud_checkbox = QCheckBox("Repertoire partage OneDrive / SharePoint")
+        self.repertoire_cloud_checkbox = QCheckBox("Répertoire partagé OneDrive / SharePoint")
         self.repertoire_cloud_checkbox.setChecked(
             config.paths.repertoire_chantier.cloud_only
             or config.paths.repertoire_chantier.is_configured,
@@ -248,10 +478,17 @@ class SettingsDialog(QDialog):
             "Impose la connexion cloud meme si le dossier synchronise n'est pas reconnu. "
             "Les dossiers OneDrive et SharePoint detectes utilisent toujours le cloud.",
         )
-        layout.addRow("", self.repertoire_cloud_checkbox)
-        self.repertoire_reconnect_button = QPushButton("Reconnecter a OneDrive / SharePoint")
+        self.repertoire_reconnect_button = button("Reconnecter")
+        self.repertoire_reconnect_button.setToolTip("Reconnecter à OneDrive / SharePoint")
         self.repertoire_reconnect_button.clicked.connect(self._request_repertoire_reconnection)
-        layout.addRow("", self.repertoire_reconnect_button)
+        cloud_tag = label("Écriture cloud active", "tag-accent")
+        self.repertoire_cloud_checkbox.toggled.connect(cloud_tag.setVisible)
+        cloud_tag.setVisible(self.repertoire_cloud_checkbox.isChecked())
+        cloud = BlueprintFrame(padding=(16, 12, 16, 12), layout="h", spacing=14)
+        cloud.box.addWidget(self.repertoire_cloud_checkbox, 1)
+        cloud.box.addWidget(cloud_tag)
+        cloud.box.addWidget(self.repertoire_reconnect_button)
+        layout.addWidget(cloud)
         return group
 
     def _cad_group(self, config: AppConfig) -> QGroupBox:
@@ -268,7 +505,7 @@ class SettingsDialog(QDialog):
         self.solidworks_license_edit.setPlaceholderText(
             "Cle enregistree - laisser vide pour la conserver" if has_key else "Aucune cle",
         )
-        self.solidworks_license_clear_button = QPushButton("Effacer la cle")
+        self.solidworks_license_clear_button = QPushButton("Effacer la clé")
         self.solidworks_license_clear_button.setEnabled(has_key)
         self.solidworks_license_clear_button.clicked.connect(self._request_license_clear)
         license_row = QWidget()
@@ -283,37 +520,37 @@ class SettingsDialog(QDialog):
         license_layout.addWidget(self.solidworks_license_test_button)
         license_layout.addWidget(self.solidworks_license_clear_button)
         layout.addRow(
-            "Dossier modele SolidWorks",
+            "Dossier modèle SolidWorks",
             _browse_row(self.cad_solidworks_edit, directory=True),
         )
-        layout.addRow("Dossier modele AutoCAD", _browse_row(self.cad_autocad_edit, directory=True))
+        layout.addRow("Dossier modèle AutoCAD", _browse_row(self.cad_autocad_edit, directory=True))
         layout.addRow("Sous-dossier dans le projet", self.cad_subfolder_edit)
-        layout.addRow("Cle Document Manager", license_row)
+        layout.addRow("Clé Document Manager", license_row)
 
         self.cad_property_edits: dict[str, QLineEdit] = {}
         properties = QWidget()
         properties_layout = QGridLayout(properties)
         properties_layout.setContentsMargins(0, 0, 0, 0)
-        for index, (field, label) in enumerate(
+        for index, (property_field, caption) in enumerate(
             [
                 ("projet", "Projet"),
                 ("client", "Client"),
                 ("auteur", "Auteur"),
                 ("description", "Description"),
-                ("revision", "Revision"),
-                ("revision_defaut", "Rev. par defaut"),
+                ("revision", "Révision"),
+                ("revision_defaut", "Rév. par défaut"),
             ]
         ):
-            edit = QLineEdit(getattr(config.cad.properties, field))
-            edit.setToolTip(f"Nom exact de la propriete SolidWorks ({label}), accents compris.")
-            self.cad_property_edits[field] = edit
+            edit = QLineEdit(getattr(config.cad.properties, property_field))
+            edit.setToolTip(f"Nom exact de la propriete SolidWorks ({caption}), accents compris.")
+            self.cad_property_edits[property_field] = edit
             edit.setMinimumWidth(edit.fontMetrics().horizontalAdvance("M" * 10) + 12)
             row, column = divmod(index, 2)
-            properties_layout.addWidget(QLabel(label), row, column * 2)
+            properties_layout.addWidget(QLabel(caption), row, column * 2)
             properties_layout.addWidget(edit, row, column * 2 + 1)
         properties_layout.setColumnStretch(1, 1)
         properties_layout.setColumnStretch(3, 1)
-        layout.addRow("Proprietes", properties)
+        layout.addRow("Propriétés SolidWorks", properties)
         return group
 
     def _test_document_manager(self) -> None:
@@ -390,7 +627,7 @@ class SettingsDialog(QDialog):
     def _planner_group(self, config: AppConfig) -> QGroupBox:
         group = QGroupBox("Microsoft Planner")
         layout = QFormLayout(group)
-        self.planner_enabled_checkbox = QCheckBox("Creer une tache Planner")
+        self.planner_enabled_checkbox = QCheckBox("Créer une tâche Planner")
         self.planner_enabled_checkbox.setChecked(config.planner.enabled)
         self.planner_plan_combo = QComboBox()
         self.planner_plan_combo.setEditable(True)
@@ -418,14 +655,14 @@ class SettingsDialog(QDialog):
         layout.addRow("", self.planner_enabled_checkbox)
         layout.addRow("Plan", self._planner_plan_row())
         layout.addRow("Colonne", self._planner_bucket_row())
-        layout.addRow("Echeance", self.planner_due_days_spin)
+        layout.addRow("Échéance par défaut", self.planner_due_days_spin)
         return group
 
     def _planner_plan_row(self) -> QWidget:
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.planner_refresh_button = QPushButton("Detecter")
+        self.planner_refresh_button = QPushButton("Détecter")
         self.planner_refresh_button.clicked.connect(
             lambda: self._start_planner_action(
                 self._load_planner_plans, self.planner_refresh_button
@@ -446,7 +683,7 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.planner_bucket_refresh_button = QPushButton("Detecter colonnes")
+        self.planner_bucket_refresh_button = QPushButton("Détecter colonnes")
         self.planner_bucket_refresh_button.clicked.connect(
             lambda: self._start_planner_action(
                 self._load_planner_buckets,
@@ -536,7 +773,7 @@ class SettingsDialog(QDialog):
             self.outlook_account_combo.setCurrentIndex(0)
         self.outlook_base_folder_combo = QComboBox()
         self.outlook_base_folder_combo.addItem("Racine du compte", "root")
-        self.outlook_base_folder_combo.addItem("Boite de reception", "inbox")
+        self.outlook_base_folder_combo.addItem("Boîte de réception", "inbox")
         base_index = self.outlook_base_folder_combo.findData(config.outlook.target_base_folder)
         self.outlook_base_folder_combo.setCurrentIndex(max(0, base_index))
         layout.addRow("", self.outlook_enabled_checkbox)
@@ -548,7 +785,7 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.outlook_refresh_button = QPushButton("Detecter")
+        self.outlook_refresh_button = QPushButton("Détecter")
         self.outlook_refresh_button.clicked.connect(self._load_outlook_accounts)
         self.outlook_test_button = QPushButton("Tester")
         self.outlook_test_button.clicked.connect(self._test_outlook_account)
@@ -790,3 +1027,85 @@ def _planner_client() -> GraphPlannerClient:
     return GraphPlannerClient(
         graph=GraphClient(token_provider=token_provider, request_timeout=60.0)
     )
+
+
+class PaletteSwatch(QPushButton):
+    """Checkable card previewing one neutral palette in the current mode."""
+
+    def __init__(self, palette_key: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.palette_key = palette_key
+        self.setCheckable(True)
+        self.setProperty("variant", "swatch")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(132, 78)
+        self.setToolTip(PALETTES[palette_key][0])
+
+    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802
+        theme = current_theme()
+        preview = build_theme(theme.mode, self.palette_key)
+        painter = QPainter(self)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.fillRect(rect, preview.color("bg"))
+        band = QRectF(rect.left() + 10, rect.top() + 10, rect.width() - 20, 22)
+        painter.fillRect(band, preview.color("surface"))
+        for step, offset in (("neutral-400", 0), ("neutral-600", 18), ("neutral-800", 36)):
+            painter.fillRect(
+                QRectF(band.left() + 6 + offset, band.top() + 6, 12, 10), preview.color(step)
+            )
+        painter.fillRect(QRectF(band.right() - 26, band.top() + 6, 20, 10), preview.color("accent"))
+        font = QFont(HEADING_FAMILY)
+        font.setPixelSize(15)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(preview.color("text"))
+        painter.drawText(
+            QRectF(rect.left() + 10, band.bottom() + 4, rect.width() - 20, 30),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            PALETTES[self.palette_key][0],
+        )
+        checked = self.isChecked()
+        pen = QPen(theme.color("accent") if checked else theme.color("text", 0.30))
+        pen.setWidthF(2.0 if checked else 1.0)
+        painter.setPen(pen)
+        painter.drawRect(rect.adjusted(0.5, 0.5, -0.5, -0.5) if checked else rect)
+        if checked:
+            paint_corner_marks(painter, rect.adjusted(5, 5, -5, -5))
+        painter.end()
+
+
+def _settings_page(title: str, group: QGroupBox) -> QScrollArea:
+    """Lay a settings group out as a page: heading, then captions stacked over fields."""
+    group.setTitle("")
+    group.setFlat(True)
+    form = group.layout()
+    if isinstance(form, QFormLayout):
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setVerticalSpacing(8)
+        for row in range(form.rowCount()):
+            item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+            caption = item.widget() if item is not None else None
+            if isinstance(caption, QLabel):
+                if caption.text():
+                    caption.setProperty("role", "field")
+                else:
+                    caption.hide()
+    else:
+        layout = group.layout()
+        if layout is not None:
+            layout.setContentsMargins(0, 0, 0, 0)
+    content = QWidget()
+    content.setMaximumWidth(820)
+    column = QVBoxLayout(content)
+    column.setContentsMargins(34, 26, 34, 26)
+    column.setSpacing(18)
+    column.addWidget(label(title, "h3"))
+    column.addWidget(group)
+    column.addStretch(1)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+    scroll.setWidget(content)
+    return scroll
