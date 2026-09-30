@@ -7,19 +7,22 @@ from PySide6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
     QPersistentModelIndex,
+    QRectF,
     QRegularExpression,
     QSortFilterProxyModel,
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QComboBox,
+    QFrame,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
-    QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -30,8 +33,12 @@ from projectflow.core.repertoire_service import (
     RepertoireRow,
     RepertoireSnapshot,
 )
+from projectflow.ui.theme import current_theme, icon, theme_notifier
+from projectflow.ui.widgets.industry import PrimaryButton, button, field, label
 
-HEADERS = ("No.", "Date", "Client", "Contact", "Designation")
+HEADERS = ("No.", "Date", "Client", "Contact", "Désignation")
+COLUMN_WIDTHS = (150, 112, 210, 190)
+NEXT_AVAILABLE_ROLE = Qt.ItemDataRole.UserRole + 1
 _EMPTY_INDEX = QModelIndex()
 
 
@@ -64,7 +71,7 @@ class RepertoireTableModel(QAbstractTableModel):
     ) -> object:
         if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
             return None
-        return HEADERS[section] if 0 <= section < len(HEADERS) else None
+        return HEADERS[section].upper() if 0 <= section < len(HEADERS) else None
 
     def data(
         self,
@@ -78,12 +85,19 @@ class RepertoireTableModel(QAbstractTableModel):
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return _display_value(value)
         if role == Qt.ItemDataRole.BackgroundRole:
-            if (row.row_index, index.column()) in self._dirty_cells:
-                return QColor("#C6EFCE")
-            if row.row_index == self._next_row_index:
-                return QColor("#FFF2CC")
+            return self._background(row.row_index, index.column())
+        if role == NEXT_AVAILABLE_ROLE:
+            return row.row_index == self._next_row_index
         if role == Qt.ItemDataRole.ToolTipRole:
             return f"Ligne Excel {row.row_index + 1}"
+        return None
+
+    def _background(self, row_index: int, column: int) -> QColor | None:
+        theme = current_theme()
+        if (row_index, column) in self._dirty_cells:
+            return theme.color("accent-200")
+        if row_index == self._next_row_index:
+            return theme.color("accent-100", 0.7)
         return None
 
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
@@ -128,6 +142,23 @@ class RepertoireTableModel(QAbstractTableModel):
             snapshot.next_available.row_index if snapshot.next_available is not None else None
         )
         self._next_available = snapshot.next_available
+        self.endResetModel()
+
+    def dirty_cell_count(self) -> int:
+        return len(self._dirty_cells)
+
+    def dirty_row_indexes(self) -> tuple[int, ...]:
+        return tuple(sorted({row_index for row_index, _column in self._dirty_cells}))
+
+    def discard_changes(self) -> None:
+        if not self._dirty_cells:
+            return
+        self.beginResetModel()
+        self._rows = [
+            RepertoireRow(row_index=row.row_index, values=self._original[row.row_index])
+            for row in self._rows
+        ]
+        self._dirty_cells.clear()
         self.endResetModel()
 
     def row_at(self, source_row: int) -> RepertoireRow | None:
@@ -189,84 +220,153 @@ class RepertoireDossierTab(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 16, 20, 16)
-        root.setSpacing(10)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        title = QLabel("Répertoire chantier")
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        root.addWidget(title)
-
-        controls = QHBoxLayout()
-        controls.addWidget(QLabel("Année"))
+        top = QVBoxLayout()
+        top.setContentsMargins(26, 22, 26, 12)
+        top.setSpacing(12)
+        heading = QHBoxLayout()
+        heading.setSpacing(12)
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
+        self.source_label = label("Répertoire chantier · Classeur Excel", "kicker")
+        titles.addWidget(self.source_label)
+        titles.addWidget(label("Répertoire chantier", "h2"))
+        heading.addLayout(titles, 1)
         self.year_combo = QComboBox()
         self.year_combo.setEditable(True)
-        self.year_combo.setMinimumWidth(100)
-        controls.addWidget(self.year_combo)
-        controls.addWidget(QLabel("Rechercher"))
+        year = field("Année", self.year_combo)
+        year.setFixedWidth(112)
+        heading.addWidget(year, 0, Qt.AlignmentFlag.AlignBottom)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Numéro, client, contact ou désignation")
         self.search_edit.setClearButtonEnabled(True)
+        self._search_action = self.search_edit.addAction(
+            icon("search", "neutral-700"),
+            QLineEdit.ActionPosition.LeadingPosition,
+        )
+        theme_notifier().changed.connect(
+            lambda: self._search_action.setIcon(icon("search", "neutral-700")),
+        )
         self.search_edit.textChanged.connect(self._filter_rows)
-        controls.addWidget(self.search_edit, 1)
-        self.load_button = QPushButton("Charger")
+        search = field("Rechercher", self.search_edit)
+        search.setFixedWidth(340)
+        heading.addWidget(search, 0, Qt.AlignmentFlag.AlignBottom)
+        # A first load and a refresh do the same read; the header only shows "Actualiser".
+        self.load_button = button("Charger")
         self.load_button.clicked.connect(self.load_requested.emit)
-        controls.addWidget(self.load_button)
-        self.refresh_button = QPushButton("Actualiser")
+        self.load_button.hide()
+        self.refresh_button = button("Actualiser", icon="refresh")
         self.refresh_button.clicked.connect(self.load_requested.emit)
-        controls.addWidget(self.refresh_button)
-        root.addLayout(controls)
+        heading.addWidget(self.load_button, 0, Qt.AlignmentFlag.AlignBottom)
+        heading.addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignBottom)
+        top.addLayout(heading)
 
-        self.status_label = QLabel("Chargez une année pour afficher le répertoire.")
+        status = QHBoxLayout()
+        status.setSpacing(14)
+        self.status_label = label("Chargez une année pour afficher le répertoire.", "muted")
         self.status_label.setWordWrap(True)
         self.status_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        root.addWidget(self.status_label)
+        status.addWidget(self.status_label, 1)
+        status.addLayout(_legend("swatch-next", "Prochaine disponible"))
+        status.addLayout(_legend("swatch-dirty", "Modifié, non enregistré"))
+        top.addLayout(status)
+        root.addLayout(top)
 
         self.table = QTableView()
         self.table.setModel(self._proxy)
-        self.table.setAlternatingRowColors(True)
+        self.table.setItemDelegate(RepertoireRowDelegate(self.table))
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.table.setSortingEnabled(False)
+        self.table.setShowGrid(False)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().hide()
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.verticalHeader().setDefaultSectionSize(28)
+        self.table.horizontalHeader().setHighlightSections(False)
+        self.table.horizontalHeader().setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        )
+        self.table.verticalHeader().setDefaultSectionSize(34)
         self.table.doubleClicked.connect(lambda _index: self.open_project_requested.emit())
         self.table.selectionModel().selectionChanged.connect(
             lambda _selected, _deselected: self._update_action_states()
         )
-        root.addWidget(self.table, 1)
+        table_row = QHBoxLayout()
+        table_row.setContentsMargins(26, 0, 26, 0)
+        table_row.addWidget(self.table)
+        root.addLayout(table_row, 1)
 
-        actions = QHBoxLayout()
-        self.new_project_button = QPushButton("Nouveau projet")
+        footer = QWidget()
+        footer.setProperty("role", "footer")
+        actions = QHBoxLayout(footer)
+        actions.setContentsMargins(26, 6, 20, 6)
+        actions.setSpacing(8)
+        self.new_project_button = button("Nouveau projet", icon="plus")
         self.new_project_button.clicked.connect(self.new_project_requested.emit)
         actions.addWidget(self.new_project_button)
-        self.open_project_button = QPushButton("Charger le projet")
+        self.open_project_button = button("Charger le projet")
         self.open_project_button.clicked.connect(self.open_project_requested.emit)
         actions.addWidget(self.open_project_button)
-        self.create_subproject_button = QPushButton("Créer sous-projet")
+        self.create_subproject_button = button("Créer sous-projet")
         self.create_subproject_button.clicked.connect(self.create_subproject_requested.emit)
         actions.addWidget(self.create_subproject_button)
-        self.duplicate_project_button = QPushButton("Dupliquer")
+        self.duplicate_project_button = button("Dupliquer")
         self.duplicate_project_button.clicked.connect(self.duplicate_project_requested.emit)
         actions.addWidget(self.duplicate_project_button)
+        self.delete_project_button = button("Supprimer avec éléments liés", "danger", icon="trash")
+        self.delete_project_button.setToolTip(
+            "Supprimer le projet sélectionné après confirmation et libérer son numéro"
+        )
+        self.delete_project_button.clicked.connect(self.delete_project_requested.emit)
+        actions.addWidget(self.delete_project_button)
         actions.addStretch(1)
-        self.sync_project_button = QPushButton("Mettre à jour le projet")
+        self.dirty_label = label("", "accent-text")
+        actions.addWidget(self.dirty_label)
+        self.discard_button = button("Annuler", "ghost")
+        self.discard_button.setToolTip("Rétablir les valeurs lues dans le répertoire")
+        self.discard_button.clicked.connect(self.discard_changes)
+        actions.addWidget(self.discard_button)
+        self.sync_project_button = button("Mettre à jour le projet")
         self.sync_project_button.setToolTip(
             "Mettre à jour la fiche et les intégrations configurées du projet sélectionné"
         )
         self.sync_project_button.clicked.connect(self.sync_project_requested.emit)
         actions.addWidget(self.sync_project_button)
-        self.save_button = QPushButton("Enregistrer la ligne")
+        self.save_button = PrimaryButton("Enregistrer la ligne")
         self.save_button.clicked.connect(self._save_selected)
         actions.addWidget(self.save_button)
-        self.delete_project_button = QPushButton("Supprimer avec éléments liés")
-        self.delete_project_button.setToolTip(
-            "Supprimer le projet sélectionné après confirmation et libérer son numéro"
-        )
-        self.delete_project_button.setStyleSheet("color: #B42318;")
-        self.delete_project_button.clicked.connect(self.delete_project_requested.emit)
-        actions.addWidget(self.delete_project_button)
-        root.addLayout(actions)
+        root.addWidget(footer)
+
+        self._model.dataChanged.connect(lambda *_args: self._refresh_dirty_state())
+        self._model.modelReset.connect(self._refresh_dirty_state)
         self._update_action_states()
+        self._refresh_dirty_state()
+
+    def set_source(self, text: str) -> None:
+        self.source_label.setText(text.upper())
+
+    def discard_changes(self) -> None:
+        self._model.discard_changes()
+        self._update_action_states()
+
+    def _refresh_dirty_state(self) -> None:
+        count = self._model.dirty_cell_count()
+        rows = self._model.dirty_row_indexes()
+        numbers = []
+        for row_index in rows:
+            source_row = self._model.source_index_for_sheet_row(row_index)
+            row = self._model.row_at(source_row) if source_row is not None else None
+            if row is not None:
+                numbers.append(_display_value(row.values[0]))
+        plural = "s" if count > 1 else ""
+        self.dirty_label.setText(
+            f"{count} cellule{plural} modifiée{plural} · {', '.join(numbers)}" if count else "",
+        )
+        self.dirty_label.setVisible(bool(count))
+        self.discard_button.setVisible(bool(count))
+        self.save_button.setEnabled(bool(count) and not self._loading)
 
     def set_snapshot(self, snapshot: RepertoireSnapshot) -> None:
         self._model.set_snapshot(snapshot)
@@ -289,7 +389,7 @@ class RepertoireDossierTab(QWidget):
         self._loading = loading
         self.load_button.setEnabled(not loading)
         self.refresh_button.setEnabled(not loading)
-        self.save_button.setEnabled(not loading)
+        self.save_button.setEnabled(not loading and self._model.dirty_cell_count() > 0)
         self.sync_project_button.setEnabled(not loading)
         self.open_project_button.setEnabled(not loading and self._selected_project_is_occupied())
         self.create_subproject_button.setEnabled(
@@ -358,22 +458,18 @@ class RepertoireDossierTab(QWidget):
 
     def _update_action_states(self) -> None:
         occupied = self._selected_project_is_occupied() and not self._loading
-        for button in (
+        for action in (
             self.open_project_button,
             self.create_subproject_button,
             self.duplicate_project_button,
             self.sync_project_button,
             self.delete_project_button,
         ):
-            button.setEnabled(occupied)
+            action.setEnabled(occupied)
 
     def _resize_columns(self) -> None:
-        self.table.resizeColumnsToContents()
-        self.table.setColumnWidth(0, max(110, self.table.columnWidth(0)))
-        self.table.setColumnWidth(1, max(110, self.table.columnWidth(1)))
-        self.table.setColumnWidth(2, max(170, self.table.columnWidth(2)))
-        self.table.setColumnWidth(3, max(170, self.table.columnWidth(3)))
-        self.table.setColumnWidth(4, max(360, self.table.columnWidth(4)))
+        for column, width in enumerate(COLUMN_WIDTHS):
+            self.table.setColumnWidth(column, width)
 
     def _position_near_next_available(self, snapshot: RepertoireSnapshot) -> None:
         next_project = snapshot.next_available
@@ -391,6 +487,76 @@ class RepertoireDossierTab(QWidget):
             self.table.scrollTo(proxy_start, QTableView.ScrollHint.PositionAtTop)
         if proxy_next.isValid():
             self.table.selectRow(proxy_next.row())
+
+
+class RepertoireRowDelegate(QStyledItemDelegate):
+    """Selected row bar and the "Disponible" tag on the next free number."""
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
+        theme = current_theme()
+        rect = QRectF(option.rect)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        painter.save()
+        background = index.data(Qt.ItemDataRole.BackgroundRole)
+        if selected:
+            painter.fillRect(rect, theme.color("accent-200"))
+        elif isinstance(background, QColor):
+            painter.fillRect(rect, background)
+        if selected and isinstance(background, QColor) and background == theme.color("accent-200"):
+            painter.fillRect(rect, theme.color("accent-300", 0.6))
+        painter.setPen(theme.color("text", 0.08))
+        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+        if selected and index.column() == 0:
+            painter.fillRect(
+                QRectF(rect.left(), rect.top(), 3, rect.height()), theme.color("accent")
+            )
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        font = QFont(option.font)
+        font.setPixelSize(14)
+        if index.column() == 0:
+            font.setWeight(QFont.Weight.Medium)
+        painter.setFont(font)
+        painter.setPen(theme.color("text"))
+        text_rect = rect.adjusted(10, 0, -10, 0)
+        elided = painter.fontMetrics().elidedText(
+            text,
+            Qt.TextElideMode.ElideRight,
+            int(text_rect.width()),
+        )
+        painter.drawText(
+            text_rect,
+            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            elided,
+        )
+        if index.column() == 0 and index.data(NEXT_AVAILABLE_ROLE):
+            tag_font = QFont(font)
+            tag_font.setPixelSize(10)
+            tag_font.setWeight(QFont.Weight.Normal)
+            left = text_rect.left() + painter.fontMetrics().horizontalAdvance(text) + 8
+            painter.setFont(tag_font)
+            tag_width = painter.fontMetrics().horizontalAdvance("Disponible") + 12
+            tag = QRectF(left, rect.center().y() - 8, tag_width, 16)
+            painter.setPen(theme.color("accent"))
+            painter.drawRect(tag.adjusted(0.5, 0.5, -0.5, -0.5))
+            painter.drawText(tag, int(Qt.AlignmentFlag.AlignCenter), "Disponible")
+        painter.restore()
+
+
+def _legend(role: str, text: str) -> QHBoxLayout:
+    row = QHBoxLayout()
+    row.setSpacing(6)
+    swatch = QFrame()
+    swatch.setProperty("role", role)
+    swatch.setFixedSize(10, 10)
+    swatch.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+    row.addWidget(swatch)
+    row.addWidget(label(text, "muted"))
+    return row
 
 
 def _display_value(value: object) -> str:

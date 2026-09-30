@@ -190,6 +190,10 @@ class MainWindow(QMainWindow):
             native_path_text(paths.repertoire_chantier.display_path) or "Non configuré",
         )
         self.repertoire_tag.setText(f"Répertoire · {_repertoire_location(self._config)}")
+        workbook = paths.repertoire_chantier.display_path.replace("\\", "/").rsplit("/", 1)[-1]
+        self.repertoire_tab.set_source(
+            " · ".join(part for part in (workbook, _repertoire_location(self._config)) if part),
+        )
         outlook = self._config.outlook
         self.creation_tab.set_outlook_summary(
             enabled=outlook.enabled,

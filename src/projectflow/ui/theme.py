@@ -460,6 +460,8 @@ QLabel[role="step-cell"] {{
   font-family: {heading}; font-weight: 600; font-size: 22px; color: {t["neutral-700"]};
   border: 1px solid {divider};
 }}
+QFrame[role="swatch-next"] {{ background: {t["accent-100"]}; border: 1px solid {t["accent-400"]}; }}
+QFrame[role="swatch-dirty"] {{ background: {t["accent-200"]}; border: 1px solid {t["accent"]}; }}
 QLabel[role="initials"] {{
   background: {t["neutral-100"]}; color: {t["neutral-800"]}; font-size: 13px; font-weight: 500;
   padding: 5px 12px;

@@ -182,7 +182,7 @@ class SortieDossierTab(QWidget):
         self.load_button = button("Charger")
         self.load_button.clicked.connect(self.load_requested.emit)
         year = field("Année", self.year_combo)
-        year.setFixedWidth(100)
+        year.setFixedWidth(112)
         number = field("Numéro", self.project_id_edit)
         number.setFixedWidth(200)
         row.addWidget(year, 0, Qt.AlignmentFlag.AlignBottom)
