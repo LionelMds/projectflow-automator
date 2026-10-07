@@ -11,7 +11,11 @@ from projectflow.core.models import PlannerTaskInput, ProjectInput
 from projectflow.core.numero import parse_project_number
 from projectflow.exceptions import ConfigError
 from projectflow.graph.client import GraphClient
-from projectflow.graph.planner import GraphPlannerClient, planner_task_title
+from projectflow.graph.planner import (
+    GraphPlannerClient,
+    planner_plan_id_from_text,
+    planner_task_title,
+)
 
 
 class FakeTokenProvider:
@@ -83,7 +87,84 @@ async def test_graph_planner_lists_plans_and_buckets() -> None:
     assert plans[0].title == "Projets"
     assert buckets[0].name == "A faire"
     assert members[0].label == "Lionel <lionel@example.test>"
-    assert requests[1].url.path.endswith("/planner/plans/plan-id/buckets")
+    assert any(r.url.path.endswith("/planner/plans/plan-id/buckets") for r in requests)
+
+
+@pytest.mark.asyncio
+async def test_graph_planner_lists_plans_from_member_groups() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/me/planner/plans"):
+            return httpx.Response(200, json={"value": [{"id": "own", "title": "Perso"}]})
+        if path.endswith("/me/memberOf/microsoft.graph.group"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": [
+                        {"id": "team", "groupTypes": ["Unified"]},
+                        {"id": "security", "groupTypes": []},
+                        {"id": "broken", "groupTypes": ["Unified"]},
+                    ],
+                },
+            )
+        if path.endswith("/groups/team/planner/plans"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": [
+                        {"id": "own", "title": "Perso"},
+                        {"id": "atelier", "title": "Atelier"},
+                    ],
+                },
+            )
+        if path.endswith("/groups/broken/planner/plans"):
+            return httpx.Response(403, json={"error": {"message": "denied"}})
+        return httpx.Response(404, json={"error": {"message": "missing"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphPlannerClient(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+        )
+        plans = await client.list_plans()
+
+    assert [(plan.id, plan.title) for plan in plans] == [("atelier", "Atelier"), ("own", "Perso")]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("  plan-id  ", "plan-id"),
+        (
+            "https://planner.cloud.microsoft/webui/plan/xqQg5FS2LkCp935s-FIFm2QAFkHM/view/board?tid=t",
+            "xqQg5FS2LkCp935s-FIFm2QAFkHM",
+        ),
+        (
+            (
+                "https://tasks.office.com/contoso.com/fr-FR/Home/Planner/#/plantaskboard"
+                "?groupId=g&planId=abc_DEF-123"
+            ),
+            "abc_DEF-123",
+        ),
+        (
+            "https://tasks.office.com/contoso.com/Home/PlanViews/abcDEF123?Type=PlanLink",
+            "abcDEF123",
+        ),
+        (
+            (
+                "https://teams.microsoft.com/l/entity/com.microsoft.teamspace.tab.planner/tt.c_x"
+                "?context=%7B%22subEntityId%22%3A%7B%22planId%22%3A%22teamsPlan_1%22%7D%7D"
+            ),
+            "teamsPlan_1",
+        ),
+    ],
+)
+def test_planner_plan_id_from_text(text: str, expected: str) -> None:
+    assert planner_plan_id_from_text(text) == expected
+
+
+def test_planner_plan_id_from_text_rejects_unknown_link() -> None:
+    with pytest.raises(ConfigError):
+        planner_plan_id_from_text("https://example.test/nothing-here")
 
 
 @pytest.mark.asyncio

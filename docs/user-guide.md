@@ -86,6 +86,11 @@ Dans `Parametres`, section `Microsoft Planner` :
 3. Cliquer sur `Detecter colonnes` et choisir la colonne cible.
 4. Regler le nombre de jours d'echeance par defaut, puis cliquer sur `Tester`.
 
+`Detecter` liste les plans du compte et ceux des groupes Microsoft 365 dont il est membre.
+Si le plan n'apparait toujours pas, ouvrir le plan dans Planner (navigateur ou Teams), copier
+l'adresse de la page, la coller dans le champ `Plan` puis cliquer sur `Detecter` : ProjectFlow
+retrouve le plan a partir du lien et le selectionne.
+
 Dans le formulaire de creation, les colonnes et membres Planner sont charges automatiquement
 quand la case Planner est activee ou quand l'utilisateur ouvre la selection.
 

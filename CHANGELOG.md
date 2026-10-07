@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.60
+
+- Planner : `Detecter` liste aussi les plans des groupes Microsoft 365 dont le compte est
+  membre (le plan d'equipe n'apparaissait pas toujours, notamment sur macOS).
+- Planner : le champ `Plan` accepte le lien du plan (Planner web, tasks.office.com ou
+  onglet Teams) ; `Detecter` retrouve alors le plan et le selectionne.
+
 ## 0.1.59
 
 - Nouvelle interface au style Industry (maquettes ProjectFlow, variante A) : en-tete avec

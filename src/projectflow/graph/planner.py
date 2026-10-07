@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import unquote
 
 from projectflow.config import PlannerConfig
 from projectflow.core.models import ProjectInput
-from projectflow.exceptions import ConfigError
+from projectflow.exceptions import ConfigError, GraphError
 from projectflow.graph.client import GraphClient
 
 
@@ -64,12 +66,46 @@ class GraphPlannerClient:
         await self._graph.aclose()
 
     async def list_plans(self) -> list[PlannerPlan]:
-        payloads = await self._collect_pages("/me/planner/plans")
-        return [
-            PlannerPlan(id=item_id, title=title)
-            for payload in payloads
-            if (item_id := _string(payload.get("id"))) and (title := _string(payload.get("title")))
-        ]
+        plans: dict[str, PlannerPlan] = {}
+        first_error: GraphError | None = None
+        try:
+            for plan in _plans_from_payloads(await self._collect_pages("/me/planner/plans")):
+                plans.setdefault(plan.id, plan)
+        except GraphError as exc:
+            first_error = exc
+        # /me/planner/plans omits plans the account was never assigned to or
+        # has not opened recently; the user's Microsoft 365 groups fill the gap.
+        try:
+            groups = await self._collect_pages(
+                "/me/memberOf/microsoft.graph.group?$select=id,groupTypes",
+            )
+        except GraphError as exc:
+            first_error = first_error or exc
+            groups = []
+        for group in groups:
+            group_id = _string(group.get("id"))
+            group_types = group.get("groupTypes")
+            if not group_id or not isinstance(group_types, list) or "Unified" not in group_types:
+                continue
+            try:
+                payloads = await self._collect_pages(f"/groups/{group_id}/planner/plans")
+            except GraphError:
+                continue
+            for plan in _plans_from_payloads(payloads):
+                plans.setdefault(plan.id, plan)
+        if not plans and first_error is not None:
+            raise first_error
+        return sorted(plans.values(), key=lambda plan: plan.title.casefold())
+
+    async def get_plan(self, *, plan_id: str) -> PlannerPlan:
+        normalized_plan_id = plan_id.strip()
+        if not normalized_plan_id:
+            raise ConfigError("Plan Planner non configure.")
+        payload = await self._graph.get(f"/planner/plans/{normalized_plan_id}?$select=id,title")
+        return PlannerPlan(
+            id=_string(payload.get("id")) or normalized_plan_id,
+            title=_string(payload.get("title")) or normalized_plan_id,
+        )
 
     async def list_buckets(self, *, plan_id: str) -> list[PlannerBucket]:
         normalized_plan_id = plan_id.strip()
@@ -279,6 +315,32 @@ class GraphPlannerClient:
         return items
 
 
+_PLAN_ID_QUERY_RE = re.compile(r"(?:^|[?&#/])planId=([A-Za-z0-9_-]+)", re.IGNORECASE)
+_PLAN_ID_PATH_RE = re.compile(r"/(?:plan|PlanViews)/([A-Za-z0-9_-]+)", re.IGNORECASE)
+_PLAN_ID_JSON_RE = re.compile(r'"planId"\s*:\s*"([A-Za-z0-9_-]+)"', re.IGNORECASE)
+
+
+def planner_plan_id_from_text(text: str) -> str:
+    """Return the plan id from a Planner/Teams link, or the text itself when it is an id."""
+    value = text.strip()
+    if not value.casefold().startswith(("http://", "https://")):
+        return value
+    # Teams links wrap the Planner context in an encoded JSON query parameter.
+    decoded = unquote(unquote(value))
+    for pattern in (_PLAN_ID_QUERY_RE, _PLAN_ID_JSON_RE, _PLAN_ID_PATH_RE):
+        match = pattern.search(decoded)
+        if match:
+            return match.group(1)
+    raise ConfigError(
+        "Lien Planner non reconnu. Ouvrez le plan dans Planner (navigateur) "
+        "et copiez l'adresse de la page.",
+    )
+
+
+def is_planner_link(text: str) -> bool:
+    return text.strip().casefold().startswith(("http://", "https://"))
+
+
 def planner_task_title(project: ProjectInput) -> str:
     designation = " ".join(project.designation.split())
     if not designation:
@@ -312,6 +374,14 @@ def _assignment_ids(value: object) -> list[str]:
     if not isinstance(value, dict):
         return []
     return [key for key, assignment in value.items() if isinstance(key, str) and assignment]
+
+
+def _plans_from_payloads(payloads: list[dict[str, Any]]) -> list[PlannerPlan]:
+    return [
+        PlannerPlan(id=item_id, title=title)
+        for payload in payloads
+        if (item_id := _string(payload.get("id"))) and (title := _string(payload.get("title")))
+    ]
 
 
 def _string(value: object) -> str:

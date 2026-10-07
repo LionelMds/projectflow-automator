@@ -47,9 +47,13 @@ from projectflow.config import (
     CadPropertyNames,
     RepertoireChantierConfig,
 )
-from projectflow.exceptions import ProjectFlowError
+from projectflow.exceptions import GraphError, ProjectFlowError
 from projectflow.graph.client import GraphClient
-from projectflow.graph.planner import GraphPlannerClient
+from projectflow.graph.planner import (
+    GraphPlannerClient,
+    is_planner_link,
+    planner_plan_id_from_text,
+)
 from projectflow.logging import redact_sensitive_links
 from projectflow.outlook.local import detect_local_outlook_accounts, validate_local_outlook_account
 from projectflow.platform.paths import native_path_text
@@ -129,7 +133,10 @@ class SettingsDialog(QDialog):
 
         config.planner.enabled = self.planner_enabled_checkbox.isChecked()
         config.planner.plan_id = self._selected_planner_plan_id()
-        config.planner.plan_name = self.planner_plan_combo.currentText().strip()
+        plan_text = self.planner_plan_combo.currentText().strip()
+        config.planner.plan_name = (
+            config.planner.plan_id if is_planner_link(plan_text) else plan_text
+        )
         config.planner.bucket_id = self._selected_planner_bucket_id()
         config.planner.bucket_name = self.planner_bucket_combo.currentText().strip()
         config.planner.due_days = self.planner_due_days_spin.value()
@@ -631,7 +638,11 @@ class SettingsDialog(QDialog):
         self.planner_enabled_checkbox.setChecked(config.planner.enabled)
         self.planner_plan_combo = QComboBox()
         self.planner_plan_combo.setEditable(True)
-        self.planner_plan_combo.setPlaceholderText("plan Planner")
+        self.planner_plan_combo.setPlaceholderText("plan Planner ou lien du plan")
+        self.planner_plan_combo.setToolTip(
+            "Si le plan n'est pas detecte, ouvrez-le dans Planner (navigateur), "
+            "copiez l'adresse de la page, collez-la ici puis cliquez sur Detecter.",
+        )
         if config.planner.plan_id or config.planner.plan_name:
             self.planner_plan_combo.addItem(
                 config.planner.plan_name or config.planner.plan_id,
@@ -839,12 +850,27 @@ class SettingsDialog(QDialog):
 
     async def _load_planner_plans(self) -> None:
         try:
+            plan_text = self.planner_plan_combo.currentText().strip()
+            linked_plan_id = ""
+            if is_planner_link(plan_text):
+                linked_plan_id = planner_plan_id_from_text(plan_text)
             async with _planner_session() as client:
-                plans = await client.list_plans()
+                if linked_plan_id:
+                    linked_plan = await client.get_plan(plan_id=linked_plan_id)
+                    try:
+                        plans = await client.list_plans()
+                    except GraphError:
+                        plans = []
+                    if all(plan.id != linked_plan.id for plan in plans):
+                        plans = [linked_plan, *plans]
+                    selected_id = linked_plan.id
+                else:
+                    plans = await client.list_plans()
+                    selected_id = self._selected_planner_plan_id()
                 _refresh_combo(
                     self.planner_plan_combo,
                     [(plan.title, plan.id) for plan in plans],
-                    selected_id=self._selected_planner_plan_id(),
+                    selected_id=selected_id,
                 )
                 self._planner_plan_changed()
                 if self._selected_planner_plan_id():
@@ -898,7 +924,13 @@ class SettingsDialog(QDialog):
         QMessageBox.information(self, "Planner", "Plan et colonne Planner accessibles.")
 
     def _selected_planner_plan_id(self) -> str:
-        return _selected_combo_id(self.planner_plan_combo)
+        selected = _selected_combo_id(self.planner_plan_combo)
+        if not is_planner_link(selected):
+            return selected
+        try:
+            return planner_plan_id_from_text(selected)
+        except ProjectFlowError:
+            return ""
 
     def _selected_planner_bucket_id(self) -> str:
         return _selected_combo_id(self.planner_bucket_combo)
