@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.1.65
+
+- Un message d'erreur (par exemple apres une connexion Microsoft refusee) ne bloque plus
+  les autres operations en cours : le repertoire ou le numero disponible qui chargeaient
+  en meme temps se terminent normalement au lieu de rester bloques (vu sur macOS). Les
+  messages et questions s'ouvrent maintenant juste apres l'etape en cours ; le journal et
+  l'erreur dans le formulaire restent immediats.
+- Planner : `Parametres > Microsoft Planner > Membres par defaut` choisit les membres
+  assignes par defaut aux nouvelles taches (preselectionnes dans les formulaires). Le
+  compte Microsoft connecte peut etre partage entre plusieurs postes ; sans membres par
+  defaut, la tache reste assignee a ce compte comme avant.
+- Le bouton `Ouvrir fiche` est elargi : la fleche du menu ne recouvre plus le texte.
+- Impression des fiches sur macOS avec Microsoft Excel pour Mac : A4, ajustee a une page,
+  nombre de copies. Si Excel refuse de changer d'imprimante, il imprime sur son imprimante
+  actuelle, dont le nom est indique dans le journal. En cas d'echec, la fiche reste ouverte
+  dans Excel pour l'imprimer avec Cmd+P.
+
 ## 0.1.64
 
 - Connexion Microsoft bloquee 4 minutes sur certains reseaux (vu sur macOS) : quand le

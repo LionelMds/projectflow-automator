@@ -585,6 +585,8 @@ QPushButton[variant="swatch"] {{
   padding: 0; border: 0; background: transparent;
 }}
 QToolButton::menu-button {{ border: 0; border-left: 1px solid {divider}; width: 22px; }}
+/* The split arrow is drawn inside the padding: reserve its width after the text. */
+QToolButton[popupMode="1"] {{ padding-right: 34px; }}
 QToolButton::menu-arrow, QToolButton::menu-indicator {{
   image: url({assets}/chevron-down.svg); width: 12px; height: 12px;
 }}

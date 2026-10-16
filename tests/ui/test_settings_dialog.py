@@ -11,7 +11,7 @@ from projectflow.config import AppConfig
 from projectflow.exceptions import ConfigError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.excel import GraphExcelWorkbookGateway
-from projectflow.graph.planner import PlannerBucket, PlannerPlan
+from projectflow.graph.planner import PlannerBucket, PlannerMember, PlannerPlan
 from projectflow.outlook.models import OutlookAccount
 from projectflow.platform.paths import native_path_text
 from projectflow.ui.dialogs.settings import SettingsDialog
@@ -658,3 +658,47 @@ def test_microsoft_sign_in_starts_on_click_without_saving(qtbot) -> None:  # typ
     assert dialog.microsoft_sign_in_button.isEnabled()
     assert dialog.microsoft_sign_in_button.text() == "Se reconnecter au compte Microsoft"
     assert dialog.microsoft_status_label.text() == "Connecté : alice@example.com"
+
+
+@pytest.mark.asyncio
+async def test_default_planner_members_are_chosen_from_the_plan_and_saved(
+    qtbot,
+    monkeypatch,
+) -> None:
+    config = _configured_settings()
+    dialog = SettingsDialog(config)
+    qtbot.addWidget(dialog)
+    offered: list[tuple[list[str], list[str]]] = []
+
+    class PlannerClient:
+        async def aclose(self) -> None:
+            pass
+
+        async def list_members(self, *, plan_id: str) -> list[PlannerMember]:
+            assert plan_id == "saved-plan"
+            return [
+                PlannerMember(id="lionel-id", display_name="Lionel", email=""),
+                PlannerMember(id="romain-id", display_name="Romain", email=""),
+            ]
+
+    def choose(_parent, members, selected) -> tuple[str, ...]:  # type: ignore[no-untyped-def]
+        offered.append(([member.label for member in members], list(selected)))
+        return ("romain-id",)
+
+    monkeypatch.setattr("projectflow.ui.dialogs.settings._planner_client", PlannerClient)
+    monkeypatch.setattr("projectflow.ui.dialogs.settings.choose_planner_members", choose)
+    assert dialog.planner_members_label.text() == "Compte Microsoft connecté"
+
+    await dialog._choose_planner_members()  # noqa: SLF001
+    dialog.apply_to_config(config)
+
+    assert offered == [(["Lionel", "Romain"], [])]
+    assert dialog.planner_members_label.text() == "Romain"
+    assert config.planner.default_assignee_ids == ["romain-id"]
+    assert config.planner.default_assignee_names == ["Romain"]
+
+    # Members belong to the plan's group: choosing another plan forgets them.
+    dialog.planner_plan_combo.addItem("Autre plan", "other-plan")
+    dialog.planner_plan_combo.setCurrentIndex(dialog.planner_plan_combo.count() - 1)
+    dialog.apply_to_config(config)
+    assert config.planner.default_assignee_ids == []

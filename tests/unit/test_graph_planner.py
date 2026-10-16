@@ -347,3 +347,42 @@ def test_planner_task_title_uses_project_number_and_designation() -> None:
         )
         == "2026-4995 - Escalier"
     )
+
+
+@pytest.mark.asyncio
+async def test_task_without_chosen_members_goes_to_default_members_not_the_shared_account() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/planner/plans/plan-id/tasks"):
+            return httpx.Response(200, json={"value": []})
+        if request.url.path.endswith("/planner/tasks") and request.method == "POST":
+            return httpx.Response(
+                201,
+                json={"id": "task-id", "title": "t", "bucketId": "bucket-id", "@odata.etag": "e"},
+            )
+        return httpx.Response(404, json={"error": {"message": "missing"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphPlannerClient(
+            graph=GraphClient(token_provider=FakeTokenProvider(), http_client=http_client),
+        )
+        await client.ensure_project_task(
+            ProjectInput(
+                number=parse_project_number("2026-4995"),
+                designation="Escalier",
+                planner=PlannerTaskInput(enabled=True, assignee_ids=(), due_days=7),
+            ),
+            PlannerConfig(
+                enabled=True,
+                plan_id="plan-id",
+                bucket_id="bucket-id",
+                default_assignee_ids=["romain-id"],
+                default_assignee_names=["Romain"],
+            ),
+        )
+
+    post_request = next(request for request in requests if request.method == "POST")
+    assert set(_json(post_request)["assignments"]) == {"romain-id"}
+    assert not any(request.url.path.endswith("/me") for request in requests)

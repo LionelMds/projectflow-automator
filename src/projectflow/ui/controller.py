@@ -52,11 +52,13 @@ from projectflow.ui.dialogs.quick_confirmation import QuickCreationConfirmationD
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow, MicrosoftState
+from projectflow.ui.modal import ask_outside_task, show_outside_task
 from projectflow.ui.theme import apply_theme
 from projectflow.ui.widgets.planner import (
     PlannerBucketOption,
     PlannerMemberOption,
     PlannerSelectionWidget,
+    default_assignees,
 )
 from projectflow.updates import (
     GitHubReleaseChecker,
@@ -74,6 +76,7 @@ PlannerOptions = tuple[list[PlannerBucketOption], list[PlannerMemberOption]]
 ActionArgs = ParamSpec("ActionArgs")
 ReadKey = TypeVar("ReadKey")
 ReadResult = TypeVar("ReadResult")
+Answer = TypeVar("Answer")
 
 
 def _exclusive_action(
@@ -347,6 +350,7 @@ class ProjectFlowController:
             bucket_id=self._config.planner.bucket_id,
             bucket_name=self._config.planner.bucket_name,
             due_days=self._config.planner.due_days,
+            assignees=default_assignees(self._config.planner),
         )
         dialog.set_data(self._empty_creation_data() if reset else self._window.creation_tab.data())
         self._apply_cached_client_directory(dialog)
@@ -525,7 +529,7 @@ class ProjectFlowController:
         project: ProjectInput,
     ) -> tuple[ProjectCreationResult, bool] | None:
         project_exists = not project.is_subproject and self._project_dir(project.number).exists()
-        existing_update = self._existing_project_update_decision(project)
+        existing_update = await self._existing_project_update_decision(project)
         if existing_update is None:
             self._log("! Creation annulee")
             return None
@@ -747,7 +751,7 @@ class ProjectFlowController:
             return
         try:
             project_dir = self._project_dir(number)
-            fiche_path = self._choose_fiche(project_dir, number)
+            fiche_path = await self._ask(lambda: self._choose_fiche(project_dir, number))
             fiche_data = self._services.fiche().read_fiche(fiche_path)
             project = ProjectInput(
                 number=number,
@@ -944,8 +948,7 @@ class ProjectFlowController:
         message = f"Projet {project.number} supprimé : {', '.join(details)}."
         tab.set_status_message(message)
         self._window.creation_tab.append_log(f"+ {message}")
-        if not self._closing:
-            QMessageBox.information(self._window, "Projet supprimé", message)
+        self._show_dialog(lambda: QMessageBox.information(self._window, "Projet supprimé", message))
 
     def _selected_repertoire_project(
         self,
@@ -1027,13 +1030,15 @@ class ProjectFlowController:
         tab.append_log(f"+ Dossier de sortie cree: {output_dir}")
         if self._closing:
             return
-        answer = QMessageBox.question(
-            self._window,
-            "Sortie dossier",
-            f"Le dossier de sortie a ete cree ici :\n{output_dir}\n\n"
-            "Voulez-vous l'ouvrir maintenant ?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+        answer = await self._ask(
+            lambda: QMessageBox.question(
+                self._window,
+                "Sortie dossier",
+                f"Le dossier de sortie a ete cree ici :\n{output_dir}\n\n"
+                "Voulez-vous l'ouvrir maintenant ?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            ),
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
@@ -1125,7 +1130,7 @@ class ProjectFlowController:
         if self._closing:
             return
         try:
-            options = self._ask_print_options(fiche_path)
+            options = await self._ask(lambda: self._ask_print_options(fiche_path))
         except ProjectFlowError as exc:
             self._error(str(exc))
             return
@@ -1134,7 +1139,7 @@ class ProjectFlowController:
             return
         self._log(f"-> Impression de {fiche_path.name} sur {options.printer_name}...")
         try:
-            await run_file_io(
+            printer = await run_file_io(
                 print_workbook_a4,
                 fiche_path,
                 printer_name=options.printer_name,
@@ -1143,7 +1148,7 @@ class ProjectFlowController:
         except (ProjectFlowError, OSError) as exc:
             self._error(f"Fiche non imprimée: {exc}")
             return
-        self._log(f"+ Fiche envoyée à l'imprimante {options.printer_name}")
+        self._log(f"+ Fiche envoyée à l'imprimante {printer}")
 
     def _ask_print_options(self, fiche_path: Path) -> PrintFicheOptions | None:
         printers, default_printer = installed_printers()
@@ -1391,6 +1396,7 @@ class ProjectFlowController:
                 bucket_id=self._config.planner.bucket_id,
                 bucket_name=self._config.planner.bucket_name,
                 due_days=self._config.planner.due_days,
+                assignees=default_assignees(self._config.planner),
             )
 
     async def check_updates(self, *, show_no_update: bool = True) -> None:
@@ -1411,10 +1417,12 @@ class ProjectFlowController:
                 f"! Mise a jour disponible sans artefact compatible: {update.release_url}",
             )
             return
-        answer = QMessageBox.question(
-            self._window,
-            "Mise a jour disponible",
-            _update_prompt_text(update.latest_version, update.release_notes),
+        answer = await self._ask(
+            lambda: QMessageBox.question(
+                self._window,
+                "Mise a jour disponible",
+                _update_prompt_text(update.latest_version, update.release_notes),
+            ),
         )
         if answer != QMessageBox.StandardButton.Yes:
             self._log(f"! Mise a jour disponible: {update.latest_version} - {update.release_url}")
@@ -1501,7 +1509,7 @@ class ProjectFlowController:
             raise ValueError("Aucune fiche selectionnee.")
         return selected
 
-    def _existing_project_update_decision(self, project: ProjectInput) -> bool | None:
+    async def _existing_project_update_decision(self, project: ProjectInput) -> bool | None:
         if project.is_subproject:
             return True
         project_dir = self._project_dir(project.number)
@@ -1510,18 +1518,21 @@ class ProjectFlowController:
         if not self._project_info_would_change(project_dir, project):
             return False
 
-        answer = QMessageBox.question(
-            self._window,
-            "Projet existant",
-            "Ce projet existe deja et les informations du formulaire different "
-            "de la fiche existante.\n\n"
-            "Oui : mettre a jour la fiche et le repertoire, puis relancer Outlook/epingle.\n"
-            "Non : conserver les informations existantes et relancer seulement Outlook/epingle.\n"
-            "Annuler : ne rien faire.",
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No
-            | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.No,
+        answer = await self._ask(
+            lambda: QMessageBox.question(
+                self._window,
+                "Projet existant",
+                "Ce projet existe deja et les informations du formulaire different "
+                "de la fiche existante.\n\n"
+                "Oui : mettre a jour la fiche et le repertoire, puis relancer Outlook/epingle.\n"
+                "Non : conserver les informations existantes et relancer seulement "
+                "Outlook/epingle.\n"
+                "Annuler : ne rien faire.",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.No,
+            ),
         )
         if answer == QMessageBox.StandardButton.Cancel:
             return None
@@ -1628,10 +1639,12 @@ class ProjectFlowController:
             if result.project_dir_created
             else "Le projet existant a ete reapplique avec succes."
         )
-        QMessageBox.information(
-            self._window,
-            title,
-            f"{message}{_cad_summary(result)}\n\nDossier:\n{result.project_dir}",
+        self._show_dialog(
+            lambda: QMessageBox.information(
+                self._window,
+                title,
+                f"{message}{_cad_summary(result)}\n\nDossier:\n{result.project_dir}",
+            ),
         )
 
     def _show_quick_creation_confirmation(
@@ -1640,8 +1653,14 @@ class ProjectFlowController:
         data: CreationFormData,
         project: ProjectInput,
     ) -> None:
-        if self._closing:
-            return
+        self._show_dialog(lambda: self._run_quick_creation_confirmation(result, data, project))
+
+    def _run_quick_creation_confirmation(
+        self,
+        result: ProjectCreationResult,
+        data: CreationFormData,
+        project: ProjectInput,
+    ) -> None:
         title = "Projet cree" if result.project_dir_created else "Projet pret"
         message = (
             "Le projet a ete cree avec succes."
@@ -1764,14 +1783,19 @@ class ProjectFlowController:
         message = redact_sensitive_links(message)
         self._window.creation_tab.append_log(f"! {message}")
         self._window.creation_tab.show_operation_error(message)
-        if not self._closing:
-            QMessageBox.critical(self._window, "ProjectFlow", message)
+        self._show_dialog(lambda: QMessageBox.critical(self._window, "ProjectFlow", message))
 
     def _output_error(self, message: str) -> None:
         message = redact_sensitive_links(message)
         self._window.sortie_tab.append_log(f"! {message}")
-        if not self._closing:
-            QMessageBox.critical(self._window, "Sortie dossier", message)
+        self._show_dialog(lambda: QMessageBox.critical(self._window, "Sortie dossier", message))
+
+    def _show_dialog(self, show: Callable[[], object]) -> None:
+        # Never inside a task step: the modal loop would stall every other task.
+        show_outside_task(show, skip=lambda: self._closing)
+
+    async def _ask(self, ask: Callable[[], Answer]) -> Answer:
+        return await ask_outside_task(ask, skip=lambda: self._closing)
 
 
 def _cad_summary(result: ProjectCreationResult) -> str:

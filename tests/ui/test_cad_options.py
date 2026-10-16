@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -183,6 +184,7 @@ async def test_controller_passes_cad_options_and_unchecks_after_creation(
     tab.cad_options.autocad_checkbox.setChecked(True)
 
     await controller.create_project()
+    await asyncio.sleep(0)  # Message boxes open right after the task step.
 
     project = services.project_service.created[0][0]
     assert (project.add_solidworks, project.add_autocad) == (True, True)

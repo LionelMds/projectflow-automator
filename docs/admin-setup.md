@@ -104,6 +104,13 @@ tester l'acces.
 
 Le nouvel Outlook Windows sans automation locale n'est pas supporte pour cette fonction.
 
+## Impression des fiches
+
+Windows imprime avec Microsoft Excel en arriere-plan. macOS imprime avec Microsoft Excel pour
+Mac : la premiere fois, macOS demande d'autoriser ProjectFlow a controler Excel. Excel pour Mac
+peut refuser de changer d'imprimante : il imprime alors sur son imprimante actuelle, dont le nom
+est indique dans le journal.
+
 ## Mail macOS
 
 Sur macOS, ProjectFlow utilise l'application native Mail pour creer les boites aux lettres projet.
@@ -115,6 +122,10 @@ Cette autorisation est locale au poste et ne passe pas par Microsoft Graph.
 La creation Planner est optionnelle et desactivee par defaut. L'utilisateur peut l'activer dans
 `Parametres` -> `Microsoft Planner`, lancer `Detecter`, choisir le plan, charger les colonnes,
 puis tester l'acces.
+
+`Membres par defaut` choisit qui est assigne aux nouvelles taches (preselectionne dans les
+formulaires). Utile quand plusieurs postes partagent le meme compte Microsoft : sans ce choix, la
+tache est assignee au compte connecte.
 
 ProjectFlow cree une seule tache par numero de projet principal. Si une tache dont le titre
 commence deja par le numero existe dans le plan, ProjectFlow la met a jour au lieu d'en creer une

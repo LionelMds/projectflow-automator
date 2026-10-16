@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from projectflow.config import PlannerConfig
 from projectflow.ui.widgets.industry import field
 
 
@@ -49,6 +50,56 @@ class PlannerTaskFormData:
     due_days: int = 7
 
 
+def default_assignees(config: PlannerConfig) -> tuple[PlannerMemberOption, ...]:
+    """Members preselected in the creation forms, as saved in the settings."""
+    return tuple(
+        PlannerMemberOption(id=member_id, label=name or member_id)
+        for member_id, name in zip(
+            config.default_assignee_ids,
+            [*config.default_assignee_names, *[""] * len(config.default_assignee_ids)],
+            strict=False,
+        )
+        if member_id.strip()
+    )
+
+
+def choose_planner_members(
+    parent: QWidget,
+    members: Sequence[PlannerMemberOption],
+    selected_ids: Sequence[str],
+) -> tuple[str, ...] | None:
+    """Ask which members to assign; None when the user cancels."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Membres Planner")
+    layout = QVBoxLayout(dialog)
+    list_widget = QListWidget()
+    list_widget.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+    selected = set(selected_ids)
+    for member in members:
+        item = QListWidgetItem(member.label)
+        item.setData(Qt.ItemDataRole.UserRole, member.id)
+        item.setSelected(member.id in selected)
+        list_widget.addItem(item)
+    layout.addWidget(list_widget)
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+    )
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+    if dialog.exec() != dialog.DialogCode.Accepted:
+        return None
+    chosen: list[str] = []
+    for row in range(list_widget.count()):
+        item = list_widget.item(row)
+        if item is None or not item.isSelected():
+            continue
+        member_id = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(member_id, str):
+            chosen.append(member_id)
+    return tuple(chosen)
+
+
 class PlannerBucketComboBox(QComboBox):
     popup_requested = Signal()
 
@@ -68,6 +119,7 @@ class PlannerSelectionWidget(QGroupBox):
         self._open_members_after_load = False
         self._default_bucket = PlannerBucketOption(id="", name="")
         self._default_due_days = 7
+        self._default_members: tuple[PlannerMemberOption, ...] = ()
         self._members: dict[str, PlannerMemberOption] = {}
         self._selected_member_ids: tuple[str, ...] = ()
         self._build_ui()
@@ -114,7 +166,9 @@ class PlannerSelectionWidget(QGroupBox):
     def reset_fields(self) -> None:
         self.enabled_checkbox.setChecked(False)
         self._select_bucket(self._default_bucket.id, self._default_bucket.name)
-        self._selected_member_ids = ()
+        for member in self._default_members:
+            self._members.setdefault(member.id, member)
+        self._selected_member_ids = tuple(member.id for member in self._default_members)
         self.due_checkbox.setChecked(False)
         self.due_days_spin.setValue(self._default_due_days)
         self._refresh_member_label()
@@ -127,6 +181,7 @@ class PlannerSelectionWidget(QGroupBox):
         bucket_id: str,
         bucket_name: str,
         due_days: int,
+        assignees: Sequence[PlannerMemberOption] = (),
     ) -> None:
         self._planner_available = enabled
         self._options_loaded = False
@@ -134,6 +189,7 @@ class PlannerSelectionWidget(QGroupBox):
         self._open_members_after_load = False
         self._default_bucket = PlannerBucketOption(id=bucket_id.strip(), name=bucket_name.strip())
         self._default_due_days = due_days if due_days > 0 else 7
+        self._default_members = tuple(member for member in assignees if member.id)
         self.enabled_checkbox.setEnabled(enabled)
         self.load_options_button.setEnabled(enabled)
         self._seed_default_bucket()
@@ -290,35 +346,14 @@ class PlannerSelectionWidget(QGroupBox):
                 "Aucun membre Planner disponible pour le plan selectionne.",
             )
             return
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Membres Planner")
-        layout = QVBoxLayout(dialog)
-        list_widget = QListWidget()
-        list_widget.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
-        selected = set(self._selected_member_ids)
-        for member in self._members.values():
-            item = QListWidgetItem(member.label)
-            item.setData(Qt.ItemDataRole.UserRole, member.id)
-            item.setSelected(member.id in selected)
-            list_widget.addItem(item)
-        layout.addWidget(list_widget)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+        chosen = choose_planner_members(
+            self,
+            list(self._members.values()),
+            self._selected_member_ids,
         )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-        if dialog.exec() != dialog.DialogCode.Accepted:
+        if chosen is None:
             return
-        selected_ids: list[str] = []
-        for row in range(list_widget.count()):
-            item = list_widget.item(row)
-            if item is None or not item.isSelected():
-                continue
-            member_id = item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(member_id, str):
-                selected_ids.append(member_id)
-        self._selected_member_ids = tuple(selected_ids)
+        self._selected_member_ids = chosen
         self._refresh_member_label()
 
     def _refresh_member_label(self) -> None:

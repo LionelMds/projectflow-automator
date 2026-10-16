@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
 
 from PySide6.QtCore import Qt, Signal
@@ -26,7 +27,7 @@ from projectflow.ui.widgets.industry import (
     label,
     rule,
 )
-from projectflow.ui.widgets.planner import PlannerSelectionWidget
+from projectflow.ui.widgets.planner import PlannerMemberOption, PlannerSelectionWidget
 
 
 class QuickCreateDialog(QDialog):
@@ -102,12 +103,14 @@ class QuickCreateDialog(QDialog):
         bucket_id: str,
         bucket_name: str,
         due_days: int,
+        assignees: Sequence[PlannerMemberOption] = (),
     ) -> None:
         self.planner_widget.set_config_defaults(
             enabled=enabled,
             bucket_id=bucket_id,
             bucket_name=bucket_name,
             due_days=due_days,
+            assignees=assignees,
         )
 
     def apply_cad_config(self, cad: CadConfig) -> None:

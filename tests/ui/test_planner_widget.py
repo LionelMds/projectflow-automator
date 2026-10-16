@@ -70,3 +70,49 @@ def test_planner_widget_accepts_options_after_background_load(qtbot: Any) -> Non
     assert widget.bucket_combo.currentText() == "A faire"
     assert widget.members_label.text() == "Utilisateur connecté"
     assert widget.members_button.isEnabled()
+
+
+def test_default_members_are_preselected_and_survive_a_reset(qtbot: Any) -> None:
+    widget = PlannerSelectionWidget()
+    qtbot.addWidget(widget)
+    alice = PlannerMemberOption(id="user-a", label="Alice Balz")
+    widget.set_config_defaults(
+        enabled=True,
+        bucket_id="",
+        bucket_name="",
+        due_days=7,
+        assignees=[alice],
+    )
+
+    assert widget.members_label.text() == "Alice Balz"
+    assert widget.data().assignee_ids == ("user-a",)
+
+    widget.set_data(PlannerTaskFormData(enabled=True, assignee_ids=()))
+    assert widget.data().assignee_ids == ()
+
+    widget.reset_fields()
+    assert widget.data().assignee_ids == ("user-a",)
+    assert widget.data().assignee_labels == ("Alice Balz",)
+
+
+def test_default_members_stay_selected_once_plan_members_load(qtbot: Any) -> None:
+    widget = PlannerSelectionWidget()
+    qtbot.addWidget(widget)
+    widget.set_config_defaults(
+        enabled=True,
+        bucket_id="",
+        bucket_name="",
+        due_days=7,
+        assignees=[PlannerMemberOption(id="user-a", label="Alice")],
+    )
+
+    widget.set_options(
+        buckets=[],
+        members=[
+            PlannerMemberOption(id="user-a", label="Alice Balz <alice@example.test>"),
+            PlannerMemberOption(id="user-b", label="Bob"),
+        ],
+    )
+
+    assert widget.data().assignee_ids == ("user-a",)
+    assert widget.members_label.text() == "Alice Balz <alice@example.test>"

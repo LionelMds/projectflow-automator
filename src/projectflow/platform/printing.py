@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from projectflow.exceptions import PrintError
+from projectflow.platform.mac_printing import print_with_excel_for_mac
 
 XL_PAPER_A4: Final[int] = 9
 DEVICES_KEY: Final[str] = r"Software\Microsoft\Windows NT\CurrentVersion\Devices"
@@ -29,10 +30,15 @@ def print_workbook_a4(
     copies: int = 1,
     app_factory: ExcelAppFactory | None = None,
     port_lookup: PrinterPortLookup | None = None,
-) -> None:
-    """Print the active sheet on a single A4 page with a private Excel instance."""
+) -> str:
+    """Print the active sheet on a single A4 page; return the printer used.
+
+    Windows drives a private Excel instance; macOS drives Excel for Mac.
+    """
+    if sys.platform == "darwin":
+        return print_with_excel_for_mac(workbook_path, printer_name=printer_name, copies=copies)
     if not sys.platform.startswith("win"):
-        raise PrintError("L'impression de la fiche necessite Microsoft Excel sous Windows.")
+        raise PrintError("L'impression de la fiche necessite Microsoft Excel (Windows ou macOS).")
     if not workbook_path.exists():
         raise PrintError(f"Fiche introuvable: {workbook_path}")
     pythoncom = importlib.import_module("pythoncom")
@@ -55,6 +61,7 @@ def print_workbook_a4(
         raise
     finally:
         pythoncom.CoUninitialize()
+    return printer_name
 
 
 def _print_with_private_excel(

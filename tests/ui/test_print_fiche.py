@@ -64,10 +64,11 @@ class PrintRecorder:
         self.printed: list[tuple[Path, str, int]] = []
         self.error: Exception | None = None
 
-    def __call__(self, path: Path, *, printer_name: str, copies: int = 1) -> None:
+    def __call__(self, path: Path, *, printer_name: str, copies: int = 1) -> str:
         if self.error is not None:
             raise self.error
         self.printed.append((path, printer_name, copies))
+        return printer_name
 
 
 @pytest.fixture
@@ -256,6 +257,7 @@ async def test_print_cancelled_or_failed_is_reported(
     _choose_printer(monkeypatch, controller, PrintFicheOptions("Xerox Bac9"))
 
     await controller._print_fiche(fiche_path)  # noqa: SLF001
+    await asyncio.sleep(0)  # Message boxes open right after the task step.
 
     assert printer.printed == []
     assert errors == ["Fiche non imprimée: Excel ne trouve pas l'imprimante Xerox Bac9."]
@@ -273,6 +275,7 @@ async def test_print_reports_missing_printers(
     monkeypatch.setattr("projectflow.ui.controller.installed_printers", lambda: ([], ""))
 
     await controller._print_fiche(tmp_path / FICHE_NAME)  # noqa: SLF001
+    await asyncio.sleep(0)  # Message boxes open right after the task step.
 
     assert errors == ["Aucune imprimante n'est installée sur ce poste."]
     assert printer.printed == []

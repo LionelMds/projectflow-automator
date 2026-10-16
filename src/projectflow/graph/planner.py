@@ -178,6 +178,12 @@ class GraphPlannerClient:
 
         assignee_ids = tuple(user_id for user_id in project.planner.assignee_ids if user_id.strip())
         if not assignee_ids:
+            # The connected account may be shared: the members chosen in the settings
+            # say who the task is for (also for requests without a form, e.g. MailFlow).
+            assignee_ids = tuple(
+                user_id for user_id in config.default_assignee_ids if user_id.strip()
+            )
+        if not assignee_ids:
             assignee_ids = (await self.current_user_id(),)
         due_date = _due_date(project.planner.due_days)
         title = planner_task_title(project)

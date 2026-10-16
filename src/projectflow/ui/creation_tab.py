@@ -39,7 +39,11 @@ from projectflow.ui.widgets.industry import (
 from projectflow.ui.widgets.industry import (
     field as caption_field,
 )
-from projectflow.ui.widgets.planner import PlannerSelectionWidget, PlannerTaskFormData
+from projectflow.ui.widgets.planner import (
+    PlannerSelectionWidget,
+    PlannerTaskFormData,
+    default_assignees,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +155,7 @@ class CreationTab(QWidget):
             bucket_id=planner.bucket_id,
             bucket_name=planner.bucket_name,
             due_days=planner.due_days,
+            assignees=default_assignees(planner),
         )
 
     def set_outlook_summary(self, *, enabled: bool, detail: str) -> None:

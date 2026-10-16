@@ -57,6 +57,7 @@ from projectflow.graph.planner import (
 from projectflow.logging import redact_sensitive_links
 from projectflow.outlook.local import detect_local_outlook_accounts, validate_local_outlook_account
 from projectflow.platform.paths import native_path_text
+from projectflow.ui.modal import ask_outside_task, show_outside_task
 from projectflow.ui.theme import (
     HEADING_FAMILY,
     MODES,
@@ -73,6 +74,11 @@ from projectflow.ui.widgets.industry import (
     label,
     paint_corner_marks,
     rule,
+)
+from projectflow.ui.widgets.planner import (
+    PlannerMemberOption,
+    choose_planner_members,
+    default_assignees,
 )
 
 MICROSOFT_SIGN_IN_TEXT = "Se reconnecter au compte Microsoft"
@@ -145,6 +151,8 @@ class SettingsDialog(QDialog):
         config.planner.bucket_id = self._selected_planner_bucket_id()
         config.planner.bucket_name = self.planner_bucket_combo.currentText().strip()
         config.planner.due_days = self.planner_due_days_spin.value()
+        config.planner.default_assignee_ids = [member.id for member in self._planner_members]
+        config.planner.default_assignee_names = [member.label for member in self._planner_members]
         config.cad = self._cad_config()
         config.appearance = self.selected_appearance()
 
@@ -599,7 +607,7 @@ class SettingsDialog(QDialog):
 
     def _show_document_manager_result(self, succeeded: bool, message: str) -> None:  # noqa: FBT001
         if succeeded:
-            QMessageBox.information(self, "Document Manager", message)
+            self._show_dialog(lambda: QMessageBox.information(self, "Document Manager", message))
         else:
             self._show_error("Document Manager", message)
 
@@ -682,11 +690,59 @@ class SettingsDialog(QDialog):
         self.planner_due_days_spin.setRange(0, 365)
         self.planner_due_days_spin.setValue(config.planner.due_days)
         self.planner_due_days_spin.setSuffix(" jours")
+        self._planner_members = default_assignees(config.planner)
         layout.addRow("", self.planner_enabled_checkbox)
         layout.addRow("Plan", self._planner_plan_row())
         layout.addRow("Colonne", self._planner_bucket_row())
+        layout.addRow("Membres par défaut", self._planner_members_row())
         layout.addRow("Échéance par défaut", self.planner_due_days_spin)
         return group
+
+    def _planner_members_row(self) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.planner_members_label = QLabel()
+        self.planner_members_label.setToolTip(
+            "Assignes a chaque nouvelle tache Planner. Sans choix, la tache est assignee "
+            "au compte Microsoft connecte, qui peut etre partage entre plusieurs postes.",
+        )
+        self.planner_members_button = QPushButton("Choisir")
+        self.planner_members_button.clicked.connect(
+            lambda: self._start_planner_action(
+                self._choose_planner_members,
+                self.planner_members_button,
+            ),
+        )
+        layout.addWidget(self.planner_members_label, 1)
+        layout.addWidget(self.planner_members_button)
+        self._refresh_planner_members_label()
+        return widget
+
+    def _refresh_planner_members_label(self) -> None:
+        names = ", ".join(member.label for member in self._planner_members)
+        self.planner_members_label.setText(names or "Compte Microsoft connecté")
+
+    async def _choose_planner_members(self) -> None:
+        plan_id = self._selected_planner_plan_id()
+        if not plan_id:
+            self._show_error("Planner", "Selectionnez d'abord un plan Planner.")
+            return
+        async with _planner_session() as client:
+            members = await client.list_members(plan_id=plan_id)
+        options = [PlannerMemberOption(id=member.id, label=member.label) for member in members]
+        chosen = await ask_outside_task(
+            lambda: choose_planner_members(
+                self,
+                options,
+                [member.id for member in self._planner_members],
+            ),
+            skip=lambda: self._finished,
+        )
+        if chosen is None or plan_id != self._selected_planner_plan_id():
+            return
+        self._planner_members = tuple(option for option in options if option.id in chosen)
+        self._refresh_planner_members_label()
 
     def _planner_plan_row(self) -> QWidget:
         widget = QWidget()
@@ -729,6 +785,9 @@ class SettingsDialog(QDialog):
         if plan_id != self._planner_bucket_plan_id:
             self.planner_bucket_combo.clear()
             self._planner_bucket_plan_id = plan_id
+            # Members belong to the plan's group: another plan has other members.
+            self._planner_members = ()
+            self._refresh_planner_members_label()
 
     def _start_planner_action(
         self,
@@ -771,6 +830,7 @@ class SettingsDialog(QDialog):
             self.planner_refresh_button,
             self.planner_bucket_refresh_button,
             self.planner_test_button,
+            self.planner_members_button,
         )
 
     def _cancel_planner_action(self) -> None:
@@ -786,8 +846,12 @@ class SettingsDialog(QDialog):
             await asyncio.gather(*pending, return_exceptions=True)
 
     def _show_error(self, title: str, message: str) -> None:
-        if not self._finished:
-            QMessageBox.warning(self, title, redact_sensitive_links(message))
+        text = redact_sensitive_links(message)
+        self._show_dialog(lambda: QMessageBox.warning(self, title, text))
+
+    def _show_dialog(self, show: Callable[[], object]) -> None:
+        # Never inside a task step: the modal loop would stall every other task.
+        show_outside_task(show, skip=lambda: self._finished)
 
     def _outlook_group(self, config: AppConfig) -> QGroupBox:
         group = QGroupBox(_mail_group_title())
@@ -907,7 +971,7 @@ class SettingsDialog(QDialog):
     async def _refresh_planner_buckets(self, client: GraphPlannerClient) -> None:
         plan_id = self._selected_planner_plan_id()
         if not plan_id:
-            QMessageBox.warning(self, "Planner", "Selectionnez d'abord un plan Planner.")
+            self._show_error("Planner", "Selectionnez d'abord un plan Planner.")
             return
         buckets = await client.list_buckets(plan_id=plan_id)
         if plan_id != self._selected_planner_plan_id():
@@ -922,7 +986,7 @@ class SettingsDialog(QDialog):
         plan_id = self._selected_planner_plan_id()
         bucket_id = self._selected_planner_bucket_id()
         if not plan_id or not bucket_id:
-            QMessageBox.warning(self, "Planner", "Selectionnez un plan et une colonne Planner.")
+            self._show_error("Planner", "Selectionnez un plan et une colonne Planner.")
             return
         try:
             async with _planner_session() as client:
@@ -937,10 +1001,11 @@ class SettingsDialog(QDialog):
         ):
             return
         if bucket_id not in bucket_ids:
-            QMessageBox.warning(self, "Planner", "La colonne selectionnee est introuvable.")
+            self._show_error("Planner", "La colonne selectionnee est introuvable.")
             return
         self.planner_enabled_checkbox.setChecked(True)
-        QMessageBox.information(self, "Planner", "Plan et colonne Planner accessibles.")
+        message = "Plan et colonne Planner accessibles."
+        self._show_dialog(lambda: QMessageBox.information(self, "Planner", message))
 
     def _selected_planner_plan_id(self) -> str:
         selected = _selected_combo_id(self.planner_plan_combo)

@@ -110,6 +110,10 @@ class PlannerConfig(BaseModel):
     bucket_id: str = ""
     bucket_name: str = ""
     due_days: int = Field(default=7, ge=0, le=365)
+    # Preselected in the creation forms: the connected Microsoft account may be shared,
+    # so it no longer says who the task is for.
+    default_assignee_ids: list[str] = Field(default_factory=list)
+    default_assignee_names: list[str] = Field(default_factory=list)
 
     @property
     def target_plan_id(self) -> str:

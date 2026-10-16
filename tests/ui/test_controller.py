@@ -187,6 +187,7 @@ async def test_controller_create_project_reads_form(
     window.creation_tab.gere_par_edit.setText("Alice Martin")
 
     await controller.create_project()
+    await asyncio.sleep(0)  # Message boxes open right after the task step.
 
     assert str(services.project_service.created[0][0].number) == "2026-4995"
     assert services.project_service.created[0][0].designation == "Escalier"

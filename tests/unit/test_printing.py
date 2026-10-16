@@ -236,14 +236,33 @@ def test_print_workbook_a4_quits_excel_and_releases_com_after_failure(
     assert com_calls == ["init", "uninit"]
 
 
-def test_print_workbook_a4_requires_windows_and_existing_fiche(
+def test_print_workbook_a4_requires_excel_platform_and_existing_fiche(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(printing.sys, "platform", "darwin")
-    with pytest.raises(PrintError, match="Windows"):
+    monkeypatch.setattr(printing.sys, "platform", "linux")
+    with pytest.raises(PrintError, match="Windows ou macOS"):
         printing.print_workbook_a4(tmp_path / "fiche.xlsx", printer_name="PDF")
 
     monkeypatch.setattr(printing.sys, "platform", "win32")
     with pytest.raises(PrintError, match="Fiche introuvable"):
         printing.print_workbook_a4(tmp_path / "absente.xlsx", printer_name="PDF")
+
+
+def test_print_workbook_a4_uses_excel_for_mac_on_macos(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[Path, str, int]] = []
+
+    def fake_mac_print(path: Path, *, printer_name: str, copies: int) -> str:
+        calls.append((path, printer_name, copies))
+        return "Xerox Bac2"
+
+    monkeypatch.setattr(printing.sys, "platform", "darwin")
+    monkeypatch.setattr(printing, "print_with_excel_for_mac", fake_mac_print)
+
+    used = printing.print_workbook_a4(tmp_path / "fiche.xlsx", printer_name="Xerox_Bac2", copies=2)
+
+    assert used == "Xerox Bac2"
+    assert calls == [(tmp_path / "fiche.xlsx", "Xerox_Bac2", 2)]
