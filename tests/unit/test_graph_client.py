@@ -197,7 +197,7 @@ async def test_graph_client_asks_to_sign_in_again_when_refresh_is_rejected() -> 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         client = GraphClient(token_provider=provider, http_client=http_client)
 
-        with pytest.raises(GraphError, match="Se reconnecter au compte Microsoft") as error:
+        with pytest.raises(GraphError, match="Se connecter a Microsoft") as error:
             await client.get("/me/drive/root")
 
     assert error.value.status_code == 401

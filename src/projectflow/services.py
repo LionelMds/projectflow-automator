@@ -45,12 +45,7 @@ class ServiceContainer:
         repertoire = self.config.paths.repertoire_chantier
         display_path = repertoire.display_path.strip()
         workbook_path = Path(display_path).expanduser()
-        if (
-            repertoire.is_configured
-            or repertoire.cloud_only
-            or display_path.casefold().startswith("https://")
-            or is_synchronized_path(workbook_path)
-        ):
+        if repertoire_uses_cloud(repertoire):
             settings = self.application_settings or ApplicationSettings.load()
             if not settings.microsoft_client_id.strip():
                 raise ConfigError(
@@ -144,10 +139,29 @@ class ConfiguredPlannerGateway:
         return await self.client.delete_project_tasks(project, self.config.planner)
 
 
+def repertoire_uses_cloud(repertoire: RepertoireChantierConfig) -> bool:
+    display_path = repertoire.display_path.strip()
+    return (
+        repertoire.is_configured
+        or repertoire.cloud_only
+        or display_path.casefold().startswith("https://")
+        # An empty path would test the current folder, which may well be in OneDrive.
+        or (bool(display_path) and is_synchronized_path(Path(display_path).expanduser()))
+    )
+
+
+def uses_microsoft(config: AppConfig) -> bool:
+    """Tell whether the repertoire or Planner needs the Microsoft connection."""
+    return config.planner.enabled or repertoire_uses_cloud(config.paths.repertoire_chantier)
+
+
 async def resolve_repertoire_open_url(config: RepertoireChantierConfig) -> str:
     settings = ApplicationSettings.load()
     graph = GraphClient(
-        token_provider=MsalAccessTokenProvider(client_id=settings.microsoft_client_id),
+        token_provider=MsalAccessTokenProvider(
+            client_id=settings.microsoft_client_id,
+            allow_interactive=False,
+        ),
         request_timeout=60.0,
     )
     try:

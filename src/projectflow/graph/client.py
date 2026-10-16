@@ -22,7 +22,7 @@ MAX_ATTEMPTS = 3
 LOG_ID_MIN_LENGTH = 16
 UNAUTHORIZED_MESSAGE = (
     "La connexion Microsoft a expire ou a ete refusee (401). "
-    "Utilisez Parametres > Se reconnecter au compte Microsoft, "
+    "Cliquez sur « Se connecter a Microsoft » en haut de la fenetre ProjectFlow, "
     "puis actualisez les donnees."
 )
 WORKBOOK_CONFLICT_CODES = {

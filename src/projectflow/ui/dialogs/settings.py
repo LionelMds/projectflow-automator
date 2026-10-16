@@ -92,6 +92,7 @@ class LicenseKeyStorage(Protocol):
 class SettingsDialog(QDialog):
     # Signing in again acts at once: it is not a setting waiting for OK.
     microsoft_sign_in_requested = Signal()
+    reset_requested = Signal()
 
     def __init__(
         self,
@@ -618,8 +619,15 @@ class SettingsDialog(QDialog):
         )
         self.microsoft_sign_in_button.clicked.connect(self._request_microsoft_sign_in)
         self.microsoft_status_label = label("", "muted", wrap=True)
+        self.reset_button = button("Tout réinitialiser ProjectFlow…", "danger")
+        self.reset_button.setToolTip(
+            "Efface la connexion Microsoft, tous les parametres et la cle Document Manager, "
+            "puis redemarre ProjectFlow comme a la premiere installation.",
+        )
+        self.reset_button.clicked.connect(self.reset_requested.emit)
         layout.addRow("", self.microsoft_sign_in_button)
         layout.addRow("", self.microsoft_status_label)
+        layout.addRow("", self.reset_button)
         return group
 
     def _request_microsoft_sign_in(self) -> None:

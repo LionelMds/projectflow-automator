@@ -163,7 +163,7 @@ def test_msal_provider_reports_abandoned_sign_in(
         cache_storage=FakeStorage(),  # type: ignore[arg-type]
     )
 
-    with pytest.raises(AuthError, match="Se reconnecter au compte Microsoft"):
+    with pytest.raises(AuthError, match="Se connecter a Microsoft"):
         provider._access_token_sync()  # noqa: SLF001
 
 
@@ -379,3 +379,53 @@ def test_headless_provider_reports_expired_session_without_browser(
         provider._access_token_sync()  # noqa: SLF001
 
     assert fake_module.app.interactive_calls == 0
+
+
+def test_connection_check_returns_account_without_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_module = FakeMsalModule(accounts=[dict(ACCOUNT)], silent_token="silent-token")
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+    )
+
+    assert provider._signed_in_account_sync() == "alice@example.com"  # noqa: SLF001
+    assert fake_module.app.interactive_calls == 0
+
+
+def test_connection_check_never_opens_browser_even_when_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_module = FakeMsalModule(accounts=[dict(ACCOUNT)])
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+        allow_interactive=True,
+    )
+
+    with pytest.raises(AuthError, match="Se connecter a Microsoft"):
+        provider._signed_in_account_sync()  # noqa: SLF001
+
+    assert fake_module.app.interactive_calls == 0
+
+
+def test_unassigned_account_error_tells_who_must_act(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_module = FakeMsalModule(
+        interactive_result={
+            "error": "invalid_grant",
+            "error_description": "AADSTS50105: The signed in user is not assigned.",
+        },
+    )
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(AuthError, match="Utilisateurs et groupes") as error:
+        provider._sign_in_sync()  # noqa: SLF001
+
+    assert "AADSTS50105" in str(error.value)

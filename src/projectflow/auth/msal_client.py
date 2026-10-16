@@ -27,6 +27,31 @@ PLANNER_GRAPH_SCOPES = (
 )
 # Browser sign-in that is never completed must not block every Graph operation.
 INTERACTIVE_TIMEOUT_SECONDS = 300
+SIGN_IN_HINT = "cliquez sur « Se connecter a Microsoft » en haut de la fenetre ProjectFlow"
+# Microsoft's error codes, explained for the user who has to act on them.
+_MICROSOFT_ERRORS = {
+    "AADSTS50105": (
+        "ce compte n'est pas autorise a utiliser ProjectFlow. L'administrateur Microsoft 365 "
+        "doit l'ajouter dans Applications d'entreprise > ProjectFlow Automator > "
+        "Utilisateurs et groupes"
+    ),
+    "AADSTS50194": (
+        "cette version de ProjectFlow utilise une ancienne adresse de connexion. "
+        "Installez la derniere version de ProjectFlow"
+    ),
+    "AADSTS50020": (
+        "ce compte n'appartient pas a Balz Metal SA. Connectez-vous avec le compte "
+        "Microsoft de l'entreprise"
+    ),
+    "AADSTS65001": (
+        "une autorisation manque. Un administrateur Microsoft 365 doit accorder le "
+        "consentement a ProjectFlow Automator"
+    ),
+    "AADSTS90094": (
+        "une autorisation manque. Un administrateur Microsoft 365 doit accorder le "
+        "consentement a ProjectFlow Automator"
+    ),
+}
 # Refresh before Microsoft rejects the token (access tokens last about one hour).
 TOKEN_REFRESH_MARGIN_SECONDS = 300
 DEFAULT_TOKEN_LIFETIME_SECONDS = 3600
@@ -113,6 +138,13 @@ class MsalAccessTokenProvider:
     async def access_token(self) -> str:
         return await asyncio.to_thread(self._access_token_sync)
 
+    async def signed_in_account(self) -> str:
+        """Return the connected account without ever opening the browser.
+
+        Raises AuthError when the stored connection does not work any more.
+        """
+        return await asyncio.to_thread(self._signed_in_account_sync)
+
     async def sign_in(self) -> str:
         """Open the browser sign-in at once and return the chosen account's username.
 
@@ -135,16 +167,26 @@ class MsalAccessTokenProvider:
             self._cached_token = ""
             return self._refresh_token()
 
+    def _signed_in_account_sync(self) -> str:
+        with self._lock:
+            self._cached_token = ""
+            self._refresh_token(choose_account=False, interactive=False)
+            app, _cache = self._application()
+            return _account_username(app)
+
     def _sign_in_sync(self) -> str:
         with self._lock:
             self._cached_token = ""
             self._refresh_token(choose_account=True)
             app, _cache = self._application()
-            accounts = app.get_accounts()
-            username = accounts[0].get("username") if accounts else None
-            return username if isinstance(username, str) else ""
+            return _account_username(app)
 
-    def _refresh_token(self, *, choose_account: bool = False) -> str:
+    def _refresh_token(
+        self,
+        *,
+        choose_account: bool = False,
+        interactive: bool | None = None,
+    ) -> str:
         if not self._client_id:
             raise AuthError(
                 "Connexion Microsoft indisponible: client Microsoft non configure "
@@ -161,7 +203,12 @@ class MsalAccessTokenProvider:
         get_logger(__name__).info("auth.token.refreshing", scopes=self._scopes)
         app, cache = self._application()
         try:
-            result = self._acquire_token(app, cache, choose_account=choose_account)
+            result = self._acquire_token(
+                app,
+                cache,
+                choose_account=choose_account,
+                interactive=self._allow_interactive if interactive is None else interactive,
+            )
         except (AssertionError, ValueError) as exc:
             raise AuthError(f"Connexion Microsoft impossible: {exc}") from exc
         except OSError as exc:  # requests' network errors, bounded by the MSAL timeout.
@@ -186,14 +233,15 @@ class MsalAccessTokenProvider:
                 self._cache_storage.save(serialized)
             return token
 
-        message = (
-            result.get("error_description")
-            or result.get("error")
-            or "authentification annulee ou delai depasse"
+        message = _explain_microsoft_error(
+            str(
+                result.get("error_description")
+                or result.get("error")
+                or "authentification annulee ou delai depasse"
+            ),
         )
         raise AuthError(
-            f"Connexion Microsoft impossible: {message}. "
-            "Utilisez Parametres > Se reconnecter au compte Microsoft pour recommencer.",
+            f"Connexion Microsoft impossible: {message}. Pour recommencer, {SIGN_IN_HINT}.",
         )
 
     def _application(
@@ -217,6 +265,7 @@ class MsalAccessTokenProvider:
         cache: SerializableTokenCacheProtocol,
         *,
         choose_account: bool = False,
+        interactive: bool = True,
     ) -> dict[str, object]:
         logger = get_logger(__name__)
         if choose_account:
@@ -228,18 +277,18 @@ class MsalAccessTokenProvider:
             result, login_hint = self._acquire_token_silent(app, cache)
         if result is not None:
             return result
-        if not self._allow_interactive:
-            # Headless requests (MailFlow) must never open a browser nor wait for one.
+        if not interactive:
+            # Background work never opens a browser nor waits for one: only the
+            # explicit "Se connecter" does, so a broken connection blocks nothing.
             raise AuthError(
-                "Connexion Microsoft a renouveler: ouvrez ProjectFlow, reconnectez-vous "
-                "au compte Microsoft, puis relancez la demande.",
+                f"Connexion Microsoft requise: ouvrez ProjectFlow et {SIGN_IN_HINT}, "
+                "puis recommencez.",
             )
         logger.info("auth.interactive.waiting_for_turn", scopes=self._scopes)
         wait = (self._interactive_timeout or INTERACTIVE_TIMEOUT_SECONDS) + 60
         if not _INTERACTIVE_SIGN_IN_LOCK.acquire(timeout=wait):
             raise AuthError(
-                "Une autre connexion Microsoft est deja en cours. Terminez-la ou "
-                "utilisez Parametres > Se reconnecter au compte Microsoft.",
+                f"Une autre connexion Microsoft est deja en cours. Terminez-la ou {SIGN_IN_HINT}.",
             )
         try:
             if not choose_account:
@@ -305,6 +354,19 @@ def _keep_only_signed_in_account(
     for account in accounts:
         if not is_signed_in(account):
             app.remove_account(account)
+
+
+def _account_username(app: PublicClientApplicationProtocol) -> str:
+    accounts = app.get_accounts()
+    username = accounts[0].get("username") if accounts else None
+    return username if isinstance(username, str) else ""
+
+
+def _explain_microsoft_error(description: str) -> str:
+    for code, explanation in _MICROSOFT_ERRORS.items():
+        if code in description:
+            return f"{explanation} ({code})"
+    return description
 
 
 def _token_lifetime(result: dict[str, object]) -> float:

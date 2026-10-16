@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.1.63
+
+- Verification rapide de la connexion Microsoft au demarrage, sans navigateur (environ
+  1 s, 10 s au maximum). Un bouton en haut de la fenetre indique le compte connecte, ou
+  `Se connecter a Microsoft` en rouge : un clic ouvre directement la connexion.
+- Une connexion Microsoft cassee ne bloque plus rien : les chargements (repertoire,
+  suggestions, Planner, ouverture du repertoire) n'ouvrent plus jamais le navigateur et
+  n'attendent plus jusqu'a 5 minutes. Ils indiquent tout de suite de se connecter.
+- Les erreurs Microsoft courantes sont expliquees en francais (compte non autorise
+  `AADSTS50105`, ancienne version `AADSTS50194`, compte hors Balz Metal, consentement).
+- `Tout reinitialiser ProjectFlow...` (menu reglages, Parametres > Compte Microsoft,
+  icone de la barre des taches) : efface la connexion Microsoft, tous les parametres, la
+  cle Document Manager et les mises a jour telechargees, puis redemarre sur l'assistant
+  de premier lancement. Les dossiers projets, le repertoire chantier et le journal sont
+  conserves.
+- Installateur Windows : option `Nouvelle installation : tout reinitialiser`. Il ferme
+  aussi ProjectFlow avant d'installer, pour qu'une ancienne version restee dans la barre
+  des taches ne continue pas de tourner.
+- Le journal indique la version au demarrage.
+
 ## 0.1.62
 
 - `Se reconnecter au compte Microsoft` ouvre la connexion tout de suite, sans enregistrer

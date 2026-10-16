@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Concatenate, Literal, ParamSpec, Protocol, TypeVar
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QWidget
 
 from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
@@ -40,7 +40,7 @@ from projectflow.logging import redact_sensitive_links
 from projectflow.platform.filemanager import open_excel_uri, open_file_default_app, open_path
 from projectflow.platform.printing import print_workbook_a4
 from projectflow.platform.sync_paths import is_excel_recovery_copy
-from projectflow.services import ServiceContainer, resolve_repertoire_open_url
+from projectflow.services import ServiceContainer, resolve_repertoire_open_url, uses_microsoft
 from projectflow.ui.creation_tab import CreationFormData
 from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
 from projectflow.ui.dialogs.print_fiche import (
@@ -51,7 +51,7 @@ from projectflow.ui.dialogs.print_fiche import (
 from projectflow.ui.dialogs.quick_confirmation import QuickCreationConfirmationDialog
 from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
-from projectflow.ui.main_window import MainWindow
+from projectflow.ui.main_window import MainWindow, MicrosoftState
 from projectflow.ui.theme import apply_theme
 from projectflow.ui.widgets.planner import (
     PlannerBucketOption,
@@ -68,6 +68,8 @@ from projectflow.updates import (
 )
 
 QuickCreationAction = Literal["open_fiche", "open_repertoire", "edit", "next"]
+# The startup check must answer fast: a silent token comes from the cache or one request.
+CONNECTION_CHECK_TIMEOUT_SECONDS = 10
 PlannerOptions = tuple[list[PlannerBucketOption], list[PlannerMemberOption]]
 ActionArgs = ParamSpec("ActionArgs")
 ReadKey = TypeVar("ReadKey")
@@ -133,7 +135,7 @@ class ProjectFlowController:
     ) -> None:
         self._window = window
         self._config = config
-        self._services = services or ServiceContainer(config)
+        self._services = services or ServiceContainer(config, interactive_sign_in=False)
         self._save_config = save_config
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._mutation_tasks: set[asyncio.Task[Any]] = set()
@@ -155,6 +157,8 @@ class ProjectFlowController:
         self._sortie_number: ProjectNumber | None = None
         # A load stuck on a retired connection must not block the next configuration.
         self._repertoire_loading_generation: int | None = None
+        self._reset_requested = False
+        self._connection_check_generation = 0
         self._connect()
 
     def _connect(self) -> None:
@@ -209,6 +213,11 @@ class ProjectFlowController:
             lambda: self._request_client_suggestions(tab),
         )
         self._window.settings_requested.connect(self.open_settings)
+        self._window.microsoft_sign_in_requested.connect(
+            lambda: self._schedule_task(self.reconnect_microsoft()),
+        )
+        self._window.connection_check_requested.connect(self.request_connection_check)
+        self._window.reset_requested.connect(self.request_reset)
         self._window.quick_create_requested.connect(self.show_quick_create)
         self._window.update_check_requested.connect(
             self.request_update_check,
@@ -216,6 +225,61 @@ class ProjectFlowController:
 
     def show_window(self) -> None:
         self._window.show_and_raise()
+
+    @property
+    def reset_requested(self) -> bool:
+        """True once the user confirmed the full reset: the app erases its data on exit."""
+        return self._reset_requested
+
+    def request_connection_check(self) -> None:
+        self._schedule_task(self.check_microsoft_connection())
+
+    async def check_microsoft_connection(self) -> None:
+        """Test the stored Microsoft connection without ever opening the browser."""
+        self._connection_check_generation += 1
+        generation = self._connection_check_generation
+        if not uses_microsoft(self._config):
+            self._window.set_microsoft_status("hidden")
+            return
+        self._window.set_microsoft_status("checking")
+        state, detail = await self._connection_state()
+        if generation != self._connection_check_generation:
+            return  # A sign-in or a newer check already reported the state.
+        self._window.set_microsoft_status(state, detail)
+        if state == "disconnected":
+            self._log(f"-> {detail}")
+        elif state == "warning":
+            self._log("-> Planner: cliquez sur le bouton Microsoft en haut pour l'autoriser.")
+
+    async def _connection_state(self) -> tuple[MicrosoftState, str]:
+        client_id = ApplicationSettings.load().microsoft_client_id
+        provider = MsalAccessTokenProvider(client_id=client_id, allow_interactive=False)
+        try:
+            username = await asyncio.wait_for(
+                provider.signed_in_account(),
+                timeout=CONNECTION_CHECK_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return "disconnected", (
+                f"Microsoft ne repond pas en {CONNECTION_CHECK_TIMEOUT_SECONDS} s. "
+                "Verifiez la connexion internet."
+            )
+        except ProjectFlowError as exc:
+            return "disconnected", str(exc)
+        if self._config.planner.enabled:
+            planner = MsalAccessTokenProvider(
+                client_id=client_id,
+                scopes=PLANNER_GRAPH_SCOPES,
+                allow_interactive=False,
+            )
+            try:
+                await asyncio.wait_for(
+                    planner.access_token(),
+                    timeout=CONNECTION_CHECK_TIMEOUT_SECONDS,
+                )
+            except (TimeoutError, ProjectFlowError):
+                return "warning", "Planner à autoriser"
+        return "connected", username or "connecté"
 
     def request_update_check(self, *, show_no_update: bool = True) -> None:
         self._schedule_task(self.check_updates(show_no_update=show_no_update))
@@ -1188,6 +1252,7 @@ class ProjectFlowController:
         dialog.microsoft_sign_in_requested.connect(
             lambda: self._schedule_task(self.reconnect_microsoft(dialog)),
         )
+        dialog.reset_requested.connect(lambda: self.request_reset(dialog))
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         previous_repertoire = self._config.paths.repertoire_chantier.model_copy(deep=True)
@@ -1215,32 +1280,79 @@ class ProjectFlowController:
         self._save_config_if_available()
         self._log("+ Parametres enregistres")
         self._log_integration_settings()
+        if repertoire_changed or planner_changed:
+            self.request_connection_check()
 
     async def reconnect_microsoft(self, dialog: SettingsDialog | None = None) -> None:
         """Open the Microsoft sign-in at once; nothing is saved or reloaded meanwhile."""
         # A sign-in still waiting (browser never shown) would otherwise hold the
         # browser sign-in turn for several minutes.
         cancel_pending_sign_ins()
-        settings = ApplicationSettings.load()
-        provider = MsalAccessTokenProvider(client_id=settings.microsoft_client_id)
+        self._connection_check_generation += 1
+        self._window.set_microsoft_status("checking")
+        client_id = ApplicationSettings.load().microsoft_client_id
+        provider = MsalAccessTokenProvider(client_id=client_id)
         try:
             username = await provider.sign_in()
         except ProjectFlowError as exc:
             self._log(f"-> {exc}")
             if dialog is not None:
                 dialog.microsoft_sign_in_finished(str(exc))
+            # A cancelled sign-in keeps the previous account: show what still works.
+            self.request_connection_check()
             return
         except Exception:
             if dialog is not None:
                 dialog.microsoft_sign_in_finished("Connexion Microsoft interrompue.")
+            self.request_connection_check()
             raise
         # The services still hold tokens of the previous account in memory.
         self._reset_repertoire_connection()
         self._reset_planner_connection()
         account = username or "compte Microsoft"
         self._log(f"+ Connecte a Microsoft: {account}")
+        state: MicrosoftState = "connected"
+        detail = account
+        if self._config.planner.enabled:
+            # Same account: the browser only asks for Planner consent if it is missing.
+            planner = MsalAccessTokenProvider(client_id=client_id, scopes=PLANNER_GRAPH_SCOPES)
+            try:
+                await planner.access_token()
+            except ProjectFlowError as exc:
+                self._log(f"-> Planner: {exc}")
+                state, detail = "warning", "Planner à autoriser"
+        self._window.set_microsoft_status(state, detail)
         if dialog is not None:
             dialog.microsoft_sign_in_finished(f"Connecté : {account}")
+
+    def request_reset(self, parent: QWidget | None = None) -> None:
+        """Erase everything ProjectFlow stores, after confirmation, then restart it."""
+        answer = QMessageBox.warning(
+            parent or self._window,
+            "Tout reinitialiser ProjectFlow",
+            "ProjectFlow va effacer sur ce poste :\n"
+            "- la connexion Microsoft ;\n"
+            "- tous les parametres (chemins, Outlook, Planner, modeles CAO, apparence) ;\n"
+            "- la cle Document Manager ;\n"
+            "- les mises a jour telechargees.\n\n"
+            "Les dossiers projets et le repertoire chantier ne sont pas touches. Le journal "
+            "est conserve. ProjectFlow redemarre ensuite sur l'assistant de premier lancement.",
+            QMessageBox.StandardButton.Reset | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Reset:
+            return
+        self._reset_requested = True
+        # Nothing may wait for a browser while the application shuts down.
+        cancel_pending_sign_ins()
+        if isinstance(parent, QDialog):
+            parent.reject()
+        self._log("+ Reinitialisation complete: ProjectFlow redemarre.")
+        QTimer.singleShot(0, self._quit_for_reset)
+
+    def _quit_for_reset(self) -> None:
+        self._window.request_quit()
+        QApplication.quit()
 
     def _reset_repertoire_connection(self) -> None:
         if isinstance(self._services, ServiceContainer):
@@ -1752,6 +1864,7 @@ def _planner_client() -> GraphPlannerClient:
     token_provider = MsalAccessTokenProvider(
         client_id=settings.microsoft_client_id,
         scopes=PLANNER_GRAPH_SCOPES,
+        allow_interactive=False,
     )
     return GraphPlannerClient(
         graph=GraphClient(token_provider=token_provider, request_timeout=60.0)

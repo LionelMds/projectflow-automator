@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -23,9 +24,11 @@ from projectflow.ui.creation_tab import CreationTab
 from projectflow.ui.repertoire_tab import RepertoireDossierTab
 from projectflow.ui.sortie_tab import SortieDossierTab
 from projectflow.ui.theme import set_icon
-from projectflow.ui.widgets.industry import DotTag, LogoLabel, button, label, rule
+from projectflow.ui.widgets.industry import DotTag, LogoLabel, button, label, rule, set_variant
 
 _OUTLOOK_BASE_FOLDERS = {"root": "Racine du compte", "inbox": "Boîte de réception"}
+MicrosoftState = Literal["hidden", "checking", "connected", "warning", "disconnected"]
+MICROSOFT_SIGN_IN_LABEL = "Se connecter à Microsoft"
 
 
 class MainWindow(QMainWindow):
@@ -34,12 +37,16 @@ class MainWindow(QMainWindow):
     settings_requested = Signal()
     quick_create_requested = Signal()
     hidden_to_background = Signal()
+    microsoft_sign_in_requested = Signal()
+    connection_check_requested = Signal()
+    reset_requested = Signal()
 
     def __init__(self, config: AppConfig) -> None:
         super().__init__()
         self._config = config
         self._background_mode_enabled = False
         self._quit_requested = False
+        self._microsoft_state: MicrosoftState = "hidden"
         self.setWindowTitle("ProjectFlow Automator - Balz Metal Sa")
         self.resize(1280, 820)
         self.setMinimumSize(1000, 680)
@@ -110,6 +117,19 @@ class MainWindow(QMainWindow):
         layout.addLayout(nav)
         layout.addStretch(1)
 
+        # Connection state checked at startup: one click signs in when it is broken.
+        self.microsoft_button = button("", "ghost", size="sm")
+        self.microsoft_button.clicked.connect(self._microsoft_clicked)
+        self._microsoft_menu = QMenu(self.microsoft_button)
+        sign_in_action = self._microsoft_menu.addAction("Se connecter / changer de compte")
+        check_action = self._microsoft_menu.addAction("Vérifier la connexion")
+        self._microsoft_menu.addSeparator()
+        reset_from_status = self._microsoft_menu.addAction("Tout réinitialiser ProjectFlow…")
+        sign_in_action.triggered.connect(self.microsoft_sign_in_requested.emit)
+        check_action.triggered.connect(self.connection_check_requested.emit)
+        reset_from_status.triggered.connect(self.reset_requested.emit)
+        self.microsoft_button.hide()
+        layout.addWidget(self.microsoft_button, 0, Qt.AlignmentFlag.AlignVCenter)
         self.repertoire_tag = DotTag()
         layout.addWidget(self.repertoire_tag, 0, Qt.AlignmentFlag.AlignVCenter)
         actions = QHBoxLayout()
@@ -129,14 +149,44 @@ class MainWindow(QMainWindow):
         settings_action = menu.addAction("Paramètres…")
         update_action = menu.addAction("Rechercher une mise à jour")
         menu.addSeparator()
+        reset_action = menu.addAction("Tout réinitialiser ProjectFlow…")
         about_action = menu.addAction("À propos")
         settings_action.triggered.connect(self.settings_requested.emit)
         update_action.triggered.connect(self.update_check_requested.emit)
+        reset_action.triggered.connect(self.reset_requested.emit)
         about_action.triggered.connect(self._show_about)
         self.settings_button.setMenu(menu)
         actions.addWidget(self.settings_button)
         layout.addLayout(actions)
         return header
+
+    @property
+    def microsoft_state(self) -> MicrosoftState:
+        return self._microsoft_state
+
+    def set_microsoft_status(self, state: MicrosoftState, detail: str = "") -> None:
+        self._microsoft_state = state
+        self.microsoft_button.setVisible(state != "hidden")
+        texts = {
+            "checking": "Microsoft · vérification…",
+            "connected": f"Microsoft · {detail}",
+            "warning": f"Microsoft · {detail}",
+            "disconnected": MICROSOFT_SIGN_IN_LABEL,
+        }
+        self.microsoft_button.setText(texts.get(state, ""))
+        self.microsoft_button.setToolTip(
+            detail if state == "disconnected" else "Connexion Microsoft de ProjectFlow",
+        )
+        broken = state in {"warning", "disconnected"}
+        set_variant(self.microsoft_button, "danger" if broken else "ghost")
+
+    def _microsoft_clicked(self) -> None:
+        if self._microsoft_state in {"warning", "disconnected"}:
+            self.microsoft_sign_in_requested.emit()
+            return
+        self._microsoft_menu.popup(
+            self.microsoft_button.mapToGlobal(QPoint(0, self.microsoft_button.height())),
+        )
 
     def _sync_nav(self, index: int) -> None:
         nav_button = self._nav_group.button(index)

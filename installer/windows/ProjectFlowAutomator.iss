@@ -39,6 +39,7 @@ Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Creer une icone sur le Bureau"; GroupDescription: "Raccourcis:"; Flags: unchecked
+Name: "cleaninstall"; Description: "Nouvelle installation : tout reinitialiser (connexion Microsoft, parametres, cle Document Manager). Les dossiers projets ne sont pas touches."; GroupDescription: "Reinitialisation:"; Flags: unchecked
 
 [Files]
 Source: "..\..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
@@ -48,4 +49,19 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+; Same reset as the in-app "Tout reinitialiser", run before the first start.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--reset-all"; StatusMsg: "Reinitialisation de ProjectFlow..."; Tasks: cleaninstall; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "Lancer {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  // An instance left in the tray keeps the old version running: starting the new
+  // one would only bring that old window back. In-app updates quit by themselves.
+  if not WizardSilent() then
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#MyAppExeName}', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+  Result := '';
+end;

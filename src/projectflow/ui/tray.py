@@ -10,6 +10,7 @@ class ProjectFlowTray(QObject):
     quick_create_requested = Signal()
     open_repertoire_requested = Signal()
     update_check_requested = Signal()
+    reset_requested = Signal()
     quit_requested = Signal()
 
     def __init__(self, *, icon: QIcon, parent: QObject | None = None) -> None:
@@ -37,12 +38,15 @@ class ProjectFlowTray(QObject):
         quick_create_action = QAction("Nouveau projet rapide", self)
         open_repertoire_action = QAction("Ouvrir repertoire", self)
         update_action = QAction("Rechercher une mise a jour", self)
+        # Reachable even when the window is busy with a broken connection.
+        reset_action = QAction("Tout reinitialiser ProjectFlow...", self)
         quit_action = QAction("Quitter ProjectFlow", self)
 
         show_action.triggered.connect(self.show_requested.emit)
         quick_create_action.triggered.connect(self.quick_create_requested.emit)
         open_repertoire_action.triggered.connect(self.open_repertoire_requested.emit)
         update_action.triggered.connect(self.update_check_requested.emit)
+        reset_action.triggered.connect(self.reset_requested.emit)
         quit_action.triggered.connect(self.quit_requested.emit)
 
         menu.addAction(show_action)
@@ -50,6 +54,7 @@ class ProjectFlowTray(QObject):
         menu.addSeparator()
         menu.addAction(open_repertoire_action)
         menu.addAction(update_action)
+        menu.addAction(reset_action)
         menu.addSeparator()
         menu.addAction(quit_action)
         return menu

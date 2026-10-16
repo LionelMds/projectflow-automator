@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
+import sys
 from collections.abc import Sequence
 from importlib import resources
 from pathlib import Path
@@ -12,11 +14,13 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
+from projectflow import __version__
 from projectflow.auth.browser_sign_in import set_sign_in_prompt
 from projectflow.config import AppConfig
 from projectflow.demo import build_demo_environment
 from projectflow.logging import configure_logging, get_logger
 from projectflow.platform.single_instance import SingleInstanceGuard
+from projectflow.reset import reset_local_data
 from projectflow.services import ServiceContainer
 from projectflow.ui.controller import ProjectFlowController, ServiceProvider
 from projectflow.ui.dialogs.microsoft_sign_in import MicrosoftSignInPrompt
@@ -59,7 +63,7 @@ def run(argv: Sequence[str]) -> int:
         logger.info("app.demo_mode.enabled", root=str(config.paths.racine_projets))
     else:
         config = AppConfig.load()
-        services = ServiceContainer(config)
+        services = ServiceContainer(config, interactive_sign_in=False)
         save_config = config.save
     apply_theme(app, config.appearance)
 
@@ -74,7 +78,7 @@ def run(argv: Sequence[str]) -> int:
             return 0
         config = wizard.config
         config.save()
-        services = ServiceContainer(config)
+        services = ServiceContainer(config, interactive_sign_in=False)
         save_config = config.save
 
     window = MainWindow(config)
@@ -89,8 +93,10 @@ def run(argv: Sequence[str]) -> int:
         logger.info("app.tray.enabled")
     single_instance.activation_requested.connect(lambda _command: controller.show_window())
     window.show()
-    logger.info("app.started")
+    logger.info("app.started", version=__version__)
     if not demo_mode:
+        # Know at once whether Microsoft works, without opening any browser.
+        QTimer.singleShot(0, controller.request_connection_check)
         QTimer.singleShot(
             0,
             lambda: controller.request_update_check(show_no_update=False),
@@ -100,12 +106,27 @@ def run(argv: Sequence[str]) -> int:
     with event_loop:
         try:
             result = event_loop.run_forever()
-            return result if isinstance(result, int) else 0
         finally:
             try:
                 event_loop.run_until_complete(controller.aclose())
             finally:
                 single_instance.release()
+    if controller.reset_requested:
+        # Erased only now: nothing running can write the settings or tokens back.
+        failures = reset_local_data()
+        logger.info("app.reset.finished", failures=failures)
+        _restart_application()
+    return result if isinstance(result, int) else 0
+
+
+def _restart_application() -> None:
+    command = [sys.executable]
+    if not getattr(sys, "frozen", False):
+        command += ["-m", "projectflow"]
+    # A one-file build must unpack itself again instead of reusing this process's files.
+    environment = {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+    creationflags = getattr(subprocess, "DETACHED_PROCESS", 0)
+    subprocess.Popen(command, env=environment, creationflags=creationflags, close_fds=True)
 
 
 def _configure_tray(
@@ -126,6 +147,7 @@ def _configure_tray(
     tray.quick_create_requested.connect(controller.show_quick_create)
     tray.open_repertoire_requested.connect(controller.open_repertoire)
     tray.update_check_requested.connect(controller.request_update_check)
+    tray.reset_requested.connect(controller.request_reset)
     tray.quit_requested.connect(lambda: _quit_from_tray(app, window))
     window.hidden_to_background.connect(
         lambda: tray.show_message(

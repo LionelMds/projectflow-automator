@@ -63,6 +63,22 @@ premiere utilisation du repertoire, puis reutilisera le cache token local.
 Si Planner est active, ProjectFlow demande les droits Planner separement du repertoire chantier.
 Sans ces droits, le repertoire OneDrive continue de fonctionner.
 
+## Depannage de la connexion Microsoft
+
+Au demarrage, ProjectFlow verifie la connexion sans ouvrir de navigateur. Le bouton en haut de
+la fenetre affiche le compte connecte, ou `Se connecter a Microsoft` en rouge : un clic ouvre la
+connexion. Les chargements n'ouvrent jamais le navigateur d'eux-memes.
+
+Pour repartir de zero sur un poste :
+
+- dans ProjectFlow : menu reglages (ou icone de la barre des taches) > `Tout reinitialiser
+  ProjectFlow...`, puis refaire l'assistant de premier lancement ;
+- ou relancer l'installateur en cochant `Nouvelle installation : tout reinitialiser`.
+
+Sont effaces : la connexion Microsoft, les parametres, la cle Document Manager et les mises a
+jour telechargees. Les dossiers projets, le repertoire chantier et le journal
+(`%LOCALAPPDATA%\Balz Metal Sa\ProjectFlow\Logs`) sont conserves.
+
 ## Mises a jour
 
 Les mises a jour in-app utilisent les artefacts GitHub Releases :

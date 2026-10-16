@@ -73,6 +73,11 @@ def set_tone(widget: QWidget, tone: str | None) -> None:
     _repolish(widget)
 
 
+def set_variant(widget: QWidget, variant: str) -> None:
+    widget.setProperty("variant", variant)
+    _repolish(widget)
+
+
 def _repolish(widget: QWidget) -> None:
     style = widget.style()
     style.unpolish(widget)

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from PySide6.QtWidgets import QMessageBox
 
 from projectflow.config import AppConfig
 from projectflow.core.fiche_service import FicheService
@@ -471,9 +472,13 @@ def test_settings_preserve_unrelated_state_and_apply_changed_planner_to_both_for
             return self.DialogCode.Accepted
 
     monkeypatch.setattr("projectflow.ui.controller.SettingsDialog", AcceptedSettings)
+    checks: list[bool] = []
+    monkeypatch.setattr(controller, "request_connection_check", lambda: checks.append(True))
 
     controller.open_settings()
 
+    # A new plan is checked at once, without waiting for the next Planner action.
+    assert checks == ([True] if change == "plan" else [])
     assert config.user.initials == "CD"
     assert config.paths.repertoire_chantier.open_path == native_path_text(
         "C:/Synthetic/Repertoire.xlsx",
@@ -519,6 +524,9 @@ class FakeSignIn:
         if isinstance(self.outcome, Exception):
             raise self.outcome
         return self.outcome
+
+    async def signed_in_account(self) -> str:
+        raise AuthError("Connexion Microsoft requise.")
 
 
 def _settings_closed_after_sign_in() -> tuple[type[SettingsDialog], list[SettingsDialog]]:
@@ -576,6 +584,8 @@ async def test_microsoft_sign_in_opens_at_once_without_saving_or_loading(
     assert window.tabs.currentWidget() is tab_before
     assert not repertoire.calls
     assert opened[0].microsoft_status_label.text() == "Connecté : alice@example.com"
+    assert window.microsoft_state == "connected"
+    assert window.microsoft_button.text() == "Microsoft · alice@example.com"
 
 
 @pytest.mark.asyncio
@@ -628,3 +638,192 @@ async def test_stuck_repertoire_load_does_not_block_reload_after_reconnection(qt
     stuck.releases[0].set()
     await asyncio.wait_for(first, timeout=2)
     await controller.aclose()
+
+
+class FakeConnection:
+    """Token providers built by the controller, keyed by their scopes."""
+
+    def __init__(
+        self,
+        account: str | Exception = "alice@example.com",
+        *,
+        planner: Exception | None = None,
+        delay: float = 0.0,
+    ) -> None:
+        self.account = account
+        self.planner = planner
+        self.delay = delay
+        self.created: list[dict[str, object]] = []
+
+    def provider(self, **kwargs: object) -> FakeConnectionProvider:
+        self.created.append(kwargs)
+        return FakeConnectionProvider(self, planner="scopes" in kwargs)
+
+
+class FakeConnectionProvider:
+    def __init__(self, connection: FakeConnection, *, planner: bool) -> None:
+        self._connection = connection
+        self._planner = planner
+
+    async def signed_in_account(self) -> str:
+        await asyncio.sleep(self._connection.delay)
+        if isinstance(self._connection.account, Exception):
+            raise self._connection.account
+        return self._connection.account
+
+    async def access_token(self) -> str:
+        if self._planner and self._connection.planner is not None:
+            raise self._connection.planner
+        return "token"
+
+
+def _cloud_controller(
+    qtbot: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    connection: FakeConnection,
+    *,
+    planner: bool = False,
+) -> tuple[ProjectFlowController, MainWindow]:
+    config = AppConfig()
+    config.paths.repertoire_chantier.cloud_only = True
+    config.planner.enabled = planner
+    window = MainWindow(config)
+    qtbot.addWidget(window)
+    services = ServiceContainer(config, repertoire_service=ControlledRepertoire())  # type: ignore[arg-type]
+    controller = ProjectFlowController(window=window, config=config, services=services)
+    monkeypatch.setattr("projectflow.ui.controller.MsalAccessTokenProvider", connection.provider)
+    return controller, window
+
+
+@pytest.mark.asyncio
+async def test_startup_check_shows_connected_account_without_browser(qtbot, monkeypatch) -> None:
+    connection = FakeConnection()
+    controller, window = _cloud_controller(qtbot, monkeypatch, connection)
+
+    await controller.check_microsoft_connection()
+
+    assert window.microsoft_state == "connected"
+    assert window.microsoft_button.text() == "Microsoft · alice@example.com"
+    assert connection.created == [
+        {"client_id": connection.created[0]["client_id"], "allow_interactive": False},
+    ]
+    await controller.aclose()
+
+
+@pytest.mark.asyncio
+async def test_broken_connection_offers_one_click_sign_in(qtbot, monkeypatch) -> None:
+    connection = FakeConnection(AuthError("Connexion Microsoft requise."))
+    controller, window = _cloud_controller(qtbot, monkeypatch, connection)
+    sign_ins: list[bool] = []
+    window.microsoft_sign_in_requested.connect(lambda: sign_ins.append(True))
+
+    await controller.check_microsoft_connection()
+    window.microsoft_button.click()
+
+    assert window.microsoft_state == "disconnected"
+    assert window.microsoft_button.text() == "Se connecter à Microsoft"
+    assert window.microsoft_button.isVisible() or not window.isVisible()
+    assert sign_ins == [True]
+    assert "Connexion Microsoft requise." in window.creation_tab.logs.toPlainText()
+    await controller.aclose()
+
+
+@pytest.mark.asyncio
+async def test_unresponsive_microsoft_is_reported_quickly(qtbot, monkeypatch) -> None:
+    connection = FakeConnection(delay=5)
+    controller, window = _cloud_controller(qtbot, monkeypatch, connection)
+    monkeypatch.setattr("projectflow.ui.controller.CONNECTION_CHECK_TIMEOUT_SECONDS", 0.05)
+
+    await asyncio.wait_for(controller.check_microsoft_connection(), timeout=2)
+
+    assert window.microsoft_state == "disconnected"
+    assert "ne repond pas" in window.microsoft_button.toolTip()
+    await controller.aclose()
+
+
+@pytest.mark.asyncio
+async def test_missing_planner_consent_is_flagged(qtbot, monkeypatch) -> None:
+    connection = FakeConnection(planner=AuthError("Consentement requis."))
+    controller, window = _cloud_controller(qtbot, monkeypatch, connection, planner=True)
+
+    await controller.check_microsoft_connection()
+
+    assert window.microsoft_state == "warning"
+    assert window.microsoft_button.text() == "Microsoft · Planner à autoriser"
+    await controller.aclose()
+
+
+@pytest.mark.asyncio
+async def test_connection_check_stays_hidden_without_microsoft_features(qtbot) -> None:
+    config = AppConfig()
+    window = MainWindow(config)
+    qtbot.addWidget(window)
+    services = ServiceContainer(config, repertoire_service=ControlledRepertoire())  # type: ignore[arg-type]
+    controller = ProjectFlowController(window=window, config=config, services=services)
+
+    await controller.check_microsoft_connection()
+
+    assert window.microsoft_state == "hidden"
+    assert window.microsoft_button.isHidden()
+    await controller.aclose()
+
+
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_full_reset_quits_only_after_confirmation(qtbot, monkeypatch, confirmed: bool) -> None:  # noqa: FBT001
+    config = AppConfig()
+    window = MainWindow(config)
+    qtbot.addWidget(window)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=AsyncTestServices(),  # type: ignore[arg-type]
+    )
+    answer = QMessageBox.StandardButton.Reset if confirmed else QMessageBox.StandardButton.Cancel
+    monkeypatch.setattr(
+        "projectflow.ui.controller.QMessageBox.warning",
+        lambda *_args, **_kwargs: answer,
+    )
+    quits: list[bool] = []
+    monkeypatch.setattr(
+        "projectflow.ui.controller.QApplication.quit",
+        lambda: quits.append(True),
+    )
+    cancelled: list[bool] = []
+    monkeypatch.setattr(
+        "projectflow.ui.controller.cancel_pending_sign_ins",
+        lambda: cancelled.append(True),
+    )
+    settings = SettingsDialog(config)
+    qtbot.addWidget(settings)
+    settings.show()
+
+    settings.reset_button.clicked.disconnect()
+    settings.reset_button.clicked.connect(lambda: controller.request_reset(settings))
+    settings.reset_button.click()
+
+    if confirmed:
+        qtbot.waitUntil(lambda: quits == [True])
+        assert controller.reset_requested
+        assert cancelled == [True]
+        assert not settings.isVisible()
+    else:
+        qtbot.wait(20)
+        assert not quits
+        assert not controller.reset_requested
+        assert settings.isVisible()
+
+
+def test_reset_is_reachable_from_the_window_menu(qtbot) -> None:
+    window = MainWindow(AppConfig())
+    qtbot.addWidget(window)
+    requested: list[bool] = []
+    window.reset_requested.connect(lambda: requested.append(True))
+
+    menu = window.settings_button.menu()
+    assert menu is not None
+    reset_action = next(
+        action for action in menu.actions() if action.text() == "Tout réinitialiser ProjectFlow…"
+    )
+    reset_action.trigger()
+
+    assert requested == [True]
