@@ -13,7 +13,9 @@ les services cloud concernes, sans passer par une copie locale synchronisee.
 - Outlook classique installe et configure uniquement si la creation de dossiers Outlook doit
   etre activee.
 - Un plan Microsoft Planner accessible aux utilisateurs si la creation de taches doit etre activee.
-- Une App Registration Microsoft publique avec le redirect URI desktop `http://localhost`.
+- Une App Registration Microsoft publique avec le redirect URI desktop `http://localhost`,
+  limitee au locataire Balz Metal SA (`e7cf482b-7ac5-41e7-855c-507af4329317`, embarque dans
+  ProjectFlow). Changer de locataire demande une nouvelle version de ProjectFlow.
 - Le Client ID public est embarque dans ProjectFlow. Le secret GitHub
   `PROJECTFLOW_MICROSOFT_CLIENT_ID` reste disponible uniquement pour remplacer cette valeur lors
   d'une release.
@@ -39,6 +41,11 @@ ProjectFlow ne demande pas explicitement les scopes reserves (`offline_access`, 
 Si le tenant bloque le consentement utilisateur, un administrateur Microsoft 365 doit accorder le
 consentement une seule fois pour l'application. Les utilisateurs n'ont ensuite aucune action Azure
 a faire.
+
+Si `Affectation requise` est active dans `Applications d'entreprise` -> `ProjectFlow Automator`
+-> `Proprietes`, seuls les utilisateurs ou groupes ajoutes dans `Utilisateurs et groupes` peuvent
+se connecter. Les autres recoivent l'erreur `AADSTS50105`. Etre proprietaire de l'App Registration
+ne suffit pas.
 
 ## Distribution
 
@@ -66,6 +73,12 @@ Les mises a jour in-app utilisent les artefacts GitHub Releases :
 
 Pour publier une mise a jour, creer un tag `vX.Y.Z`. Le workflow produit les installateurs,
 leurs checksums et la release GitHub.
+
+Pour tester une version sur quelques postes avant tout le monde, lancer le workflow `Release`
+manuellement en cochant `prerelease` (`gh workflow run release.yml -f prerelease=true`). La
+mise a jour in-app ne propose jamais une pre-release : installer l'installateur a la main sur les
+postes de test. Une fois validee, `gh release edit vX.Y.Z --prerelease=false --latest` la
+propose a tous les postes, sans nouveau build.
 
 ## Outlook local
 

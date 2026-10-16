@@ -5,6 +5,13 @@ on:
     tags: ["v*.*.*"]
   # Manual run from main: the tag is the pyproject version, created with the release.
   workflow_dispatch:
+    inputs:
+      prerelease:
+        # The in-app updater reads /releases/latest, which never returns a pre-release:
+        # only the machines where it is installed by hand get it.
+        description: "Pre-release : pas proposee par la mise a jour automatique"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -221,6 +228,7 @@ jobs:
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
+          prerelease: ${{ inputs.prerelease == true }}
           body_path: release-notes.md
           files: |
             artifacts/**/*.exe

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.61
+
+- Connexion Microsoft : l'application Entra ProjectFlow Automator est passee en locataire
+  unique (Balz Metal SA). ProjectFlow se connecte maintenant sur le locataire Balz Metal au
+  lieu de `/common`, que Microsoft refusait (`AADSTS50194`). Les comptes deja connectes sur
+  un poste restent valides.
+
 ## 0.1.60
 
 - Planner : `Detecter` liste aussi les plans des groupes Microsoft 365 dont le compte est

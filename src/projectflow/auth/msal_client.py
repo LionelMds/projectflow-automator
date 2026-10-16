@@ -14,7 +14,10 @@ from projectflow.auth.token_storage import TokenCacheStorage
 from projectflow.exceptions import AuthError
 from projectflow.logging import get_logger
 
-AUTHORITY = "https://login.microsoftonline.com/common"
+# The app registration is single-tenant (Balz Metal SA): Microsoft rejects /common
+# for it with AADSTS50194. Cached accounts stay valid, refresh tokens are tenant-independent.
+BALZ_METAL_TENANT_ID = "e7cf482b-7ac5-41e7-855c-507af4329317"
+AUTHORITY = f"https://login.microsoftonline.com/{BALZ_METAL_TENANT_ID}"
 GRAPH_SCOPES = ("Files.ReadWrite.All",)
 PLANNER_GRAPH_SCOPES = (
     "Tasks.ReadWrite",

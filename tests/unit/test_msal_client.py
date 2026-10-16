@@ -35,6 +35,24 @@ def test_graph_scopes_do_not_include_msal_reserved_scopes() -> None:
     )
 
 
+def test_msal_provider_signs_in_on_the_balz_metal_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The app registration is single-tenant: /common fails with AADSTS50194.
+    fake_module = FakeMsalModule(accounts=[dict(ACCOUNT)], silent_token="silent-token")
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=FakeStorage(),  # type: ignore[arg-type]
+    )
+
+    provider._access_token_sync()  # noqa: SLF001
+
+    assert fake_module.authority == (
+        "https://login.microsoftonline.com/e7cf482b-7ac5-41e7-855c-507af4329317"
+    )
+
+
 def test_msal_provider_rejects_placeholder_client_id() -> None:
     provider = MsalAccessTokenProvider(client_id="TON_CLIENT_ID")
 
@@ -294,6 +312,7 @@ class FakeMsalModule:
         interactive_result: object | None = None,
     ) -> None:
         self.applications_created = 0
+        self.authority: object = None
         self.app = FakePublicClientApplication(
             accounts=accounts,
             silent_token=silent_token,
@@ -307,9 +326,10 @@ class FakeMsalModule:
     def PublicClientApplication(  # noqa: N802
         self,
         *_args: object,
-        **_kwargs: object,
+        **kwargs: object,
     ) -> FakePublicClientApplication:
         self.applications_created += 1
+        self.authority = kwargs.get("authority")
         return self.app
 
 
