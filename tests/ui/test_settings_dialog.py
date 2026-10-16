@@ -640,12 +640,21 @@ async def test_closing_settings_cancels_detection_and_closes_planner_client(
     assert not warnings
 
 
-def test_microsoft_sign_in_is_requested_only_after_click(qtbot) -> None:  # type: ignore[no-untyped-def]
+def test_microsoft_sign_in_starts_on_click_without_saving(qtbot) -> None:  # type: ignore[no-untyped-def]
     dialog = SettingsDialog(AppConfig())
     qtbot.addWidget(dialog)
-    assert not dialog.microsoft_sign_in_requested
+    requested: list[bool] = []
+    dialog.microsoft_sign_in_requested.connect(lambda: requested.append(True))
 
     dialog.microsoft_sign_in_button.click()
 
-    assert dialog.microsoft_sign_in_requested
+    assert requested == [True]
     assert not dialog.microsoft_sign_in_button.isEnabled()
+    assert "navigateur" in dialog.microsoft_status_label.text()
+    assert dialog.result() == 0  # Still open: no OK needed.
+
+    dialog.microsoft_sign_in_finished("Connecté : alice@example.com")
+
+    assert dialog.microsoft_sign_in_button.isEnabled()
+    assert dialog.microsoft_sign_in_button.text() == "Se reconnecter au compte Microsoft"
+    assert dialog.microsoft_status_label.text() == "Connecté : alice@example.com"

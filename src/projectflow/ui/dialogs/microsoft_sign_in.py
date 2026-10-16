@@ -114,7 +114,9 @@ class MicrosoftSignInPrompt(QObject):
         return list(self._dialogs.values())
 
     def _show(self, sign_in_url: str, cancel: Callable[[], None]) -> None:
-        dialog = MicrosoftSignInDialog(sign_in_url, cancel, parent=self._parent_window)
+        # Under an open modal window (Parametres), only its children accept clicks.
+        parent = QApplication.activeModalWidget() or self._parent_window
+        dialog = MicrosoftSignInDialog(sign_in_url, cancel, parent=parent)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.finished.connect(lambda _result: self._dialogs.pop(sign_in_url, None))
         self._dialogs[sign_in_url] = dialog

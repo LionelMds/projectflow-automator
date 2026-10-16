@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.62
+
+- `Se reconnecter au compte Microsoft` ouvre la connexion tout de suite, sans enregistrer
+  les parametres, sans basculer sur l'onglet Repertoire et sans le recharger. Le resultat
+  (compte connecte ou erreur) s'affiche sous le bouton. Si la connexion est annulee, le
+  compte actuel reste utilise.
+- La fenetre « Connexion Microsoft » reste cliquable quand les Parametres sont ouverts.
+
 ## 0.1.61
 
 - Connexion Microsoft : l'application Entra ProjectFlow Automator est passee en locataire

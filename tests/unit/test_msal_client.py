@@ -8,7 +8,6 @@ from projectflow.auth.msal_client import (
     INTERACTIVE_TIMEOUT_SECONDS,
     PLANNER_GRAPH_SCOPES,
     MsalAccessTokenProvider,
-    sign_out_microsoft,
 )
 from projectflow.exceptions import AuthError
 
@@ -222,12 +221,44 @@ def test_sign_in_forgets_other_cached_accounts(monkeypatch: pytest.MonkeyPatch) 
     assert fake_module.app.get_accounts() == [ACCOUNT]
 
 
-def test_sign_out_clears_stored_account() -> None:
+def test_sign_in_opens_browser_even_with_a_working_cached_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     storage = FakeStorage()
+    fake_module = FakeMsalModule(
+        accounts=[dict(ACCOUNT)],
+        silent_token="old-token",
+        interactive_result={"access_token": "new-token"},
+    )
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=storage,  # type: ignore[arg-type]
+    )
 
-    sign_out_microsoft(storage)  # type: ignore[arg-type]
+    username = provider._sign_in_sync()  # noqa: SLF001
 
-    assert storage.cleared == 1
+    assert username == "alice@example.com"
+    assert not fake_module.app.silent_scopes
+    assert fake_module.app.interactive_options == [{"prompt": "select_account", "login_hint": None}]
+    assert storage.saved == ["serialized-cache"]
+    assert provider._access_token_sync() == "new-token"  # noqa: SLF001
+
+
+def test_cancelled_sign_in_keeps_the_stored_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    storage = FakeStorage()
+    fake_module = FakeMsalModule(accounts=[dict(ACCOUNT)], interactive_result={})
+    monkeypatch.setattr(msal_client, "_msal_module", lambda: fake_module)
+    provider = MsalAccessTokenProvider(
+        client_id="11111111-1111-1111-1111-111111111111",
+        cache_storage=storage,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(AuthError):
+        provider._sign_in_sync()  # noqa: SLF001
+
+    assert not storage.saved
+    assert not storage.cleared
 
 
 class FakeStorage:

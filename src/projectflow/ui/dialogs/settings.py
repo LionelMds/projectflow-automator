@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from pydantic import ValidationError
-from PySide6.QtCore import QRectF, QSignalBlocker, Qt
+from PySide6.QtCore import QRectF, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QFont, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -75,6 +75,8 @@ from projectflow.ui.widgets.industry import (
     rule,
 )
 
+MICROSOFT_SIGN_IN_TEXT = "Se reconnecter au compte Microsoft"
+
 
 class LicenseKeyStorage(Protocol):
     def load(self) -> str:
@@ -88,6 +90,9 @@ class LicenseKeyStorage(Protocol):
 
 
 class SettingsDialog(QDialog):
+    # Signing in again acts at once: it is not a setting waiting for OK.
+    microsoft_sign_in_requested = Signal()
+
     def __init__(
         self,
         config: AppConfig,
@@ -100,7 +105,6 @@ class SettingsDialog(QDialog):
         self._license_storage = license_storage or SolidWorksLicenseStorage()
         self._license_clear_requested = False
         self._reconnect_repertoire = False
-        self._microsoft_sign_in_requested = False
         self._planner_task: asyncio.Task[None] | None = None
         self._cad_test_task: asyncio.Task[None] | None = None
         self._finished = False
@@ -604,26 +608,33 @@ class SettingsDialog(QDialog):
         self.solidworks_license_edit.setPlaceholderText("Cle effacee apres enregistrement")
         self.solidworks_license_clear_button.setEnabled(False)
 
-    @property
-    def microsoft_sign_in_requested(self) -> bool:
-        return self._microsoft_sign_in_requested
-
     def _microsoft_group(self) -> QGroupBox:
         group = QGroupBox("Compte Microsoft")
         layout = QFormLayout(group)
-        self.microsoft_sign_in_button = QPushButton("Se reconnecter au compte Microsoft")
+        self.microsoft_sign_in_button = QPushButton(MICROSOFT_SIGN_IN_TEXT)
         self.microsoft_sign_in_button.setToolTip(
-            "Oublie la connexion Microsoft enregistree sur ce poste. Apres OK, "
-            "le navigateur s'ouvre pour choisir le compte et se connecter a nouveau.",
+            "Ouvre tout de suite la connexion Microsoft dans le navigateur pour choisir "
+            "le compte. Le compte actuel reste utilise si la connexion est annulee.",
         )
         self.microsoft_sign_in_button.clicked.connect(self._request_microsoft_sign_in)
+        self.microsoft_status_label = label("", "muted", wrap=True)
         layout.addRow("", self.microsoft_sign_in_button)
+        layout.addRow("", self.microsoft_status_label)
         return group
 
     def _request_microsoft_sign_in(self) -> None:
-        self._microsoft_sign_in_requested = True
-        self.microsoft_sign_in_button.setText("Reconnexion apres enregistrement des parametres")
+        self.microsoft_sign_in_button.setText("Connexion en cours...")
         self.microsoft_sign_in_button.setEnabled(False)
+        self.microsoft_status_label.setText(
+            "Choisissez le compte dans la page Microsoft ouverte dans le navigateur.",
+        )
+        self.microsoft_sign_in_requested.emit()
+
+    def microsoft_sign_in_finished(self, message: str) -> None:
+        """Show the outcome; nothing needs saving afterwards."""
+        self.microsoft_sign_in_button.setText(MICROSOFT_SIGN_IN_TEXT)
+        self.microsoft_sign_in_button.setEnabled(True)
+        self.microsoft_status_label.setText(redact_sensitive_links(message))
 
     def _request_repertoire_reconnection(self) -> None:
         self._reconnect_repertoire = True

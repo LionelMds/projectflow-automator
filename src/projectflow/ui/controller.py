@@ -16,11 +16,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.browser_sign_in import cancel_pending_sign_ins
-from projectflow.auth.msal_client import (
-    PLANNER_GRAPH_SCOPES,
-    MsalAccessTokenProvider,
-    sign_out_microsoft,
-)
+from projectflow.auth.msal_client import PLANNER_GRAPH_SCOPES, MsalAccessTokenProvider
 from projectflow.config import AppConfig, RepertoireChantierConfig
 from projectflow.core.background_io import run_file_io
 from projectflow.core.client_directory import ClientDirectory
@@ -1189,6 +1185,9 @@ class ProjectFlowController:
             self._log("-> Attendez la fin de l'operation avant de modifier les parametres.")
             return
         dialog = SettingsDialog(self._config, parent=self._window)
+        dialog.microsoft_sign_in_requested.connect(
+            lambda: self._schedule_task(self.reconnect_microsoft(dialog)),
+        )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         previous_repertoire = self._config.paths.repertoire_chantier.model_copy(deep=True)
@@ -1207,29 +1206,54 @@ class ProjectFlowController:
             self._config.planner.enabled,
             self._config.planner.target_plan_id,
         )
-        microsoft_sign_in = dialog.microsoft_sign_in_requested
-        if microsoft_sign_in:
-            self._sign_out_microsoft()
-        if repertoire_changed or microsoft_sign_in:
-            if isinstance(self._services, ServiceContainer):
-                self._services.reset_repertoire()
-            self._invalidate_repertoire_data()
-        if planner_changed or microsoft_sign_in:
-            if isinstance(self._services, ServiceContainer):
-                self._services.reset_planner()
-            self._planner_generation += 1
-            self._planner_cache_plan = ""
-            self._planner_bucket_options = []
-            self._planner_member_options = []
+        if repertoire_changed:
+            self._reset_repertoire_connection()
+        if planner_changed:
+            self._reset_planner_connection()
         self._window.apply_config_labels()
         self._apply_quick_config(planner_changed=previous_planner != self._config.planner)
         self._save_config_if_available()
         self._log("+ Parametres enregistres")
         self._log_integration_settings()
-        if microsoft_sign_in:
-            self._log("+ Connexion Microsoft reinitialisee: connectez-vous dans le navigateur.")
-            self._window.tabs.setCurrentWidget(self._window.repertoire_tab)
-            self._schedule_task(self.load_repertoire())
+
+    async def reconnect_microsoft(self, dialog: SettingsDialog | None = None) -> None:
+        """Open the Microsoft sign-in at once; nothing is saved or reloaded meanwhile."""
+        # A sign-in still waiting (browser never shown) would otherwise hold the
+        # browser sign-in turn for several minutes.
+        cancel_pending_sign_ins()
+        settings = ApplicationSettings.load()
+        provider = MsalAccessTokenProvider(client_id=settings.microsoft_client_id)
+        try:
+            username = await provider.sign_in()
+        except ProjectFlowError as exc:
+            self._log(f"-> {exc}")
+            if dialog is not None:
+                dialog.microsoft_sign_in_finished(str(exc))
+            return
+        except Exception:
+            if dialog is not None:
+                dialog.microsoft_sign_in_finished("Connexion Microsoft interrompue.")
+            raise
+        # The services still hold tokens of the previous account in memory.
+        self._reset_repertoire_connection()
+        self._reset_planner_connection()
+        account = username or "compte Microsoft"
+        self._log(f"+ Connecte a Microsoft: {account}")
+        if dialog is not None:
+            dialog.microsoft_sign_in_finished(f"Connecté : {account}")
+
+    def _reset_repertoire_connection(self) -> None:
+        if isinstance(self._services, ServiceContainer):
+            self._services.reset_repertoire()
+        self._invalidate_repertoire_data()
+
+    def _reset_planner_connection(self) -> None:
+        if isinstance(self._services, ServiceContainer):
+            self._services.reset_planner()
+        self._planner_generation += 1
+        self._planner_cache_plan = ""
+        self._planner_bucket_options = []
+        self._planner_member_options = []
 
     def _log_integration_settings(self) -> None:
         if self._config.outlook.enabled:
@@ -1243,15 +1267,6 @@ class ProjectFlowController:
             self._log(f"+ Planner active: {plan} / {bucket}")
         else:
             self._log("-> Planner desactive")
-
-    def _sign_out_microsoft(self) -> None:
-        # A sign-in still waiting (browser never shown) would otherwise keep the
-        # repertoire loading and delay the new sign-in for several minutes.
-        cancel_pending_sign_ins()
-        try:
-            sign_out_microsoft()
-        except OSError as exc:
-            self._error(f"Impossible d'effacer la connexion Microsoft: {exc}")
 
     def _apply_quick_config(self, *, planner_changed: bool) -> None:
         if self._quick_dialog is None:

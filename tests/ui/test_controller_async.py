@@ -15,6 +15,7 @@ from projectflow.core.repertoire_service import (
     RepertoireRow,
     RepertoireSnapshot,
 )
+from projectflow.exceptions import AuthError
 from projectflow.graph.planner import PlannerBucket, PlannerMember
 from projectflow.platform.paths import native_path_text
 from projectflow.services import ServiceContainer
@@ -505,43 +506,103 @@ def test_settings_preserve_unrelated_state_and_apply_changed_planner_to_both_for
         assert controller._planner_member_options == members  # noqa: SLF001
 
 
+class FakeSignIn:
+    def __init__(self, outcome: str | Exception) -> None:
+        self.outcome = outcome
+        self.calls = 0
+
+    def provider(self, **_kwargs: object) -> FakeSignIn:
+        return self
+
+    async def sign_in(self) -> str:
+        self.calls += 1
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return self.outcome
+
+
+def _settings_closed_after_sign_in() -> tuple[type[SettingsDialog], list[SettingsDialog]]:
+    opened: list[SettingsDialog] = []
+
+    class SignInThenCancel(SettingsDialog):
+        def exec(self) -> int:
+            opened.append(self)
+            self.microsoft_sign_in_button.click()
+            return self.DialogCode.Rejected
+
+    return SignInThenCancel, opened
+
+
 @pytest.mark.asyncio
-async def test_microsoft_sign_in_forgets_account_and_reconnects_services(
+async def test_microsoft_sign_in_opens_at_once_without_saving_or_loading(
     qtbot,
     monkeypatch,
 ) -> None:
     config = AppConfig()
     window = MainWindow(config)
     qtbot.addWidget(window)
-    services = ServiceContainer(config, repertoire_service=ControlledRepertoire())  # type: ignore[arg-type]
+    repertoire = ControlledRepertoire()
+    services = ServiceContainer(config, repertoire_service=repertoire)  # type: ignore[arg-type]
     services.planner_service = object()  # type: ignore[assignment]
-    controller = ProjectFlowController(window=window, config=config, services=services)
-    signed_out: list[bool] = []
-    monkeypatch.setattr(
-        "projectflow.ui.controller.sign_out_microsoft",
-        lambda: signed_out.append(True),
+    saved: list[bool] = []
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,
+        save_config=lambda: saved.append(True),
     )
+    sign_in = FakeSignIn("alice@example.com")
+    monkeypatch.setattr("projectflow.ui.controller.MsalAccessTokenProvider", sign_in.provider)
     cancelled: list[bool] = []
     monkeypatch.setattr(
         "projectflow.ui.controller.cancel_pending_sign_ins",
         lambda: cancelled.append(True),
     )
+    settings, opened = _settings_closed_after_sign_in()
+    monkeypatch.setattr("projectflow.ui.controller.SettingsDialog", settings)
+    tab_before = window.tabs.currentWidget()
 
-    class AcceptedSettings(SettingsDialog):
-        def exec(self) -> int:
-            self.microsoft_sign_in_button.click()
-            return self.DialogCode.Accepted
-
-    monkeypatch.setattr("projectflow.ui.controller.SettingsDialog", AcceptedSettings)
-
+    # The dialog is closed with Annuler: signing in never waits for OK.
     controller.open_settings()
+    pending = controller._background_tasks  # noqa: SLF001
+    await asyncio.wait_for(asyncio.gather(*pending), timeout=2)
+    await controller.aclose()
 
-    assert signed_out == [True]
+    assert sign_in.calls == 1
     assert cancelled == [True]
     assert services.repertoire_service is None
     assert services.planner_service is None
-    assert window.tabs.currentWidget() is window.repertoire_tab
+    assert not saved
+    assert window.tabs.currentWidget() is tab_before
+    assert not repertoire.calls
+    assert opened[0].microsoft_status_label.text() == "Connecté : alice@example.com"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_microsoft_sign_in_keeps_current_connection(
+    qtbot,
+    monkeypatch,
+) -> None:
+    config = AppConfig()
+    window = MainWindow(config)
+    qtbot.addWidget(window)
+    repertoire = ControlledRepertoire()
+    services = ServiceContainer(config, repertoire_service=repertoire)  # type: ignore[arg-type]
+    controller = ProjectFlowController(window=window, config=config, services=services)
+    sign_in = FakeSignIn(AuthError("Connexion Microsoft annulee."))
+    monkeypatch.setattr("projectflow.ui.controller.MsalAccessTokenProvider", sign_in.provider)
+    monkeypatch.setattr("projectflow.ui.controller.cancel_pending_sign_ins", lambda: None)
+    settings, opened = _settings_closed_after_sign_in()
+    monkeypatch.setattr("projectflow.ui.controller.SettingsDialog", settings)
+
+    controller.open_settings()
+    pending = controller._background_tasks  # noqa: SLF001
+    await asyncio.wait_for(asyncio.gather(*pending), timeout=2)
     await controller.aclose()
+
+    assert services.repertoire_service is repertoire
+    assert opened[0].microsoft_sign_in_button.isEnabled()
+    assert opened[0].microsoft_status_label.text() == "Connexion Microsoft annulee."
 
 
 @pytest.mark.asyncio

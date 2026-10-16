@@ -113,6 +113,14 @@ class MsalAccessTokenProvider:
     async def access_token(self) -> str:
         return await asyncio.to_thread(self._access_token_sync)
 
+    async def sign_in(self) -> str:
+        """Open the browser sign-in at once and return the chosen account's username.
+
+        The stored connection is replaced only once the sign-in succeeds: a cancelled
+        sign-in leaves the previous account working.
+        """
+        return await asyncio.to_thread(self._sign_in_sync)
+
     def invalidate_token(self) -> None:
         """Forget the in-memory token so the next call refreshes it through MSAL."""
         with self._lock:
@@ -127,7 +135,16 @@ class MsalAccessTokenProvider:
             self._cached_token = ""
             return self._refresh_token()
 
-    def _refresh_token(self) -> str:
+    def _sign_in_sync(self) -> str:
+        with self._lock:
+            self._cached_token = ""
+            self._refresh_token(choose_account=True)
+            app, _cache = self._application()
+            accounts = app.get_accounts()
+            username = accounts[0].get("username") if accounts else None
+            return username if isinstance(username, str) else ""
+
+    def _refresh_token(self, *, choose_account: bool = False) -> str:
         if not self._client_id:
             raise AuthError(
                 "Connexion Microsoft indisponible: client Microsoft non configure "
@@ -144,7 +161,7 @@ class MsalAccessTokenProvider:
         get_logger(__name__).info("auth.token.refreshing", scopes=self._scopes)
         app, cache = self._application()
         try:
-            result = self._acquire_token(app, cache)
+            result = self._acquire_token(app, cache, choose_account=choose_account)
         except (AssertionError, ValueError) as exc:
             raise AuthError(f"Connexion Microsoft impossible: {exc}") from exc
         except OSError as exc:  # requests' network errors, bounded by the MSAL timeout.
@@ -198,9 +215,17 @@ class MsalAccessTokenProvider:
         self,
         app: PublicClientApplicationProtocol,
         cache: SerializableTokenCacheProtocol,
+        *,
+        choose_account: bool = False,
     ) -> dict[str, object]:
         logger = get_logger(__name__)
-        result, login_hint = self._acquire_token_silent(app, cache)
+        if choose_account:
+            # Start from an empty cache: saving the new sign-in replaces the stored
+            # connection, even an unreadable one, and only once the sign-in succeeded.
+            cache.deserialize("{}")
+            result, login_hint = None, None
+        else:
+            result, login_hint = self._acquire_token_silent(app, cache)
         if result is not None:
             return result
         if not self._allow_interactive:
@@ -217,10 +242,11 @@ class MsalAccessTokenProvider:
                 "utilisez Parametres > Se reconnecter au compte Microsoft.",
             )
         try:
-            # Another connection may have completed a sign-in while this one waited.
-            result, login_hint = self._acquire_token_silent(app, cache)
-            if result is not None:
-                return result
+            if not choose_account:
+                # Another connection may have completed a sign-in while this one waited.
+                result, login_hint = self._acquire_token_silent(app, cache)
+                if result is not None:
+                    return result
             # A known account only needs to confirm access (e.g. Planner consent);
             # otherwise let the user choose which Microsoft account to use.
             result = run_browser_sign_in(
@@ -279,11 +305,6 @@ def _keep_only_signed_in_account(
     for account in accounts:
         if not is_signed_in(account):
             app.remove_account(account)
-
-
-def sign_out_microsoft(cache_storage: TokenCacheStorage | None = None) -> None:
-    """Forget the stored Microsoft account; the next access asks to sign in again."""
-    (cache_storage or TokenCacheStorage()).clear()
 
 
 def _token_lifetime(result: dict[str, object]) -> float:
