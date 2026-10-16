@@ -10,6 +10,7 @@ from importlib import import_module
 from typing import Protocol, cast
 
 from projectflow.auth.browser_sign_in import run_browser_sign_in
+from projectflow.auth.network import install_ipv4_first_connections
 from projectflow.auth.token_storage import TokenCacheStorage
 from projectflow.exceptions import AuthError
 from projectflow.logging import get_logger
@@ -380,6 +381,9 @@ def _token_lifetime(result: dict[str, object]) -> float:
 
 def _msal_module() -> MsalModuleProtocol:
     try:
-        return cast("MsalModuleProtocol", import_module("msal"))
+        module = cast("MsalModuleProtocol", import_module("msal"))
     except ImportError as exc:
         raise AuthError("Le module Microsoft MSAL n'est pas installe.") from exc
+    # A network announcing IPv6 without routing it delayed each step by 4 minutes.
+    install_ipv4_first_connections()
+    return module

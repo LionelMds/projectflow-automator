@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.64
+
+- Connexion Microsoft bloquee 4 minutes sur certains reseaux (vu sur macOS) : quand le
+  reseau annonce l'IPv6 sans le faire passer, chacune des 8 adresses IPv6 du serveur de
+  connexion Microsoft attendait 30 s avant de passer a l'IPv4. ProjectFlow se connecte
+  maintenant en IPv4 d'abord, 5 s au plus par adresse : la verification au demarrage et
+  l'ouverture de la connexion repassent sous la seconde.
+
 ## 0.1.63
 
 - Verification rapide de la connexion Microsoft au demarrage, sans navigateur (environ
