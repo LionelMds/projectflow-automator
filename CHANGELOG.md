@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.1.68
+
+- Planning : le stockage `Local` disparait (son dossier differait d'un poste a l'autre) ; un
+  poste encore regle dessus passe sur OneDrive. Le bouton de copie d'un ancien planning local
+  vers OneDrive reste, seulement sur un poste qui en a un.
+- Planning : hauteur des lignes et largeur des colonnes reglables par vue (menu `Affichage >
+  Taille`, `Ctrl` + molette sur les noms ou sur le planning). Au-dela de 100 %, le planning
+  defile de cote (`Maj` + molette) et, pousse au bout de la periode, passe a la suivante.
+- Planning : absences, feries et fermetures en rouge orange.
+- Planning : une carte deposee sur l'en-tete d'une equipe va a sa premiere personne.
+- Planning : les taches s'affichent toujours `2026-5271 - Designation` ; la designation se
+  personnalise et reprend celle du dossier tant qu'elle est vide.
+- Planning : copie en lecture seule dans un calendrier Outlook du compte partagé (`Planning
+  Balz Metal`), publiable depuis Outlook sur le web pour les iPhone et les Android (lien
+  d'abonnement ICS). Un rendez-vous par jour travaille, mis a jour apres chaque changement,
+  depuis un seul poste (`Parametres > Planning > Calendrier Outlook`). Demande une fois
+  l'autorisation Microsoft `Calendars.ReadWrite`.
+- Planning : le repertoire des 3 dernieres annees est lu au demarrage ; un dossier plus ancien
+  est retrouve depuis la fiche de son dossier (`Fiche dossier clients.xlsx`).
+
 ## 0.1.67
 
 - Reprise de la version 0.1.66 (onglet `Planning`), dont la publication avait echoue sur une
