@@ -26,6 +26,7 @@ PLANNER_GRAPH_SCOPES = (
     "User.ReadBasic.All",
     "GroupMember.Read.All",
 )
+PLANNING_GRAPH_SCOPES = ("Sites.ReadWrite.All",)
 # Browser sign-in that is never completed must not block every Graph operation.
 INTERACTIVE_TIMEOUT_SECONDS = 300
 SIGN_IN_HINT = "cliquez sur « Se connecter a Microsoft » en haut de la fenetre ProjectFlow"

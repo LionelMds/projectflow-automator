@@ -202,3 +202,88 @@ async def test_graph_client_asks_to_sign_in_again_when_refresh_is_rejected() -> 
 
     assert error.value.status_code == 401
     assert provider.invalidations == 1
+
+
+@pytest.mark.asyncio
+async def test_put_bytes_sends_the_raw_body_with_its_type() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"id": "item-1", "eTag": '"{1},2"'})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphClient(token_provider=FakeTokenProvider(), http_client=http_client)
+
+        payload = await client.put_bytes(
+            "/me/drive/items/item-1/content",
+            b'{"a":1}',
+            headers={"If-Match": '"{1},1"'},
+        )
+
+    assert payload == {"id": "item-1", "eTag": '"{1},2"'}
+    assert seen[0].method == "PUT"
+    assert seen[0].content == b'{"a":1}'
+    assert seen[0].headers["Content-Type"] == "application/json"
+    assert seen[0].headers["If-Match"] == '"{1},1"'
+
+
+@pytest.mark.asyncio
+async def test_put_bytes_is_not_replayed_after_a_server_error() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(503, json={"error": {"code": "serviceNotAvailable"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphClient(token_provider=FakeTokenProvider(), http_client=http_client)
+        with pytest.raises(GraphError) as caught:
+            await client.put_bytes("/me/drive/items/item-1/content", b"{}")
+
+    assert caught.value.status_code == 503
+    assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_bytes_follows_the_redirect_without_the_token() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "download.example":
+            return httpx.Response(200, content=b"raw bytes")
+        return httpx.Response(302, headers={"Location": "https://download.example/f?tempauth=x"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphClient(token_provider=FakeTokenProvider(), http_client=http_client)
+
+        content = await client.get_bytes("/me/drive/items/item-1/content")
+
+    assert content == b"raw bytes"
+    assert seen[0].headers["Authorization"] == "Bearer token"
+    assert "Authorization" not in seen[1].headers
+
+
+@pytest.mark.asyncio
+async def test_get_bytes_returns_a_direct_body() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"\x00\x01")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphClient(token_provider=FakeTokenProvider(), http_client=http_client)
+
+        assert await client.get_bytes("/me/drive/items/item-1/content") == b"\x00\x01"
+
+
+@pytest.mark.asyncio
+async def test_download_errors_keep_their_status() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = GraphClient(token_provider=FakeTokenProvider(), http_client=http_client)
+        with pytest.raises(GraphError) as caught:
+            await client.download("https://download.example/f")
+
+    assert caught.value.status_code == 404

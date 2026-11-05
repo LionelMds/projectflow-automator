@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Concatenate, Literal, ParamSpec, Protocol, TypeVar
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QMessageBox, QWidget
 
 from projectflow import __version__
 from projectflow.application_settings import ApplicationSettings
@@ -21,7 +21,7 @@ from projectflow.config import AppConfig, RepertoireChantierConfig
 from projectflow.core.background_io import run_file_io
 from projectflow.core.client_directory import ClientDirectory
 from projectflow.core.duplication import PROJECT_WRITABLE_WIDTH
-from projectflow.core.fiche_service import FicheService, standard_fiche_path
+from projectflow.core.fiche_service import FicheData, FicheService, standard_fiche_path
 from projectflow.core.models import PlannerTaskInput, ProjectCreationResult, ProjectInput
 from projectflow.core.numero import (
     ProjectNumber,
@@ -29,6 +29,9 @@ from projectflow.core.numero import (
     parse_project_number,
     project_folder_name,
 )
+from projectflow.core.planning.copy import CopyReport, copy_planning
+from projectflow.core.planning.poste_config import PlanningPosteConfig
+from projectflow.core.planning.store import PlanningStore
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireRow, RepertoireService, RepertoireSnapshot
 from projectflow.core.sortie_service import SortieDossierService
@@ -36,13 +39,15 @@ from projectflow.exceptions import PrintError, ProjectFlowError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
 from projectflow.graph.workbook_opening import excel_document_uri
-from projectflow.logging import redact_sensitive_links
+from projectflow.logging import get_logger, redact_sensitive_links
 from projectflow.platform.filemanager import open_excel_uri, open_file_default_app, open_path
+from projectflow.platform.paths import data_dir
 from projectflow.platform.printing import print_workbook_a4
 from projectflow.platform.sync_paths import is_excel_recovery_copy
 from projectflow.services import ServiceContainer, resolve_repertoire_open_url, uses_microsoft
 from projectflow.ui.creation_tab import CreationFormData
 from projectflow.ui.dialogs.fiche_selection import FicheSelectionDialog
+from projectflow.ui.dialogs.planning_team import PlannerMember
 from projectflow.ui.dialogs.print_fiche import (
     PrintFicheDialog,
     PrintFicheOptions,
@@ -53,6 +58,11 @@ from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow, MicrosoftState
 from projectflow.ui.modal import ask_outside_task, show_outside_task
+from projectflow.ui.planning_controller import (
+    PlanningController,
+    PlanningHooks,
+    PlanningStoreFactory,
+)
 from projectflow.ui.theme import apply_theme
 from projectflow.ui.widgets.planner import (
     PlannerBucketOption,
@@ -72,7 +82,12 @@ from projectflow.updates import (
 QuickCreationAction = Literal["open_fiche", "open_repertoire", "edit", "next"]
 # The startup check must answer fast: a silent token comes from the cache or one request.
 CONNECTION_CHECK_TIMEOUT_SECONDS = 10
+# Closing waits this long for the planning: 5 s to send its last changes, then its cache.
+PLANNING_CLOSE_TIMEOUT_SECONDS = 15.0
 PlannerOptions = tuple[list[PlannerBucketOption], list[PlannerMemberOption]]
+PlannerMembers = tuple[PlannerMember, ...]
+Notifier = Callable[[str, str], None]
+"""Shows a title and a message outside the window (the tray icon's balloon)."""
 ActionArgs = ParamSpec("ActionArgs")
 ReadKey = TypeVar("ReadKey")
 ReadResult = TypeVar("ReadResult")
@@ -135,11 +150,26 @@ class ProjectFlowController:
         config: AppConfig,
         services: ServiceProvider | None = None,
         save_config: Callable[[], None] | None = None,
+        planning_config: PlanningPosteConfig | None = None,
+        planning_store_factory: PlanningStoreFactory | None = None,
+        save_planning_config: Callable[[PlanningPosteConfig], None] | None = None,
     ) -> None:
+        """Without ``planning_config`` and ``planning_store_factory`` the planning stays off."""
         self._window = window
         self._config = config
         self._services = services or ServiceContainer(config, interactive_sign_in=False)
         self._save_config = save_config
+        self._planning_store_factory = planning_store_factory
+        self._save_planning_config = save_planning_config
+        self._planning: PlanningController | None = None
+        self._planning_started = False
+        # Planning work is logged, never shown as an error dialog, and is closed apart:
+        # its sync engine must still send the last changes when the others are cancelled.
+        self._planning_tasks: set[asyncio.Task[None]] = set()
+        self._member_tasks: dict[tuple[int, str], asyncio.Task[PlannerMembers]] = {}
+        self._notify: Notifier | None = None
+        self._showing_in_repertoire = False
+        self._repertoire_load_task: asyncio.Task[Any] | None = None
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._mutation_tasks: set[asyncio.Task[Any]] = set()
         self._closing = False
@@ -163,6 +193,21 @@ class ProjectFlowController:
         self._reset_requested = False
         self._connection_check_generation = 0
         self._connect()
+        if planning_config is not None and planning_store_factory is not None:
+            self._planning = PlanningController(
+                self._window.planning_tab,
+                poste_config=planning_config,
+                store_factory=self._open_planning_store,
+                hooks=self._planning_hooks(),
+            )
+
+    @property
+    def planning(self) -> PlanningController | None:
+        return self._planning
+
+    def set_notifier(self, notify: Notifier | None) -> None:
+        """Where to announce what the planning did on its own (a card « À planifier »)."""
+        self._notify = notify
 
     def _connect(self) -> None:
         tab = self._window.creation_tab
@@ -225,9 +270,285 @@ class ProjectFlowController:
         self._window.update_check_requested.connect(
             self.request_update_check,
         )
+        self._window.presence_changed.connect(self._update_planning_visibility)
 
     def show_window(self) -> None:
         self._window.show_and_raise()
+
+    def show_planning(self) -> None:
+        self._window.show_planning_tab()
+
+    # ------------------------------------------------------------ planning ----
+
+    def start_planning(self) -> None:
+        """Load the planning once the window is shown; the window never waits for it."""
+        if self._planning is None or self._planning_started or self._closing:
+            return
+        self._planning_started = True
+        self._schedule_planning(self._start_planning(self._planning))
+
+    async def _start_planning(self, planning: PlanningController) -> None:
+        await planning.start()
+        self._update_planning_visibility()
+
+    def _planning_hooks(self) -> PlanningHooks:
+        return PlanningHooks(
+            read_repertoire=self._read_snapshot,
+            open_project_dir=self.open_project_dir,
+            open_fiche=self._deferred(self.open_project_fiche),
+            show_in_repertoire=self.show_in_repertoire,
+            load_in_creation=self._deferred(self.load_in_creation),
+            prepare_sortie=self.prepare_sortie,
+            open_settings=self._deferred(self.open_settings),
+            planner_members=self._planner_members,
+            set_nav_badge=self._set_planning_badge,
+            schedule=self._schedule_planning,
+            ask=self._ask,
+            log=self._log,
+            save_config=self._store_planning_config,
+        )
+
+    def _deferred(self, action: Callable[[str], None]) -> Callable[[str], None]:
+        """Run ``action`` from the Qt loop: a dialog it opens never blocks a running task."""
+
+        def defer(value: str) -> None:
+            if not self._closing:
+                QTimer.singleShot(0, lambda: action(value))
+
+        return defer
+
+    def _schedule_planning(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        if self._closing:
+            coroutine.close()
+            return
+        task = asyncio.create_task(self._run_planning_task(coroutine))
+        self._planning_tasks.add(task)
+        task.add_done_callback(self._planning_tasks.discard)
+
+    async def _run_planning_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        try:
+            await coroutine
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the planning never stops the other work
+            get_logger(__name__).exception("planning.task.failed")
+            self._log(f"! Planning : {exc}")
+
+    async def _open_planning_store(self, poste_config: PlanningPosteConfig) -> PlanningStore:
+        factory = self._planning_store_factory
+        if factory is None:
+            raise ProjectFlowError("Planning non disponible sur ce poste.")
+        known = _resolved_ids(poste_config)
+        store = await factory(poste_config)
+        if _resolved_ids(poste_config) != known:
+            # Found once: the next start opens the SharePoint list without searching it,
+            # and the OneDrive planning in the cache of its drive.
+            self._store_planning_config(poste_config)
+        return store
+
+    def _store_planning_config(self, poste_config: PlanningPosteConfig) -> None:
+        if self._save_planning_config is None:
+            return
+        try:
+            self._save_planning_config(poste_config)
+        except (ProjectFlowError, OSError) as exc:
+            self._log(f"! Réglages du planning non enregistrés : {exc}")
+
+    def _set_planning_badge(self, count: int) -> None:
+        self._window.set_nav_badge(self._window.planning_index, count)
+
+    def _update_planning_visibility(self) -> None:
+        planning = self._planning
+        if planning is None or not self._planning_started or self._closing:
+            return
+        window = self._window
+        shown = window.isVisible() and not window.isMinimized()
+        planning.set_visible(
+            visible=shown and window.tabs.currentWidget() is window.planning_tab,
+            window_active=shown and window.isActiveWindow(),
+        )
+
+    async def _planner_members(self) -> PlannerMembers:
+        """Members of the Planner plan's group (id, name, e-mail); none without Planner."""
+        planner = self._config.planner
+        plan_id = planner.target_plan_id
+        if not planner.enabled or not plan_id:
+            return ()
+        key = (self._planner_generation, plan_id)
+        task = self._member_tasks.get(key)
+        if task is None:
+            task = asyncio.create_task(_fetch_planner_members(plan_id))
+            self._member_tasks[key] = task
+            # Kept once read: the roster dialog and the settings ask for them again.
+            task.add_done_callback(lambda done: _forget_failed(self._member_tasks, key, done))
+        try:
+            return await asyncio.shield(task)
+        except (ProjectFlowError, OSError, ValueError) as exc:
+            self._log(f"! Membres Microsoft 365 indisponibles : {exc}")
+            return ()
+
+    async def _offer_planning_members(self, dialog: SettingsDialog) -> None:
+        members = await self._planner_members()
+        if members and dialog.isVisible():
+            dialog.set_planning_members(members)
+
+    async def _reconfigure_planning(
+        self,
+        planning: PlanningController,
+        poste_config: PlanningPosteConfig,
+    ) -> None:
+        try:
+            await planning.reconfigure(poste_config)
+        except BaseException:
+            # The choice of the user is kept for the next start all the same.
+            self._store_planning_config(poste_config)
+            raise
+        self._store_planning_config(planning.poste_config)
+
+    async def _add_sortie_card(self, number: ProjectNumber, fiche_path: Path) -> None:
+        """Add the « Fabrication » card of the dossier to « À planifier » after a sortie."""
+        planning = self._planning
+        if planning is None:
+            return
+        details = await self._sortie_card_details(number, fiche_path)
+        created = await planning.ensure_backlog_card(
+            str(number),
+            designation=details.designation,
+            client=details.societe,
+            contact=details.contact,
+            managed_by=details.gere_par,
+            released=date.today(),
+        )
+        if not created:
+            return
+        message = f"{number} ajouté à planifier"
+        self._window.sortie_tab.append_log(f"+ Planning : {message}")
+        if self._notify is not None:
+            self._notify("Planning", message)
+
+    async def _sortie_card_details(self, number: ProjectNumber, fiche_path: Path) -> FicheData:
+        """Dossier details from the fiche, completed from the répertoire row."""
+        data = FicheData()
+        try:
+            data = await run_file_io(self._services.fiche().read_fiche, fiche_path)
+        except Exception:  # noqa: BLE001 - an unreadable fiche falls back on the répertoire
+            get_logger(__name__).warning("planning.sortie_card.fiche_unreadable")
+        if data.designation and data.societe and data.contact:
+            return data
+        try:
+            snapshot = await self._read_snapshot(number.year)
+        except (ProjectFlowError, ValueError, OSError):
+            return data
+        row = next((row for row in snapshot.rows if row.number == str(number)), None)
+        if row is None:
+            return data
+        return replace(
+            data,
+            societe=data.societe or _repertoire_cell_text(row.values[2]),
+            contact=data.contact or _repertoire_cell_text(row.values[3]),
+            designation=data.designation or _repertoire_cell_text(row.values[4]),
+        )
+
+    async def _close_planning(self) -> None:
+        planning = self._planning
+        if planning is not None:
+            try:
+                await asyncio.wait_for(planning.aclose(), timeout=PLANNING_CLOSE_TIMEOUT_SECONDS)
+            except Exception:  # noqa: BLE001 - closing goes on with the other services
+                get_logger(__name__).exception("planning.close.failed")
+        pending = set(self._planning_tasks)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    # ------------------------------------------------- dossier by number ----
+
+    def open_project_dir(self, number_text: str) -> None:
+        try:
+            number = parse_project_number(number_text)
+        except ValueError as exc:
+            self._error(str(exc))
+            return
+        self._open_number_dir(number)
+
+    def open_project_fiche(self, number_text: str) -> None:
+        if self._mutation_busy:
+            self._log("-> Patientez jusqu'a la fin de l'operation avant d'ouvrir la fiche.")
+            return
+        try:
+            number = parse_project_number(number_text)
+            project_dir = self._project_dir(number)
+            fiche_path = standard_fiche_path(project_dir, number)
+            if not fiche_path.exists():
+                fiche_path = self._choose_fiche(project_dir, number)
+            opened = open_file_default_app(fiche_path)
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            self._error(str(exc))
+            return
+        if not opened:
+            self._error("Impossible d'ouvrir la fiche avec l'application par defaut.")
+            return
+        self._log(f"+ Fiche ouverte: {fiche_path.name}")
+
+    def load_in_creation(self, number_text: str) -> None:
+        try:
+            number = parse_project_number(number_text)
+        except ValueError as exc:
+            self._error(str(exc))
+            return
+        if self._load_project_number(number):
+            self._window.show_creation_tab()
+
+    def prepare_sortie(self, number_text: str) -> None:
+        try:
+            number = parse_project_number(number_text)
+        except ValueError as exc:
+            self._error(str(exc))
+            return
+        tab = self._window.sortie_tab
+        tab.set_project_identity(year=str(number.year), project_id=str(number))
+        self._window.tabs.setCurrentWidget(tab)
+        self._schedule_task(self.load_sortie_dossier())
+
+    def show_in_repertoire(self, number_text: str) -> None:
+        try:
+            number = parse_project_number(number_text)
+        except ValueError as exc:
+            self._error(str(exc))
+            return
+        self._schedule_task(self._show_in_repertoire(number))
+
+    async def _show_in_repertoire(self, number: ProjectNumber) -> None:
+        tab = self._window.repertoire_tab
+        tab.search_edit.clear()
+        tab.set_year(number.year)
+        self._showing_in_repertoire = True
+        try:
+            # Read below, once the year is set: not also by the tab change.
+            self._window.tabs.setCurrentWidget(tab)
+        finally:
+            self._showing_in_repertoire = False
+        running = self._repertoire_load_task
+        if running is not None and not running.done():
+            await asyncio.wait({running})
+        if self._select_repertoire_row(str(number)):
+            return
+        await self.load_repertoire()
+        if not self._select_repertoire_row(str(number)):
+            tab.set_status_message(f"{number} est introuvable dans le répertoire {number.year}.")
+
+    def _select_repertoire_row(self, number_text: str) -> bool:
+        table = self._window.repertoire_tab.table
+        model = table.model()
+        for row in range(model.rowCount()):
+            index = model.index(row, 0)
+            if _repertoire_cell_text(index.data()) == number_text:
+                table.selectRow(row)
+                table.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+                table.setFocus()
+                return True
+        return False
 
     @property
     def reset_requested(self) -> bool:
@@ -581,7 +902,11 @@ class ProjectFlowController:
         self._log(f"+ Numero disponible: {result.number}")
 
     def _on_tab_changed(self, index: int) -> None:
-        if index != self._window.tabs.indexOf(self._window.repertoire_tab):
+        self._update_planning_visibility()
+        if (
+            index != self._window.tabs.indexOf(self._window.repertoire_tab)
+            or self._showing_in_repertoire
+        ):
             return
         self._schedule_task(self.load_repertoire())
 
@@ -596,6 +921,7 @@ class ProjectFlowController:
             return
         generation = self._repertoire_generation
         self._repertoire_loading_generation = generation
+        self._repertoire_load_task = asyncio.current_task()
         tab.set_loading(loading=True)
         try:
             snapshot = await self._read_snapshot(year)
@@ -607,6 +933,8 @@ class ProjectFlowController:
                 tab.set_snapshot(snapshot)
                 self._remember_client_directory(snapshot.year, snapshot.rows)
         finally:
+            if self._repertoire_load_task is asyncio.current_task():
+                self._repertoire_load_task = None
             if self._repertoire_loading_generation == generation:
                 self._repertoire_loading_generation = None
                 tab.set_loading(loading=False)
@@ -1016,6 +1344,7 @@ class ProjectFlowController:
         tab.set_loading(loading=True)
         try:
             selection = tab.data()
+            fiche_path = selection.fiche_path
             output_dir = await run_file_io(
                 self._sortie_service.create_output_folder,
                 project_dir,
@@ -1028,6 +1357,9 @@ class ProjectFlowController:
         finally:
             tab.set_loading(loading=False)
         tab.append_log(f"+ Dossier de sortie cree: {output_dir}")
+        # Before the question: the card reaches the other postes while it waits. Apart
+        # from the sortie, so that a planning failure is only logged.
+        self._schedule_planning(self._add_sortie_card(number, fiche_path))
         if self._closing:
             return
         answer = await self._ask(
@@ -1184,6 +1516,13 @@ class ProjectFlowController:
     def open_folder(self) -> None:
         try:
             number = parse_project_number(self._number_from_form())
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return
+        self._open_number_dir(number)
+
+    def _open_number_dir(self, number: ProjectNumber) -> None:
+        try:
             project_dir = self._project_dir(number)
         except (ProjectFlowError, ValueError) as exc:
             self._error(str(exc))
@@ -1249,17 +1588,14 @@ class ProjectFlowController:
             return
         self._log("+ Ouverture du repertoire demandee dans Excel.")
 
-    def open_settings(self) -> None:
+    def open_settings(self, section: str | None = None) -> None:
         if self._mutation_busy:
             self._log("-> Attendez la fin de l'operation avant de modifier les parametres.")
             return
-        dialog = SettingsDialog(self._config, parent=self._window)
-        dialog.microsoft_sign_in_requested.connect(
-            lambda: self._schedule_task(self.reconnect_microsoft(dialog)),
-        )
-        dialog.reset_requested.connect(lambda: self.request_reset(dialog))
+        dialog = self._settings_dialog(section)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
+        self._apply_planning_settings(dialog)
         previous_repertoire = self._config.paths.repertoire_chantier.model_copy(deep=True)
         previous_planner = self._config.planner.model_copy(deep=True)
         dialog.apply_to_config(self._config)
@@ -1287,6 +1623,114 @@ class ProjectFlowController:
         self._log_integration_settings()
         if repertoire_changed or planner_changed:
             self.request_connection_check()
+
+    def _settings_dialog(self, section: str | None) -> SettingsDialog:
+        planning = self._planning
+        dialog = SettingsDialog(
+            self._config,
+            parent=self._window,
+            planning_config=planning.poste_config if planning is not None else None,
+        )
+        dialog.microsoft_sign_in_requested.connect(
+            lambda: self._schedule_task(self.reconnect_microsoft(dialog)),
+        )
+        dialog.reset_requested.connect(lambda: self.request_reset(dialog))
+        if planning is not None:
+            # The shared roster is applied at once, in its own dialog, never on OK.
+            dialog.planning_team_requested.connect(planning.open_team_dialog)
+            dialog.planning_copy_requested.connect(
+                lambda folder: self._schedule_planning(
+                    self._copy_planning_to_onedrive(dialog, folder),
+                ),
+            )
+            if self._config.planner.enabled and self._config.planner.target_plan_id:
+                self._schedule_planning(self._offer_planning_members(dialog))
+        if section:
+            dialog.show_section(section)
+        return dialog
+
+    def _apply_planning_settings(self, dialog: SettingsDialog) -> None:
+        planning = self._planning
+        if planning is None:
+            return
+        # A copy: the planning compares it with its current settings to know what changed.
+        poste_config = planning.poste_config.model_copy(deep=True)
+        dialog.apply_to_planning_config(poste_config)
+        self._schedule_planning(self._reconfigure_planning(planning, poste_config))
+
+    async def _copy_planning_to_onedrive(self, dialog: SettingsDialog, folder: str) -> None:
+        """Add this poste's local planning to the OneDrive folder, after confirmation.
+
+        Nothing in OneDrive is replaced (``copy_planning``). When the planning already
+        uses that folder, it synchronises at once to show what was copied; otherwise
+        « Enregistrer » with OneDrive selected switches to it.
+        """
+        try:
+            report = await self._run_planning_copy(dialog, folder)
+        except (ProjectFlowError, OSError) as exc:
+            self._log(f"! Copie du planning vers OneDrive impossible : {exc}")
+            _copy_finished(dialog, f"Copie impossible : {exc}", copied=False)
+            return
+        except BaseException:
+            _copy_finished(dialog, "Copie interrompue.", copied=False)
+            raise
+        if report is None:
+            _copy_finished(dialog, "Copie annulée.", copied=False)
+            return
+        self._log(f"+ Planning copié vers OneDrive « {folder} » : {report.summary()}")
+        _copy_finished(dialog, f"Copie terminée : {report.summary()}", copied=not report.failed)
+        planning = self._planning
+        if (
+            planning is not None
+            and planning.poste_config.backend == "onedrive"
+            and planning.poste_config.onedrive_folder.casefold() == folder.casefold()
+        ):
+            planning.wake()
+
+    async def _run_planning_copy(
+        self,
+        dialog: SettingsDialog,
+        folder: str,
+    ) -> CopyReport | None:
+        """Return the copy report, or None when the person declined the copy."""
+        planning = self._planning
+        factory = self._planning_store_factory
+        if planning is None or factory is None:
+            raise ProjectFlowError("Planning non disponible sur ce poste.")
+        source_config = planning.poste_config.model_copy(deep=True)
+        source_config.backend = "local"
+        target_config = planning.poste_config.model_copy(deep=True)
+        target_config.backend = "onedrive"
+        target_config.onedrive_folder = folder
+        stores: list[PlanningStore] = []
+        try:
+            stores.append(await factory(source_config))
+            stores.append(await factory(target_config))
+            source, target = stores
+            preview = await copy_planning(source, target, dry_run=True)
+            if not preview.created:
+                return preview
+            answer = await self._ask(
+                lambda: QMessageBox.question(
+                    dialog if dialog.isVisible() else self._window,
+                    "Copier le planning vers OneDrive",
+                    f"{preview.created} élément(s) du planning local de ce poste vont être "
+                    f"ajoutés au dossier OneDrive « {folder} ».\n"
+                    f"{preview.skipped_existing} élément(s) y sont déjà : ils ne sont pas "
+                    "remplacés.\n\nContinuer ?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                ),
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return None
+            return await copy_planning(source, target)
+        finally:
+            for store in stores:
+                try:
+                    await store.aclose()
+                except Exception:  # noqa: BLE001 - closing never hides the copy's outcome
+                    get_logger(__name__).exception("planning.copy.close_failed")
 
     async def reconnect_microsoft(self, dialog: SettingsDialog | None = None) -> None:
         """Open the Microsoft sign-in at once; nothing is saved or reloaded meanwhile."""
@@ -1332,16 +1776,22 @@ class ProjectFlowController:
 
     def request_reset(self, parent: QWidget | None = None) -> None:
         """Erase everything ProjectFlow stores, after confirmation, then restart it."""
+        planning = self._planning
+        erased, kept = planning_reset_notice(
+            planning.poste_config if planning is not None else None,
+        )
         answer = QMessageBox.warning(
             parent or self._window,
             "Tout reinitialiser ProjectFlow",
             "ProjectFlow va effacer sur ce poste :\n"
+            f"{erased}"
             "- la connexion Microsoft ;\n"
             "- tous les parametres (chemins, Outlook, Planner, modeles CAO, apparence) ;\n"
             "- la cle Document Manager ;\n"
             "- les mises a jour telechargees.\n\n"
-            "Les dossiers projets et le repertoire chantier ne sont pas touches. Le journal "
-            "est conserve. ProjectFlow redemarre ensuite sur l'assistant de premier lancement.",
+            f"Les dossiers projets et le repertoire chantier ne sont pas touches.{kept} Le "
+            "journal est conserve. ProjectFlow redemarre ensuite sur l'assistant de premier "
+            "lancement.",
             QMessageBox.StandardButton.Reset | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -1767,6 +2217,7 @@ class ProjectFlowController:
             *self._mutation_tasks,
             *self._snapshot_tasks.values(),
             *self._planner_tasks.values(),
+            *self._member_tasks.values(),
         }
         # Finish committed user actions, including their repertoire/integration writes.
         # Cancelling between the local save and these writes would leave a partial project.
@@ -1774,6 +2225,9 @@ class ProjectFlowController:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        # The planning is not among them: it sends its last changes, then saves its cache,
+        # before its Microsoft connection closes with the other services.
+        await self._close_planning()
         for dialog in self._window.findChildren(SettingsDialog):
             await dialog.aclose()
         if isinstance(self._services, ServiceContainer):
@@ -1796,6 +2250,71 @@ class ProjectFlowController:
 
     async def _ask(self, ask: Callable[[], Answer]) -> Answer:
         return await ask_outside_task(ask, skip=lambda: self._closing)
+
+
+def _copy_finished(dialog: SettingsDialog, message: str, *, copied: bool) -> None:
+    if dialog.isVisible():
+        dialog.planning_copy_finished(message, copied=copied)
+
+
+def _resolved_ids(config: PlanningPosteConfig) -> tuple[str, str, str]:
+    return (config.sharepoint_site_id, config.sharepoint_list_id, config.onedrive_drive_id)
+
+
+def planning_reset_notice(config: PlanningPosteConfig | None) -> tuple[str, str]:
+    """Say what « Tout reinitialiser » does to the planning: lines erased, then what stays.
+
+    The reset keeps the default local planning store (``reset_local_data``). Only a local
+    planning kept in another folder of ``data_dir()`` would go with the rest of the data.
+    """
+    root = data_dir()
+    default_store = PlanningPosteConfig(local_directory="").local_store_directory()
+    local = config is None or config.backend == "local"
+    store = config.local_store_directory() if config is not None and local else default_store
+    is_default = _same_path(store, default_store)
+    erased = ""
+    if local and not is_default and _is_inside(store, root) and _holds_files(store):
+        erased = (
+            f"- le planning enregistre dans {store} (taches, personnes, absences) : il "
+            "n'existe nulle part ailleurs et sera definitivement perdu ;\n"
+        )
+    kept_local = (
+        " Le planning enregistre sur ce poste (taches, personnes, absences) est conserve."
+        if _holds_files(default_store)
+        else ""
+    )
+    if not local:
+        erased += "- les reglages du planning de ce poste et sa copie locale ;\n"
+        shared = "OneDrive" if config is not None and config.backend == "onedrive" else "SharePoint"
+        return erased, f" Le planning partage sur {shared} n'est pas touche." + kept_local
+    erased += "- les reglages du planning de ce poste (identite, stockage, affichage) ;\n"
+    if is_default or _is_inside(store, root):
+        return erased, kept_local
+    return erased, (
+        f" Le planning du dossier {store} n'est pas touche : indiquez ce dossier de nouveau "
+        "dans Parametres > Planning apres le redemarrage."
+    )
+
+
+def _same_path(first: Path, second: Path) -> bool:
+    try:
+        return first.resolve() == second.resolve()
+    except OSError:
+        return first == second
+
+
+def _is_inside(path: Path, root: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(root.resolve())
+    except OSError:
+        return False
+
+
+def _holds_files(directory: Path) -> bool:
+    try:
+        return directory.is_dir() and any(directory.iterdir())
+    except OSError:
+        return False
 
 
 def _cad_summary(result: ProjectCreationResult) -> str:
@@ -1881,6 +2400,28 @@ def _truncate_release_notes(notes: str, *, limit: int = 1200) -> str:
     if len(notes) <= limit:
         return notes
     return f"{notes[:limit].rstrip()}\n..."
+
+
+async def _fetch_planner_members(plan_id: str) -> PlannerMembers:
+    client = _planner_client()
+    try:
+        members = await client.list_members(plan_id=plan_id)
+    finally:
+        await client.aclose()
+    return tuple(
+        (member.id, member.display_name or member.email or member.id, member.email)
+        for member in members
+    )
+
+
+def _forget_failed(
+    requests: dict[ReadKey, asyncio.Task[ReadResult]],
+    key: ReadKey,
+    task: asyncio.Task[ReadResult],
+) -> None:
+    """Drop a failed shared read so that the next request tries again; keep a success."""
+    if (task.cancelled() or task.exception() is not None) and requests.get(key) is task:
+        del requests[key]
 
 
 def _planner_client() -> GraphPlannerClient:

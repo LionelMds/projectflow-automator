@@ -4,7 +4,7 @@ import asyncio
 import os
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from importlib import resources
 from pathlib import Path
 
@@ -17,6 +17,7 @@ from qasync import QEventLoop
 from projectflow import __version__
 from projectflow.auth.browser_sign_in import set_sign_in_prompt
 from projectflow.config import AppConfig
+from projectflow.core.planning.poste_config import PlanningPosteConfig
 from projectflow.demo import build_demo_environment
 from projectflow.logging import configure_logging, get_logger
 from projectflow.platform.single_instance import SingleInstanceGuard
@@ -26,6 +27,7 @@ from projectflow.ui.controller import ProjectFlowController, ServiceProvider
 from projectflow.ui.dialogs.microsoft_sign_in import MicrosoftSignInPrompt
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.onboarding.wizard import OnboardingWizard
+from projectflow.ui.planning_controller import PlanningStoreFactory
 from projectflow.ui.theme import apply_theme
 from projectflow.ui.tray import ProjectFlowTray
 
@@ -58,13 +60,23 @@ def run(argv: Sequence[str]) -> int:
     demo_mode = _demo_mode_enabled(argv)
     services: ServiceProvider
     save_config = None
+    planning_store_factory: PlanningStoreFactory
+    save_planning_config: Callable[[PlanningPosteConfig], None]
     if demo_mode:
-        config, services = build_demo_environment()
+        config, demo_services = build_demo_environment()
+        services = demo_services
+        planning_store_factory = demo_services.create_planning_store
+        save_planning_config = demo_services.save_planning_poste_config
+        planning_config = demo_services.planning_poste_config()
         logger.info("app.demo_mode.enabled", root=str(config.paths.racine_projets))
     else:
         config = AppConfig.load()
-        services = ServiceContainer(config, interactive_sign_in=False)
+        container = ServiceContainer(config, interactive_sign_in=False)
+        services = container
+        planning_store_factory = container.create_planning_store
         save_config = config.save
+        save_planning_config = _save_planning_config
+        planning_config = PlanningPosteConfig.load()
     apply_theme(app, config.appearance)
 
     if not config.is_onboarded:
@@ -78,7 +90,9 @@ def run(argv: Sequence[str]) -> int:
             return 0
         config = wizard.config
         config.save()
-        services = ServiceContainer(config, interactive_sign_in=False)
+        container = ServiceContainer(config, interactive_sign_in=False)
+        services = container
+        planning_store_factory = container.create_planning_store
         save_config = config.save
 
     window = MainWindow(config)
@@ -87,6 +101,9 @@ def run(argv: Sequence[str]) -> int:
         config=config,
         services=services,
         save_config=save_config,
+        planning_config=planning_config,
+        planning_store_factory=planning_store_factory,
+        save_planning_config=save_planning_config,
     )
     tray = _configure_tray(app, window, controller, app_icon)
     if tray is not None:
@@ -94,6 +111,8 @@ def run(argv: Sequence[str]) -> int:
     single_instance.activation_requested.connect(lambda _command: controller.show_window())
     window.show()
     logger.info("app.started", version=__version__)
+    # After the first paint: the planning reads its cache and its store in the background.
+    QTimer.singleShot(0, controller.start_planning)
     if not demo_mode:
         # Know at once whether Microsoft works, without opening any browser.
         QTimer.singleShot(0, controller.request_connection_check)
@@ -146,9 +165,11 @@ def _configure_tray(
     tray.show_requested.connect(controller.show_window)
     tray.quick_create_requested.connect(controller.show_quick_create)
     tray.open_repertoire_requested.connect(controller.open_repertoire)
+    tray.open_planning_requested.connect(controller.show_planning)
     tray.update_check_requested.connect(controller.request_update_check)
     tray.reset_requested.connect(controller.request_reset)
     tray.quit_requested.connect(lambda: _quit_from_tray(app, window))
+    controller.set_notifier(tray.show_message)
     window.hidden_to_background.connect(
         lambda: tray.show_message(
             "ProjectFlow reste actif",
@@ -157,6 +178,10 @@ def _configure_tray(
     )
     tray.show()
     return tray
+
+
+def _save_planning_config(poste_config: PlanningPosteConfig) -> None:
+    poste_config.save()
 
 
 def _quit_from_tray(app: QApplication, window: MainWindow) -> None:

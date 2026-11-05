@@ -322,6 +322,153 @@ dossier`, `02 - Prise de cote`, `03 - Photos` et `04 - Plans`. Chaque document s
 copie individuellement. Les fichiers sources ne sont ni renommes, ni modifies, ni ecrases.
 Une confirmation propose ensuite d'ouvrir le dossier de sortie.
 
+## Planning
+
+L'onglet `Planning` remplace le tableau magnétique de l'atelier : une ligne par employé ou
+sous-traitant, le temps à l'horizontale, des barres que l'on pose, étire et déplace. Tous les
+postes qui l'affichent voient les changements des autres en quelques secondes.
+
+### Premier réglage
+
+1. `Paramètres > Planning` : choisir `Je suis…` dans la liste des membres du plan Planner (ou
+   saisir initiales et nom), puis vérifier le nom du poste. Ces initiales et ce nom de poste
+   signent chaque modification (« JD · BUREAU-2 »), car le compte Microsoft est partagé.
+2. `Stockage` : voir [Stockage du planning](#stockage-du-planning). Le choix recommandé est
+   `OneDrive (partagé, recommandé)`.
+3. `Équipe du planning…` : ajouter les personnes et les sous-traitants, leur équipe, leurs
+   initiales, leur canton (GE ou VD, pour les jours fériés) et leurs jours d'absence réguliers
+   (par exemple l'école professionnelle le mercredi). La page `Calendrier` gère les fermetures
+   d'entreprise et le canton par défaut.
+
+Horaires : lundi à jeudi 06:30–12:00 et 13:00–16:30, vendredi 06:30–12:00 (41 h 30). Le samedi
+et le dimanche ne sont jamais affichés ; le vendredi après-midi et les jours fériés sont
+hachurés. La pause de midi reste visible sans hachures et n'est jamais comptée.
+
+### Stockage du planning
+
+`Paramètres > Planning > Stockage du planning` propose trois choix :
+
+- `Local (ce poste uniquement)` : le planning est enregistré sur ce poste seulement (dossier
+  indiqué sous le choix). Fonctionne sans Microsoft ; les autres postes ne le voient pas.
+- `OneDrive (partagé, recommandé)` : le planning est enregistré dans un dossier du OneDrive
+  du compte Microsoft connecté, `ProjectFlow Planning` à la racine par défaut (créé au
+  premier usage ; le nom se change dans le champ `Dossier OneDrive`). Tous les postes
+  connectés au même compte Microsoft voient ce planning. Aucune autorisation supplémentaire :
+  c'est la même connexion que le répertoire chantier. Chaque élément du planning est un
+  petit fichier `.json` de ce dossier ; ne pas les modifier ni les déplacer à la main. Les
+  autres fichiers éventuellement posés dans le dossier sont ignorés.
+- `SharePoint (autorisation administrateur requise)` : liste SharePoint ; demande
+  l'autorisation Microsoft `Sites.ReadWrite.All` accordée par un administrateur. Tant qu'elle
+  manque, le planning reste lisible en consultation seule et l'indicateur de la barre
+  d'outils l'explique.
+
+Passer du planning local à OneDrive : choisir `OneDrive`, cliquer `Copier le planning local
+vers OneDrive…`, confirmer, puis `Enregistrer`. La copie ajoute au dossier OneDrive les
+tâches, personnes, absences et réglages du planning local qu'il ne contient pas encore ; rien
+n'y est remplacé, on peut donc la relancer sans risque (par exemple depuis un deuxième poste
+qui avait aussi un planning local). Le planning local reste sur le poste.
+
+Si la connexion Microsoft a expiré, l'indicateur affiche « Reconnexion requise » : cliquer
+`Se connecter à Microsoft` en haut de la fenêtre. Sans réseau, le planning reste lisible en
+consultation seule et se synchronise de nouveau dès le retour du réseau.
+
+### Vues et navigation
+
+- `Jour`, `Semaine` (par défaut) et `Mois`, ou `Ctrl+1`, `Ctrl+2`, `Ctrl+3`.
+- `‹` `›` ou `PgPréc` / `PgSuiv` changent de période ; `Aujourd'hui` ou `Ctrl+T` y revient ; un
+  clic sur le libellé de la période ouvre un calendrier avec les numéros de semaine.
+- Les barres s'aimantent à la demi-heure en vue Jour et Semaine, à la demi-journée en vue Mois.
+- `Couleur : Type | Dossier`, la densité et le filtre (dossier, client, initiales) sont gardés
+  par poste. `F1` affiche tous les raccourcis.
+
+### Créer une tâche
+
+- **Saisie rapide** (`Ctrl+K`) : taper la tâche comme on la dirait, par exemple
+  `2026-121 montage marquise jeu-ven LBI YCH` ou `124 débit portail 1,5j KDU lun`. Les
+  pastilles sous le champ montrent ce qui a été compris et où la tâche ira.
+  - Avec un jour et des initiales : la tâche va dans le planning.
+  - Avec un jour sans personne : ligne `Non affecté`.
+  - Sans jour : carte dans `À planifier`.
+  - `/vac LBI 26.10-30.10`, `/ecole`, `/formation`… : une absence.
+  - Durées : `2j` = deux jours ouvrés (« jeu 2j » finit vendredi à 12:00), `½j`, `4h`, `1h30`.
+    Heures : `7h30-11h`, `à 10h`. Personnes requises : `2p`. Provisoire : `?`. Urgent : `!`.
+  - `Maj+Entrée` crée la tâche et garde le dossier pour la suivante.
+- **Sur la grille** : double-cliquer une case vide, ou glisser dans le vide sur une ou
+  plusieurs lignes, puis taper le dossier et le titre ; la personne et les dates viennent de
+  la case.
+- **Depuis `À planifier`** : glisser une carte sur la ligne d'une personne.
+- Chaque `Sortie dossier` réussie ajoute une carte « Fabrication – désignation » dans
+  `À planifier` (désactivable dans `Équipe du planning > Calendrier`).
+
+### Modifier
+
+| Geste | Effet |
+|---|---|
+| Glisser une barre | Change les dates, et la personne si on la pose sur une autre ligne |
+| Glisser un bord | Change le début ou la fin |
+| `Maj` + glisser sur une autre ligne | Ajoute cette personne à la même tâche |
+| `Ctrl` + glisser | Copie indépendante |
+| Glisser une barre sur `À planifier` | La renvoie sans dates |
+| `←` `→` / `Maj+←` `→` | Décale / allonge ou raccourcit |
+| `↑` `↓` | Réaffecte à la personne du dessus ou du dessous |
+| `Suppr` | Retire la personne de cette barre ; la dernière renvoie la tâche dans `À planifier` |
+| `Maj+Suppr` | Supprime la tâche (toast « Annuler ») |
+| `Ctrl+Z` / `Ctrl+Y` | Annule / rétablit ses propres actions, sans limite |
+| Clic droit | Statut, type, affecter, détacher, dossier, fiche, répertoire… |
+
+Une tâche partagée par plusieurs personnes porte le badge `×N` ; `1/2` signale qu'il manque
+une personne. Le statut se lit à la forme : provisoire hachuré, confirmé plein, terminé estompé.
+
+### Types de tâche
+
+`Équipe du planning > Types de tâche` règle la liste partagée des types : nom, couleur des
+barres, mots-clés de la saisie rapide (séparés par des virgules) et ordre. `Simplifier :
+Atelier / Montage / Autre` remplace la liste détaillée par trois types et convertit les tâches
+existantes (débit, soudure et finition en Atelier, montage et livraison en Montage, le reste en
+Autre) ; `Ctrl+Z` annule. Supprimer un type encore utilisé demande quel type reprend ses tâches.
+En saisie rapide, `/atelier` (la clé ou le nom du type) ou un mot-clé du titre choisit le type ;
+sinon la tâche prend `Soudure / assemblage` s'il existe encore, ou le premier type de la liste. Le
+clic droit `Type ▸ Configurer les types…` ouvre la même page.
+
+### Travail de nuit
+
+Pour un chantier de nuit (aéroport…), taper par exemple `118 aéroport KDU jeu 22h-5h`,
+`mer 21:00-05:00` ou simplement `nuit` (21:00 à 05:00) : la tâche garde ses heures exactes et
+sa durée réelle (« 🌙 nuit jeu 29.10 22:00 → ven 30.10 05:00 · 7 h »). Une nuit commence entre
+18:00 et 06:00 du lundi au jeudi soir et finit à 06:30 au plus tard ; il n'y a pas de travail de
+nuit le vendredi soir ni le week-end. Dans `Détail`, la case `Travail de nuit` bascule une tâche
+(décochée, elle revient sur les horaires de jour). En vue semaine ou mois, une nuit occupe toute
+la colonne de son soir, en barre sombre avec une lune et ses heures ; la vue jour passe sur
+24 heures dès qu'une nuit touche le jour affiché. Autour de chaque nuit, la ligne de la personne
+montre 8 h de « Repos » hachuré avant et après : une autre tâche posée dedans est signalée
+« Repos de 8 h non respecté » (▲). Les heures de nuit comptent dans la charge de la personne.
+
+### Absences
+
+Les absences sont hachurées sur la ligne de la personne. Le survol affiche le motif, les dates
+(« lun 26.10 → ven 30.10 », la demi-journée s'il y en a une), la note et qui l'a modifiée en
+dernier. Double-cliquer l'absence ouvre `Absence` (personne, motif, du / au, journée, matin ou
+après-midi, note) avec `Enregistrer` et `Supprimer` ; le clic droit propose aussi `Modifier
+l'absence…` et `Supprimer l'absence` (toast « Annuler »). `Équipe du planning > Absences` liste
+toutes les absences, à venir d'abord, filtrables par personne, avec `Afficher les passées`. Les
+jours non disponibles chaque semaine (école professionnelle) se règlent sur la page `Personnes`
+de l'équipe. Les jours (semaine) ou les semaines (mois) alternent un fond clair et un fond
+légèrement teinté pour mieux se repérer, aussi à l'impression.
+
+### Informations du dossier
+
+Le survol d'une barre affiche le dossier : client, contact, désignation, sortie atelier, géré
+par et les autres tâches du dossier. Le panneau `Détail` (double-clic ou `Entrée`) permet de
+tout modifier et d'ouvrir le dossier, la fiche, la ligne du répertoire, le formulaire de
+création ou la sortie dossier.
+
+### Synchronisation et impression
+
+L'indicateur à droite de la barre d'outils indique « À jour », « Envoi… », « Hors ligne ·
+consultation seule » ou l'autorisation Microsoft manquante. Les modifications reçues d'un autre
+poste clignotent brièvement et l'auteur se lit au survol. `Ctrl+P` imprime ou exporte la vue en
+A3 paysage pour l'atelier.
+
 ## Charger une fiche existante
 
 Le bouton `Charger` retrouve la fiche a la racine du dossier projet, mais aussi dans un

@@ -5,9 +5,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog
 
 from projectflow.config import AppConfig
+from projectflow.core.planning.poste_config import PlanningPosteConfig
 from projectflow.exceptions import ConfigError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.excel import GraphExcelWorkbookGateway
@@ -702,3 +704,227 @@ async def test_default_planner_members_are_chosen_from_the_plan_and_saved(
     dialog.planner_plan_combo.setCurrentIndex(dialog.planner_plan_combo.count() - 1)
     dialog.apply_to_config(config)
     assert config.planner.default_assignee_ids == []
+
+
+PLANNING_MEMBERS = [
+    ("m-lm", "Lionel Mottiez", "lionel@balzmetal.ch"),
+    ("m-kd", "Kevin Duc", "kevin.duc@balzmetal.ch"),
+]
+
+
+def _planning_dialog(  # type: ignore[no-untyped-def]
+    qtbot,
+    planning: PlanningPosteConfig | None,
+    config: AppConfig | None = None,
+) -> SettingsDialog:
+    dialog = SettingsDialog(config or AppConfig(), planning_config=planning)
+    qtbot.addWidget(dialog)
+    return dialog
+
+
+def test_planning_section_sits_before_microsoft_account(qtbot) -> None:  # type: ignore[no-untyped-def]
+    dialog = _planning_dialog(qtbot, PlanningPosteConfig(poste_name="BUREAU-LM"))
+
+    dialog.show_section("planning")
+    planning_index = dialog.pages.currentIndex()
+    dialog.show_section("ms")
+
+    assert dialog.pages.currentIndex() == planning_index + 1
+    assert dialog._section_buttons.button(planning_index + 1).isChecked()  # noqa: SLF001
+    dialog.show_section("appearance")
+    assert dialog.pages.currentIndex() == dialog.pages.count() - 1
+
+
+def test_planning_identity_is_chosen_from_microsoft_members(qtbot) -> None:  # type: ignore[no-untyped-def]
+    planning = PlanningPosteConfig(poste_name="BUREAU-LM")
+    dialog = _planning_dialog(qtbot, planning)
+    assert not dialog.planning_member_combo.isEnabled()
+
+    dialog.set_planning_members(PLANNING_MEMBERS)
+    assert dialog.planning_member_combo.isEnabled()
+    assert dialog.planning_member_combo.currentIndex() == -1
+    dialog.planning_member_combo.setCurrentIndex(1)
+
+    assert dialog.planning_name_edit.text() == "Kevin Duc"
+    assert dialog.planning_initials_edit.text() == "KD"
+    dialog.planning_initials_edit.setText("kdu")
+    dialog.apply_to_planning_config(planning)
+
+    assert planning.user_m365_id == "m-kd"
+    assert planning.user_name == "Kevin Duc"
+    assert planning.user_initials == "KDU"
+    assert planning.author().label == "KDU · BUREAU-LM"
+    assert dialog._section_meta["planning"].text() == "KDU · Local"  # noqa: SLF001
+
+
+def test_saved_planning_member_is_selected_and_another_name_unlinks_it(qtbot) -> None:  # type: ignore[no-untyped-def]
+    planning = PlanningPosteConfig(
+        user_initials="LM",
+        user_name="Lionel Mottiez",
+        user_m365_id="m-lm",
+    )
+    dialog = _planning_dialog(qtbot, planning)
+
+    dialog.set_planning_members(PLANNING_MEMBERS)
+    assert dialog.planning_member_combo.currentIndex() == 0
+
+    dialog.planning_name_edit.setText("Julie Dumas")
+    dialog.planning_name_edit.textEdited.emit("Julie Dumas")
+    dialog.apply_to_planning_config(planning)
+
+    assert dialog.planning_member_combo.currentIndex() == -1
+    assert planning.user_m365_id == ""
+    assert planning.user_name == "Julie Dumas"
+
+
+def test_name_typed_back_keeps_the_microsoft_link(qtbot) -> None:  # type: ignore[no-untyped-def]
+    planning = PlanningPosteConfig(user_name="Lionel Mottiez", user_m365_id="m-lm")
+    dialog = _planning_dialog(qtbot, planning)
+
+    # Before the members are loaded, a key typed then erased leaves the same name.
+    qtbot.keyClick(dialog.planning_name_edit, Qt.Key.Key_Space)
+    qtbot.keyClick(dialog.planning_name_edit, Qt.Key.Key_Backspace)
+    assert dialog.planning_name_edit.text() == "Lionel Mottiez"
+    dialog.set_planning_members(PLANNING_MEMBERS)
+
+    assert dialog.planning_member_combo.currentIndex() == 0
+    dialog.apply_to_planning_config(planning)
+    assert planning.user_m365_id == "m-lm"
+
+    dialog.planning_name_edit.setText("Julie Dumas")
+    dialog.planning_name_edit.textEdited.emit("Julie Dumas")
+    assert dialog.planning_member_combo.currentIndex() == -1
+    dialog.planning_name_edit.setText("Lionel  Mottiez")
+    dialog.planning_name_edit.textEdited.emit("Lionel  Mottiez")
+    assert dialog.planning_member_combo.currentIndex() == 0
+
+
+def test_planning_initials_default_to_the_fiche_initials(qtbot) -> None:  # type: ignore[no-untyped-def]
+    config = AppConfig()
+    config.user.initials = "LM"
+
+    dialog = _planning_dialog(qtbot, PlanningPosteConfig(), config)
+
+    assert dialog.planning_initials_edit.text() == "LM"
+
+
+def test_sharepoint_storage_shows_the_admin_consent_banner(qtbot) -> None:  # type: ignore[no-untyped-def]
+    dialog = _planning_dialog(qtbot, PlanningPosteConfig())
+    assert dialog.planning_local_radio.isChecked()
+    assert dialog.planning_storage_banner.isHidden()
+    assert dialog.planning_sharepoint_fields.isHidden()
+
+    dialog.planning_sharepoint_radio.click()
+
+    assert not dialog.planning_storage_banner.isHidden()
+    assert not dialog.planning_sharepoint_fields.isHidden()
+    message = dialog.planning_storage_banner.message_label.text()
+    assert "Sites.ReadWrite.All" in message
+    assert "administrateur" in message
+    assert "n'est pas copié automatiquement" in message
+    assert dialog._section_meta["planning"].text() == "SharePoint"  # noqa: SLF001
+
+    dialog.planning_local_radio.click()
+    assert dialog.planning_storage_banner.isHidden()
+
+
+def test_apply_to_planning_config_writes_storage_and_view_defaults(qtbot) -> None:  # type: ignore[no-untyped-def]
+    planning = PlanningPosteConfig(
+        backend="sharepoint",
+        sharepoint_site_url="https://balz.sharepoint.com/sites/atelier",
+        sharepoint_site_id="site-id",
+        sharepoint_list_id="list-id",
+    )
+    dialog = _planning_dialog(qtbot, planning)
+    assert not dialog.planning_storage_banner.isHidden()
+    poste_id = planning.poste_id
+
+    dialog.planning_poste_edit.setText(" atelier-1 ")
+    dialog.planning_view_choice.option("month").click()
+    dialog.planning_density_choice.option("compact").click()
+    dialog.planning_color_choice.option("dossier").click()
+    dialog.apply_to_planning_config(planning)
+
+    # Unchanged site and list keep their resolved identifiers.
+    assert (planning.sharepoint_site_id, planning.sharepoint_list_id) == ("site-id", "list-id")
+    assert planning.poste_name == "atelier-1"
+    assert planning.poste_id == poste_id
+    assert (planning.default_view, planning.density, planning.color_by) == (
+        "month",
+        "compact",
+        "dossier",
+    )
+
+    # SharePoint ignores the case and a closing slash: still the same site and list.
+    key = planning.cache_key()
+    dialog.planning_site_edit.setText("https://Balz.sharepoint.com/sites/Atelier/")
+    dialog.planning_list_edit.setText(planning.sharepoint_list_name.upper())
+    dialog.apply_to_planning_config(planning)
+    assert (planning.sharepoint_site_id, planning.sharepoint_list_id) == ("site-id", "list-id")
+    assert planning.cache_key() == key
+
+    dialog.planning_list_edit.setText("Planning atelier")
+    dialog.apply_to_planning_config(planning)
+    assert (planning.sharepoint_site_id, planning.sharepoint_list_id) == ("site-id", "")
+    assert planning.sharepoint_list_name == "Planning atelier"
+
+    dialog.planning_site_edit.setText("https://balz.sharepoint.com/sites/bureau")
+    dialog.planning_local_radio.click()
+    dialog.apply_to_planning_config(planning)
+    assert planning.backend == "local"
+    assert planning.sharepoint_site_url == "https://balz.sharepoint.com/sites/bureau"
+    assert (planning.sharepoint_site_id, planning.sharepoint_list_id) == ("", "")
+
+
+def test_apply_to_config_leaves_the_planning_alone(qtbot) -> None:  # type: ignore[no-untyped-def]
+    config = AppConfig()
+    planning = PlanningPosteConfig(user_initials="LM")
+    dialog = _planning_dialog(qtbot, planning, config)
+
+    dialog.planning_initials_edit.setText("XY")
+    dialog.apply_to_config(config)
+
+    assert planning.user_initials == "LM"
+    assert config.user.initials == ""
+
+
+def test_sharepoint_without_site_is_refused(qtbot, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    dialog = _planning_dialog(qtbot, PlanningPosteConfig())
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QMessageBox.warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+    dialog.planning_sharepoint_radio.click()
+
+    dialog.accept()
+    dialog.planning_site_edit.setText("balz.sharepoint.com/sites/atelier")
+    dialog.accept()
+
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert warnings == [
+        "Indiquez l'adresse du site SharePoint du planning ou choisissez le stockage local.",
+        "L'adresse du site SharePoint commence par https://.",
+    ]
+
+
+def test_planning_team_button_asks_for_the_roster(qtbot) -> None:  # type: ignore[no-untyped-def]
+    dialog = _planning_dialog(qtbot, PlanningPosteConfig())
+    requested: list[bool] = []
+    dialog.planning_team_requested.connect(lambda: requested.append(True))
+
+    dialog.planning_team_button.click()
+
+    assert requested == [True]
+    assert dialog.result() == 0
+
+
+def test_planning_section_without_config_is_disabled(qtbot) -> None:  # type: ignore[no-untyped-def]
+    dialog = _planning_dialog(qtbot, None)
+
+    dialog.set_planning_members(PLANNING_MEMBERS)
+
+    assert not dialog.planning_team_button.isEnabled()
+    assert not dialog.planning_initials_edit.isEnabled()
+    assert not dialog.planning_member_combo.isEnabled()
+    assert dialog._section_meta["planning"].text() == ""  # noqa: SLF001

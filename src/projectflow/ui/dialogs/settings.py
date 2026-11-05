@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Protocol
+from typing import Final, Protocol, TypeVar
 
 from pydantic import ValidationError
 from PySide6.QtCore import QRectF, QSignalBlocker, Qt, Signal
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     QStackedWidget,
@@ -47,16 +48,34 @@ from projectflow.config import (
     CadPropertyNames,
     RepertoireChantierConfig,
 )
+from projectflow.core.planning.local_store import has_documents
+from projectflow.core.planning.poste_config import (
+    PlanningBackendName,
+    PlanningColorBy,
+    PlanningDensity,
+    PlanningPosteConfig,
+    PlanningView,
+    default_poste_name,
+)
 from projectflow.exceptions import GraphError, ProjectFlowError
 from projectflow.graph.client import GraphClient
+from projectflow.graph.drive_planning_store import DEFAULT_ONEDRIVE_FOLDER, folder_segments
 from projectflow.graph.planner import (
     GraphPlannerClient,
     is_planner_link,
     planner_plan_id_from_text,
 )
+from projectflow.graph.planning_store import DEFAULT_PLANNING_LIST_NAME
 from projectflow.logging import redact_sensitive_links
 from projectflow.outlook.local import detect_local_outlook_accounts, validate_local_outlook_account
 from projectflow.platform.paths import native_path_text
+from projectflow.ui.dialogs.planning_team import (
+    INITIALS_EDIT_WIDTH,
+    INITIALS_MAX_LENGTH,
+    PlannerMember,
+    SegmentedChoice,
+    propose_initials,
+)
 from projectflow.ui.modal import ask_outside_task, show_outside_task
 from projectflow.ui.theme import (
     HEADING_FAMILY,
@@ -69,6 +88,7 @@ from projectflow.ui.theme import (
 from projectflow.ui.widgets.industry import (
     BlueprintFrame,
     PrimaryButton,
+    StatusBanner,
     button,
     field,
     label,
@@ -82,6 +102,41 @@ from projectflow.ui.widgets.planner import (
 )
 
 MICROSOFT_SIGN_IN_TEXT = "Se reconnecter au compte Microsoft"
+PLANNING_VIEWS: tuple[tuple[PlanningView, str], ...] = (
+    ("day", "Jour"),
+    ("week", "Semaine"),
+    ("month", "Mois"),
+)
+PLANNING_DENSITIES: tuple[tuple[PlanningDensity, str], ...] = (
+    ("compact", "Compacte"),
+    ("normal", "Normale"),
+    ("large", "Large"),
+)
+PLANNING_STORAGE_NAMES: Final[dict[PlanningBackendName, str]] = {
+    "local": "Local",
+    "onedrive": "OneDrive",
+    "sharepoint": "SharePoint",
+}
+PLANNING_COLORS: tuple[tuple[PlanningColorBy, str], ...] = (
+    ("type", "Par type de tâche"),
+    ("dossier", "Par dossier"),
+)
+SHAREPOINT_CONSENT_TEXT: Final = (
+    "Le planning partagé sur SharePoint demande l'autorisation Microsoft "
+    "Sites.ReadWrite.All, accordée par un administrateur du compte Microsoft 365 : ce "
+    "consentement administrateur est en attente. Le planning local de ce poste n'est pas "
+    "copié automatiquement vers SharePoint."
+)
+ONEDRIVE_NOTE_TEXT: Final = (
+    "Tous les postes connectés au même compte Microsoft voient ce planning. "
+    "Aucune autorisation supplémentaire."
+)
+PLANNING_COPY_TEXT: Final = "Copier le planning local vers OneDrive…"
+PLANNING_COPY_RUNNING_TEXT: Final = "Copie en cours…"
+FOLDER_STRIP: Final = " /\\"
+SHAREPOINT_URL_PREFIX: Final = "https://"
+
+_Choice = TypeVar("_Choice", bound=str)
 
 
 class LicenseKeyStorage(Protocol):
@@ -99,6 +154,10 @@ class SettingsDialog(QDialog):
     # Signing in again acts at once: it is not a setting waiting for OK.
     microsoft_sign_in_requested = Signal()
     reset_requested = Signal()
+    # The shared roster is edited in its own dialog, applied at once, never on OK.
+    planning_team_requested = Signal()
+    # Copies this poste's local planning into the OneDrive folder given, at once.
+    planning_copy_requested = Signal(str)
 
     def __init__(
         self,
@@ -106,6 +165,7 @@ class SettingsDialog(QDialog):
         *,
         parent: QWidget | None = None,
         license_storage: LicenseKeyStorage | None = None,
+        planning_config: PlanningPosteConfig | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Paramètres")
@@ -115,7 +175,8 @@ class SettingsDialog(QDialog):
         self._planner_task: asyncio.Task[None] | None = None
         self._cad_test_task: asyncio.Task[None] | None = None
         self._finished = False
-        self._build_ui(config)
+        self._planning_members: list[PlannerMember] = []
+        self._build_ui(config, planning_config)
         self.finished.connect(self._cancel_planner_action)
 
     def apply_to_config(self, config: AppConfig) -> None:
@@ -187,11 +248,37 @@ class SettingsDialog(QDialog):
                 "Selectionnez une colonne Planner ou desactivez la creation Planner.",
             )
             return
-        if not self._validate_cad():
+        if not (self._validate_planning() and self._validate_cad()):
             return
         if not self._store_license_key():
             return
         super().accept()
+
+    def _validate_planning(self) -> bool:
+        if not self._planning_available:
+            return True
+        if self.planning_onedrive_radio.isChecked():
+            if self.planning_onedrive_edit.text().strip(FOLDER_STRIP):
+                return True
+            QMessageBox.warning(
+                self,
+                "Planning",
+                "Indiquez le nom du dossier OneDrive du planning ou choisissez le stockage local.",
+            )
+            return False
+        if not self.planning_sharepoint_radio.isChecked():
+            return True
+        site = self.planning_site_edit.text().strip()
+        if not site:
+            message = (
+                "Indiquez l'adresse du site SharePoint du planning ou choisissez le stockage local."
+            )
+        elif not site.lower().startswith(SHAREPOINT_URL_PREFIX):
+            message = "L'adresse du site SharePoint commence par https://."
+        else:
+            return True
+        QMessageBox.warning(self, "Planning", message)
+        return False
 
     def _validate_cad(self) -> bool:
         try:
@@ -242,7 +329,7 @@ class SettingsDialog(QDialog):
             ),
         )
 
-    def _build_ui(self, config: AppConfig) -> None:
+    def _build_ui(self, config: AppConfig, planning_config: PlanningPosteConfig | None) -> None:
         self.setMinimumSize(900, 600)
         self.resize(1080, 760)
         self._initial_appearance = config.appearance.model_copy()
@@ -272,9 +359,11 @@ class SettingsDialog(QDialog):
             ("outlook", "Outlook", self._outlook_group(config)),
             ("planner", "Microsoft Planner", self._planner_group(config)),
             ("cad", "Modèles CAO", self._cad_group(config)),
+            ("planning", "Planning", self._planning_group(config, planning_config)),
             ("ms", "Compte Microsoft", self._microsoft_group()),
             ("appearance", "Apparence", self._appearance_group(config)),
         ]
+        self._section_keys = tuple(key for key, _title, _group in sections)
 
         nav = QWidget()
         nav.setFixedWidth(230)
@@ -333,12 +422,14 @@ class SettingsDialog(QDialog):
         self.user_initials_edit.textChanged.connect(self._refresh_section_meta)
         self.outlook_enabled_checkbox.toggled.connect(self._refresh_section_meta)
         self.planner_enabled_checkbox.toggled.connect(self._refresh_section_meta)
+        self.planning_initials_edit.textChanged.connect(self._refresh_section_meta)
+        self.planning_sharepoint_radio.toggled.connect(self._refresh_section_meta)
+        self.planning_onedrive_radio.toggled.connect(self._refresh_section_meta)
         self._refresh_section_meta()
 
     def show_section(self, key: str) -> None:
-        keys = ["user", "paths", "outlook", "planner", "cad", "ms", "appearance"]
-        if key in keys:
-            index = keys.index(key)
+        if key in self._section_keys:
+            index = self._section_keys.index(key)
             self.pages.setCurrentIndex(index)
             section_button = self._section_buttons.button(index)
             if section_button is not None:
@@ -352,9 +443,336 @@ class SettingsDialog(QDialog):
         self._section_meta["planner"].setText(
             "Actif" if self.planner_enabled_checkbox.isChecked() else "Inactif",
         )
+        storage = PLANNING_STORAGE_NAMES[self.selected_planning_backend()]
+        initials = self.planning_initials_edit.text().strip().upper()
+        self._section_meta["planning"].setText(
+            " · ".join(part for part in (initials, storage) if part)
+            if self._planning_available
+            else "",
+        )
         self._section_meta["appearance"].setText(
             f"{MODES[self._appearance_mode]} · {PALETTES[self._appearance_palette][0]}",
         )
+
+    # ------------------------------------------------------------- planning ----
+
+    def apply_to_planning_config(self, config: PlanningPosteConfig) -> None:
+        """Write this poste's planning settings into ``config`` (the roster is shared)."""
+        config.user_initials = self.planning_initials_edit.text()
+        config.user_name = " ".join(self.planning_name_edit.text().split())
+        config.user_m365_id = self._planning_linked_id()
+        config.poste_name = self.planning_poste_edit.text()
+        site = self.planning_site_edit.text().strip()
+        list_name = self.planning_list_edit.text().strip() or DEFAULT_PLANNING_LIST_NAME
+        # Identifiers resolved for another site or list must be looked up again. SharePoint
+        # ignores the case and a closing slash, so the same site keeps them.
+        if _sharepoint_key(site) != _sharepoint_key(config.sharepoint_site_url):
+            config.sharepoint_site_id = ""
+            config.sharepoint_list_id = ""
+        elif _sharepoint_key(list_name) != _sharepoint_key(config.sharepoint_list_name):
+            config.sharepoint_list_id = ""
+        config.sharepoint_site_url = site
+        config.sharepoint_list_name = list_name
+        config.backend = self.selected_planning_backend()
+        config.onedrive_folder = self.planning_onedrive_edit.text()
+        config.default_view = _choice(
+            PLANNING_VIEWS,
+            self.planning_view_choice.current(),
+            config.default_view,
+        )
+        config.density = _choice(
+            PLANNING_DENSITIES,
+            self.planning_density_choice.current(),
+            config.density,
+        )
+        config.color_by = _choice(
+            PLANNING_COLORS,
+            self.planning_color_choice.current(),
+            config.color_by,
+        )
+
+    def set_planning_members(self, members: Sequence[PlannerMember]) -> None:
+        """Offer the Microsoft 365 members (id, name, e-mail) in « Je suis… »."""
+        self._planning_members = list(members)
+        combo = self.planning_member_combo
+        with QSignalBlocker(combo):
+            combo.clear()
+            for member_id, name, email in self._planning_members:
+                combo.addItem(f"{name} ({email})" if email else name, member_id)
+            linked = self._planning_linked_id()
+            combo.setCurrentIndex(combo.findData(linked) if linked else -1)
+        combo.setEnabled(self._planning_available and bool(self._planning_members))
+        combo.setPlaceholderText(
+            "Choisir dans la liste Microsoft 365"
+            if self._planning_members
+            else "Membres Microsoft 365 non chargés",
+        )
+
+    def _planning_group(
+        self,
+        config: AppConfig,
+        planning: PlanningPosteConfig | None,
+    ) -> QGroupBox:
+        group = QGroupBox("Planning")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(16)
+        self._planning_available = planning is not None
+        current = planning if planning is not None else PlanningPosteConfig()
+        # The Microsoft 365 account and the name it goes with: the link holds while the
+        # name field shows that name, so a typo corrected keeps it.
+        self._planning_link = (current.user_m365_id, current.user_name)
+        if planning is None:
+            layout.addWidget(
+                label("Le planning n'est pas disponible sur ce poste.", "muted", wrap=True),
+            )
+        controls = QWidget()
+        column = QVBoxLayout(controls)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(16)
+        self._planning_identity(column, config, current)
+        self._planning_storage(column, current)
+        column.addWidget(label("Équipe du planning", "h5"))
+        team = BlueprintFrame(padding=(16, 12, 16, 12), layout="h", spacing=14)
+        team.box.addWidget(
+            label(
+                "Personnes, sous-traitants, équipes et fermetures : registre partagé par "
+                "tous les postes, modifié tout de suite.",
+                wrap=True,
+            ),
+            1,
+        )
+        self.planning_team_button = button("Équipe du planning…", icon="settings")
+        self.planning_team_button.clicked.connect(self.planning_team_requested.emit)
+        team.box.addWidget(self.planning_team_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        column.addWidget(team)
+        column.addWidget(label("Affichage par défaut", "h5"))
+        self.planning_view_choice = SegmentedChoice(PLANNING_VIEWS, current.default_view)
+        self.planning_density_choice = SegmentedChoice(PLANNING_DENSITIES, current.density)
+        self.planning_color_choice = SegmentedChoice(PLANNING_COLORS, current.color_by)
+        column.addWidget(field("Vue à l'ouverture", self.planning_view_choice))
+        column.addWidget(field("Densité des lignes", self.planning_density_choice))
+        column.addWidget(
+            field(
+                "Couleur des barres",
+                self.planning_color_choice,
+                help_text="Propre à ce poste, comme la vue et la densité.",
+            ),
+        )
+        layout.addWidget(controls)
+        controls.setEnabled(self._planning_available)
+        self._planning_storage_changed()
+        return group
+
+    def _planning_identity(
+        self,
+        column: QVBoxLayout,
+        config: AppConfig,
+        current: PlanningPosteConfig,
+    ) -> None:
+        column.addWidget(label("Identité de ce poste", "h5"))
+        column.addWidget(
+            label(
+                "Le compte Microsoft peut être partagé : chaque modification du planning est "
+                "signée des initiales et du nom du poste, par exemple « LM · BUREAU-LM ».",
+                "muted",
+                wrap=True,
+            ),
+        )
+        self.planning_member_combo = QComboBox()
+        self.planning_member_combo.setPlaceholderText("Membres Microsoft 365 non chargés")
+        self.planning_member_combo.setEnabled(False)
+        self.planning_member_combo.currentIndexChanged.connect(self._planning_member_chosen)
+        column.addWidget(
+            field(
+                "Je suis…",
+                self.planning_member_combo,
+                help_text="Remplit le nom et propose des initiales, qui restent modifiables.",
+            ),
+        )
+        self.planning_initials_edit = QLineEdit(
+            current.user_initials or config.user.initials.strip().upper(),
+        )
+        self.planning_initials_edit.setMaxLength(INITIALS_MAX_LENGTH)
+        self.planning_initials_edit.setFixedWidth(INITIALS_EDIT_WIDTH)
+        self.planning_initials_edit.setPlaceholderText("LM")
+        self.planning_name_edit = QLineEdit(current.user_name)
+        self.planning_name_edit.setPlaceholderText("Prénom Nom")
+        self.planning_name_edit.textEdited.connect(self._planning_name_edited)
+        identity = QHBoxLayout()
+        identity.setSpacing(16)
+        identity.addWidget(field("Initiales", self.planning_initials_edit))
+        identity.addWidget(field("Nom", self.planning_name_edit), 1)
+        column.addLayout(identity)
+        self.planning_poste_edit = QLineEdit(current.poste_name)
+        self.planning_poste_edit.setPlaceholderText(default_poste_name())
+        column.addWidget(
+            field(
+                "Nom du poste",
+                self.planning_poste_edit,
+                help_text="Par défaut, le nom de l'ordinateur ; par exemple « BUREAU-LM » "
+                "ou « ATELIER-1 ».",
+            ),
+        )
+
+    def _planning_storage(self, column: QVBoxLayout, current: PlanningPosteConfig) -> None:
+        column.addWidget(label("Stockage du planning", "h5"))
+        self.planning_local_radio = QRadioButton("Local (ce poste uniquement)")
+        self.planning_onedrive_radio = QRadioButton("OneDrive (partagé, recommandé)")
+        self.planning_sharepoint_radio = QRadioButton(
+            "SharePoint (autorisation administrateur requise)",
+        )
+        self._planning_storage_buttons = QButtonGroup(self)
+        for radio in (
+            self.planning_local_radio,
+            self.planning_onedrive_radio,
+            self.planning_sharepoint_radio,
+        ):
+            self._planning_storage_buttons.addButton(radio)
+        self.planning_onedrive_radio.setChecked(current.backend == "onedrive")
+        self.planning_sharepoint_radio.setChecked(current.backend == "sharepoint")
+        self.planning_local_radio.setChecked(current.backend == "local")
+        self._planning_local_directory = current.local_store_directory()
+        column.addWidget(self.planning_local_radio)
+        local_path = label(
+            f"Dossier : {native_path_text(self._planning_local_directory)}",
+            "small",
+            wrap=True,
+            selectable=True,
+        )
+        local_path.setContentsMargins(26, 0, 0, 0)
+        column.addWidget(local_path)
+
+        column.addWidget(self.planning_onedrive_radio)
+        self.planning_onedrive_edit = QLineEdit(current.onedrive_folder)
+        self.planning_onedrive_edit.setPlaceholderText(DEFAULT_ONEDRIVE_FOLDER)
+        self.planning_onedrive_fields = QWidget()
+        onedrive_fields = QVBoxLayout(self.planning_onedrive_fields)
+        onedrive_fields.setContentsMargins(26, 0, 0, 0)
+        onedrive_fields.setSpacing(8)
+        onedrive_fields.addWidget(
+            field(
+                "Dossier OneDrive",
+                self.planning_onedrive_edit,
+                help_text="À la racine du OneDrive du compte connecté ; créé s'il n'existe pas.",
+            ),
+        )
+        self.planning_onedrive_note = label(ONEDRIVE_NOTE_TEXT, "muted", wrap=True)
+        onedrive_fields.addWidget(self.planning_onedrive_note)
+        copy_row = QHBoxLayout()
+        copy_row.setSpacing(12)
+        self.planning_copy_button = button(PLANNING_COPY_TEXT)
+        self.planning_copy_button.setToolTip(
+            "Ajoute au dossier OneDrive les éléments du planning local de ce poste qu'il ne "
+            "contient pas encore ; rien n'y est remplacé.",
+        )
+        self.planning_copy_button.clicked.connect(self._request_planning_copy)
+        copy_row.addWidget(self.planning_copy_button)
+        copy_row.addStretch(1)
+        onedrive_fields.addLayout(copy_row)
+        self.planning_copy_status = label("", "small", wrap=True)
+        self.planning_copy_status.setVisible(False)
+        onedrive_fields.addWidget(self.planning_copy_status)
+        column.addWidget(self.planning_onedrive_fields)
+        self._planning_has_local = has_documents(self._planning_local_directory)
+        self._planning_copying = False
+
+        column.addWidget(self.planning_sharepoint_radio)
+        self.planning_site_edit = QLineEdit(current.sharepoint_site_url)
+        self.planning_site_edit.setPlaceholderText("https://balzmetal.sharepoint.com/sites/…")
+        self.planning_list_edit = QLineEdit(current.sharepoint_list_name)
+        self.planning_list_edit.setPlaceholderText(DEFAULT_PLANNING_LIST_NAME)
+        self.planning_sharepoint_fields = QWidget()
+        sharepoint_fields = QVBoxLayout(self.planning_sharepoint_fields)
+        sharepoint_fields.setContentsMargins(26, 0, 0, 0)
+        sharepoint_fields.setSpacing(12)
+        sharepoint_fields.addWidget(field("Site SharePoint", self.planning_site_edit))
+        sharepoint_fields.addWidget(
+            field(
+                "Liste du planning",
+                self.planning_list_edit,
+                help_text="Créée sur le site au premier envoi si elle n'existe pas.",
+            ),
+        )
+        column.addWidget(self.planning_sharepoint_fields)
+        self.planning_storage_banner = StatusBanner()
+        column.addWidget(self.planning_storage_banner)
+        for radio in (self.planning_onedrive_radio, self.planning_sharepoint_radio):
+            radio.toggled.connect(self._planning_storage_changed)
+        self.planning_onedrive_edit.textChanged.connect(self._refresh_planning_copy)
+
+    def selected_planning_backend(self) -> PlanningBackendName:
+        if self.planning_onedrive_radio.isChecked():
+            return "onedrive"
+        if self.planning_sharepoint_radio.isChecked():
+            return "sharepoint"
+        return "local"
+
+    def _planning_storage_changed(self) -> None:
+        sharepoint = self.planning_sharepoint_radio.isChecked()
+        self.planning_sharepoint_fields.setVisible(sharepoint)
+        self.planning_onedrive_fields.setVisible(self.planning_onedrive_radio.isChecked())
+        if sharepoint:
+            self.planning_storage_banner.show_success(SHAREPOINT_CONSENT_TEXT)
+            # A notice, not a success: the warning sign keeps the banner's accent tint.
+            self.planning_storage_banner.icon_label.set_icon("alert", "accent-800")
+        else:
+            self.planning_storage_banner.clear()
+        self._refresh_planning_copy()
+
+    def _refresh_planning_copy(self) -> None:
+        folder = self.planning_onedrive_edit.text().strip(FOLDER_STRIP)
+        self.planning_copy_button.setEnabled(
+            self._planning_available
+            and self._planning_has_local
+            and bool(folder)
+            and not self._planning_copying,
+        )
+
+    def _request_planning_copy(self) -> None:
+        if not self.planning_copy_button.isEnabled():
+            return
+        self._planning_copying = True
+        self.planning_copy_button.setText(PLANNING_COPY_RUNNING_TEXT)
+        self._refresh_planning_copy()
+        self.planning_copy_status.setVisible(False)
+        self.planning_copy_requested.emit(self.planning_onedrive_folder())
+
+    def planning_onedrive_folder(self) -> str:
+        """Return the OneDrive folder typed, as the planning settings keep it."""
+        return "/".join(folder_segments(self.planning_onedrive_edit.text()))
+
+    def planning_copy_finished(self, message: str, *, copied: bool) -> None:
+        """Show how the copy went; the button can then be used again."""
+        self._planning_copying = False
+        self.planning_copy_button.setText(PLANNING_COPY_TEXT)
+        self._refresh_planning_copy()
+        text = message
+        if copied and self.selected_planning_backend() == "onedrive":
+            text = f"{message} Cliquez sur « Enregistrer » pour utiliser le planning OneDrive."
+        self.planning_copy_status.setText(text)
+        self.planning_copy_status.setVisible(bool(text))
+
+    def _planning_member_chosen(self, index: int) -> None:
+        if not 0 <= index < len(self._planning_members):
+            return
+        member_id, name, _email = self._planning_members[index]
+        self._planning_link = (member_id, name)
+        self.planning_name_edit.setText(name)
+        self.planning_initials_edit.setText(propose_initials(name))
+
+    def _planning_linked_id(self) -> str:
+        """Microsoft 365 id of this poste's user, or "" once another name is typed."""
+        member_id, name = self._planning_link
+        if not member_id or _person_key(self.planning_name_edit.text()) != _person_key(name):
+            return ""
+        return member_id
+
+    def _planning_name_edited(self, _text: str) -> None:
+        # Another name means another person: the member chosen no longer applies.
+        combo = self.planning_member_combo
+        linked = self._planning_linked_id()
+        with QSignalBlocker(combo):
+            combo.setCurrentIndex(combo.findData(linked) if linked else -1)
 
     def _appearance_group(self, config: AppConfig) -> QGroupBox:
         group = QGroupBox("Apparence")
@@ -1095,6 +1513,20 @@ def _optional_path(value: str) -> Path | None:
     if not stripped:
         return None
     return Path(stripped).expanduser()
+
+
+def _choice(options: Sequence[tuple[_Choice, str]], key: str, default: _Choice) -> _Choice:
+    """Return the option whose value is ``key``, else ``default``."""
+    return next((value for value, _text in options if value == key), default)
+
+
+def _sharepoint_key(text: str) -> str:
+    # As the planning configuration compares a site address or a list name.
+    return text.strip().rstrip("/").casefold()
+
+
+def _person_key(name: str) -> str:
+    return " ".join(name.split()).casefold()
 
 
 def _selected_combo_id(combo: QComboBox) -> str:

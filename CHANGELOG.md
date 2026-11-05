@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- Nouvel onglet `Planning` : une ligne par employe ou sous-traitant, vues jour / semaine /
+  mois a la demi-heure, horaires 06:30-12:00 et 13:00-16:30 (vendredi jusqu'a 12:00), feries
+  GE et VD, sans samedi ni dimanche. Les taches se posent, s'etirent et se deplacent a la
+  souris ; `Maj` + glisser ajoute une personne, `Ctrl` + glisser copie, `Suppr` retire la
+  personne, `Ctrl+Z` annule. Zone `A planifier` partagee, ligne `Non affecte`, informations du
+  dossier au survol et dans `Detail`, saisie rapide (`Ctrl+K`, par exemple
+  `124 debit portail 1,5j KDU lun`), absences, impression A3.
+- Planning : survoler une absence affiche son motif, ses dates, sa note et son auteur ; un
+  double-clic ou le clic droit la modifie ou la supprime (toast `Annuler`), et
+  `Equipe du planning > Absences` les liste toutes (a venir d'abord, filtre par personne).
+  Fond bi-ton : un jour sur deux (vues jour et semaine) ou une semaine sur deux (vue mois)
+  legerement teinte, jusque dans l'en-tete et a l'impression.
+- `Parametres > Planning` : identite du poste (initiales, nom, poste) et equipe du planning.
+  Stockage `Local (ce poste uniquement)`, `OneDrive (partage, recommande)` ou
+  `SharePoint (autorisation administrateur requise)`.
+- Planning partage dans OneDrive : un dossier `ProjectFlow Planning` du OneDrive du compte
+  Microsoft connecte (cree au premier usage, nom modifiable), avec la meme connexion que le
+  repertoire chantier, sans nouvelle autorisation. Tous les postes connectes au meme compte
+  voient le meme planning, en 1 a 2 s quand l'onglet est affiche ; une modification faite
+  entre-temps sur un autre poste n'est jamais ecrasee.
+- `Copier le planning local vers OneDrive...` (dans `Parametres > Planning`) ajoute au
+  dossier OneDrive le planning local du poste sans rien y remplacer ; peut etre relance sans
+  risque. Outil equivalent pour l'administrateur : `tools/planning_poc/copy_to_onedrive.py`.
+- Chaque `Sortie dossier` ajoute une carte « Fabrication » dans `A planifier`.
+- Planning : `Equipe du planning > Types de tache` regle les types de tache partages (nom,
+  couleur, mots-cles de la saisie rapide, ordre, ajout et suppression ; les taches d'un type
+  supprime passent dans le type choisi). `Simplifier : Atelier / Montage / Autre` remplace les
+  dix types detailles par trois et convertit les taches existantes en une seule etape
+  annulable. Couleurs des barres, saisie rapide (`/atelier`), panneau `Detail`, clic droit
+  `Type` et `A planifier` suivent la liste ; une tache d'un type supprime s'affiche avec le
+  premier type.
+- `Tout reinitialiser ProjectFlow...` conserve le planning enregistre sur le poste (taches,
+  personnes, absences), comme les dossiers projets ; seuls ses reglages sont effaces.
+- Planning : travail de nuit. La saisie rapide reconnait `nuit` et les heures du soir
+  (`jeu 22h-5h`, `21:00-05:00`, `a 20h 3h`) ; la tache garde ses heures exactes et sa duree
+  reelle, du lundi au jeudi soir seulement (18:00 a 06:30, jamais le vendredi soir ni le
+  week-end). Case `Travail de nuit` dans `Detail`. Barre sombre avec une lune sur la colonne
+  du soir en vues semaine et mois, vue jour sur 24 h, aussi a l'impression. Repos de 8 h
+  hachure avant et apres chaque nuit, signale « Repos de 8 h non respecte » quand une autre
+  tache y tombe ; les heures de nuit comptent dans la charge.
+- Outil de mesure du Lot 0 dans `tools/planning_poc/` (voir `docs/planning-poc.md`).
+
 ## 0.1.65
 
 - Un message d'erreur (par exemple apres une connexion Microsoft refusee) ne bloque plus

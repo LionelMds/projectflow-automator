@@ -246,9 +246,8 @@ class RepertoireDossierTab(QWidget):
             icon("search", "neutral-700"),
             QLineEdit.ActionPosition.LeadingPosition,
         )
-        theme_notifier().changed.connect(
-            lambda: self._search_action.setIcon(icon("search", "neutral-700")),
-        )
+        # A bound method: Qt disconnects it with the tab, a lambda would outlive it.
+        theme_notifier().changed.connect(self._refresh_search_icon)
         self.search_edit.textChanged.connect(self._filter_rows)
         search = field("Rechercher", self.search_edit)
         search.setFixedWidth(340)
@@ -343,6 +342,9 @@ class RepertoireDossierTab(QWidget):
         self._model.modelReset.connect(self._refresh_dirty_state)
         self._update_action_states()
         self._refresh_dirty_state()
+
+    def _refresh_search_icon(self) -> None:
+        self._search_action.setIcon(icon("search", "neutral-700"))
 
     def set_source(self, text: str) -> None:
         self.source_label.setText(text.upper())

@@ -17,6 +17,7 @@ HTTP_UNAUTHORIZED = 401
 HTTP_FORBIDDEN = 403
 HTTP_LOCKED = 423
 HTTP_TOO_MANY_REQUESTS = 429
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 MAX_ATTEMPTS = 3
 # Longer route segments are identifiers (drives, items, plans) and stay out of logs.
 LOG_ID_MIN_LENGTH = 16
@@ -89,28 +90,98 @@ class GraphClient:
         json: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
-        last_response = await self._send(method, path, json=json, headers=headers)
+        last_response = await self._checked(method, path, json=json, headers=headers)
+        return _json_payload(last_response)
+
+    async def put_bytes(
+        self,
+        path: str,
+        content: bytes,
+        *,
+        content_type: str = "application/json",
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Upload ``content`` as the body of a PUT (drive item content); return the JSON."""
+        request_headers = dict(headers or {})
+        request_headers.setdefault("Content-Type", content_type)
+        response = await self._checked("PUT", path, content=content, headers=request_headers)
+        return _json_payload(response)
+
+    async def get_bytes(
+        self,
+        path: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> bytes:
+        """Return the raw body of a GET, such as ``/items/{id}/content``.
+
+        Microsoft answers the content request with a redirect to a pre-authenticated
+        download address: it is followed once, without the Authorization header.
+        """
+        request_headers = dict(headers or {})
+        request_headers.setdefault("Accept", "*/*")
+        response = await self._checked("GET", path, headers=request_headers)
+        if response.status_code in REDIRECT_STATUSES:
+            location = response.headers.get("Location")
+            if not location:
+                raise GraphError(
+                    "Microsoft Graph a retourne une redirection sans adresse.",
+                    status_code=response.status_code,
+                )
+            return await self.download(location)
+        return response.content
+
+    async def download(self, url: str) -> bytes:
+        """Read a pre-authenticated download address (never sent the access token)."""
+        last_response: httpx.Response | None = None
+        for attempt in range(MAX_ATTEMPTS):
+            sent = time.perf_counter()
+            response = await self._exchange(
+                "GET",
+                url,
+                json=None,
+                content=None,
+                headers={"Accept": "*/*"},
+            )
+            last_response = response
+            # The address carries a credential: never logged.
+            get_logger(__name__).info(
+                "graph.download",
+                status=response.status_code,
+                attempt=attempt + 1,
+                duration_ms=_elapsed_ms(sent),
+            )
+            if attempt + 1 == MAX_ATTEMPTS or not _should_retry(response, "GET"):
+                break
+            retry_after = _retry_after_seconds(response)
+            await asyncio.sleep(retry_after if retry_after is not None else 0.5 * (attempt + 1))
+        if last_response is None:
+            raise GraphError("Microsoft Graph n'a retourne aucune reponse.")
+        if last_response.is_error:
+            raise _response_error(last_response, "GET")
+        return last_response.content
+
+    async def _checked(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, Any] | None = None,
+        content: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
+        last_response = await self._send(method, path, json=json, content=content, headers=headers)
         invalidate_token = getattr(self._token_provider, "invalidate_token", None)
         if last_response.status_code == HTTP_UNAUTHORIZED and callable(invalidate_token):
             # Microsoft rejected the token before processing the request, so a
             # single replay with a refreshed token cannot duplicate a mutation.
             invalidate_token()
-            last_response = await self._send(method, path, json=json, headers=headers)
+            last_response = await self._send(
+                method, path, json=json, content=content, headers=headers
+            )
         if last_response.is_error:
             raise _response_error(last_response, method)
-        if not last_response.content:
-            return {}
-        try:
-            payload = last_response.json()
-        except ValueError as exc:
-            raise GraphError(
-                "Microsoft Graph a retourne une reponse illisible. "
-                "Actualisez les donnees avant de relancer l'operation.",
-                status_code=last_response.status_code,
-            ) from exc
-        if isinstance(payload, dict):
-            return payload
-        return {"value": payload}
+        return last_response
 
     async def _send(
         self,
@@ -119,6 +190,7 @@ class GraphClient:
         *,
         json: Mapping[str, Any] | None,
         headers: Mapping[str, str] | None,
+        content: bytes | None = None,
     ) -> httpx.Response:
         started = time.perf_counter()
         request_headers = dict(headers or {})
@@ -129,26 +201,13 @@ class GraphClient:
         last_response: httpx.Response | None = None
         for attempt in range(MAX_ATTEMPTS):
             sent = time.perf_counter()
-            try:
-                response = await self._client().request(
-                    method,
-                    self._url(path),
-                    json=json,
-                    headers=request_headers,
-                    timeout=self._request_timeout,
-                )
-            except httpx.TimeoutException as exc:
-                raise GraphError(
-                    "Microsoft Graph ne repond pas assez vite. "
-                    "Verifiez la connexion internet et actualisez les donnees "
-                    "avant de relancer l'operation.",
-                ) from exc
-            except httpx.RequestError as exc:
-                raise GraphError(
-                    "La communication avec Microsoft Graph a ete interrompue. "
-                    "Verifiez la connexion internet et actualisez les donnees "
-                    "avant de relancer l'operation.",
-                ) from exc
+            response = await self._exchange(
+                method,
+                self._url(path),
+                json=json,
+                content=content,
+                headers=request_headers,
+            )
             last_response = response
             # Timings without identifiers or links, to diagnose slow workstations.
             get_logger(__name__).info(
@@ -169,6 +228,37 @@ class GraphClient:
             raise GraphError("Microsoft Graph n'a retourne aucune reponse.")
         return last_response
 
+    async def _exchange(
+        self,
+        method: str,
+        url: str,
+        *,
+        json: Mapping[str, Any] | None,
+        content: bytes | None,
+        headers: Mapping[str, str],
+    ) -> httpx.Response:
+        try:
+            return await self._client().request(
+                method,
+                url,
+                json=json,
+                content=content,
+                headers=headers,
+                timeout=self._request_timeout,
+            )
+        except httpx.TimeoutException as exc:
+            raise GraphError(
+                "Microsoft Graph ne repond pas assez vite. "
+                "Verifiez la connexion internet et actualisez les donnees "
+                "avant de relancer l'operation.",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise GraphError(
+                "La communication avec Microsoft Graph a ete interrompue. "
+                "Verifiez la connexion internet et actualisez les donnees "
+                "avant de relancer l'operation.",
+            ) from exc
+
     def _client(self) -> httpx.AsyncClient:
         if self._http_client is not None:
             return self._http_client
@@ -184,6 +274,22 @@ class GraphClient:
         if self._http_client is None:
             return
         await self._http_client.aclose()
+
+
+def _json_payload(response: httpx.Response) -> dict[str, Any]:
+    if not response.content:
+        return {}
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise GraphError(
+            "Microsoft Graph a retourne une reponse illisible. "
+            "Actualisez les donnees avant de relancer l'operation.",
+            status_code=response.status_code,
+        ) from exc
+    if isinstance(payload, dict):
+        return payload
+    return {"value": payload}
 
 
 def _elapsed_ms(started: float) -> int:

@@ -95,3 +95,20 @@ def test_installer_reset_argument_erases_without_opening_a_window(
 
     assert entry.main() == code
     assert calls == [True]
+
+
+def test_reset_keeps_the_local_planning_but_erases_its_caches(tmp_path: Path) -> None:
+    logs, config = _installed_data(tmp_path)
+    store = tmp_path / "planning" / "local-store"
+    (store / "task").mkdir(parents=True)
+    (store / "task" / "t1.json").write_text("{}", encoding="utf-8")
+    cache = tmp_path / "planning" / "local-0a1b2c3d"
+    cache.mkdir()
+    (cache / "planning-cache.json").write_text("{}", encoding="utf-8")
+
+    failures = reset_local_data(storages=[], data_root=tmp_path, config_path=config, keep=logs)
+
+    assert failures == []
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["Logs", "planning"]
+    assert [path.name for path in (tmp_path / "planning").iterdir()] == ["local-store"]
+    assert (store / "task" / "t1.json").exists()

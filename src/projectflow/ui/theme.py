@@ -133,6 +133,11 @@ def build_theme(mode: str, palette: str) -> Theme:
                 "accent": "#749dc4",
                 "err": "#f0705e",
                 "err-ink": "#f4b3aa",
+                "night": "#2b3566",
+                "night-ink": "#e6eaff",
+                "night-edge": "#8390d6",
+                "night-rest": "#a3aeea",
+                "moon": "#f5d76e",
             },
         )
     else:
@@ -144,6 +149,11 @@ def build_theme(mode: str, palette: str) -> Theme:
                 "accent": "#5980a6",
                 "err": "#b42318",
                 "err-ink": "#7a1a12",
+                "night": "#27325c",
+                "night-ink": "#eef1ff",
+                "night-edge": "#121935",
+                "night-rest": "#3d4a85",
+                "moon": "#f2cf5b",
             },
         )
     return Theme(mode="dark" if dark else "light", palette=palette, tokens=tokens)
