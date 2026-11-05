@@ -123,9 +123,9 @@ def _paint_cell_ground(
     holiday = model.holidays.get(column.day)
     closed = column.day in model.closures
     if holiday is not None or closed:
-        painter.fillRect(cell, theme.color("text", 0.035))
+        painter.fillRect(cell, theme.color("absence", 0.12 if theme.is_dark else 0.09))
         strong = closed or (holiday is not None and holiday.everywhere)
-        painter.setPen(make_pen(theme.color("text", 0.10 if strong else 0.05)))
+        painter.setPen(make_pen(theme.color("absence", 0.40 if strong else 0.22)))
         painter.drawLines(hatch_lines(cell))
     elif column.day == model.today and not printing:
         painter.fillRect(cell, theme.color("accent-100"))

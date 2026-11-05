@@ -18,7 +18,6 @@ from projectflow.auth.msal_client import (
 )
 from projectflow.config import AppConfig
 from projectflow.core.planning.graph_backend import GraphPlanningBackend
-from projectflow.core.planning.local_store import LocalPlanningStore
 from projectflow.core.planning.poste_config import PlanningPosteConfig
 from projectflow.core.planning.store import StoreUnavailableError
 from projectflow.exceptions import AuthError, ConfigError, GraphError
@@ -150,25 +149,18 @@ async def _open(
 
 
 @pytest.mark.asyncio
-async def test_local_store_needs_no_microsoft(tmp_path: Path, microsoft: Microsoft) -> None:
-    poste = PlanningPosteConfig(local_directory=str(tmp_path / "planning"))
+async def test_a_poste_set_to_the_former_local_store_opens_onedrive(
+    tmp_path: Path,
+    microsoft: Microsoft,
+) -> None:
+    poste = PlanningPosteConfig.model_validate(
+        {"backend": "local", "local_directory": str(tmp_path / "planning")},
+    )
 
-    store = await create_planning_store(AppConfig(), poste)
+    with pytest.raises(ConfigError, match="OneDrive"):
+        await create_planning_store(AppConfig(), poste, application_settings=ApplicationSettings())
 
-    assert isinstance(store, LocalPlanningStore)
-    assert store.directory == tmp_path / "planning"
-    assert microsoft.providers == []
-
-
-@pytest.mark.asyncio
-async def test_container_opens_the_local_store(tmp_path: Path, microsoft: Microsoft) -> None:
-    container = ServiceContainer(AppConfig())
-    poste = PlanningPosteConfig(local_directory=str(tmp_path / "planning"))
-
-    store = await container.create_planning_store(poste)
-
-    assert isinstance(store, LocalPlanningStore)
-    assert microsoft.requests == []
+    assert not (tmp_path / "planning").exists()
 
 
 @pytest.mark.asyncio

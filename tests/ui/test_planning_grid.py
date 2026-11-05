@@ -762,7 +762,10 @@ def test_card_drop_from_the_backlog(grid: PlanningGrid) -> None:
     assert not ghost.isVisible()
     header = model.rows.get(team_row_id("atelier"))
     assert header is not None
-    assert not grid.drop_at(mime, QPointF(point.x(), header.top + 2))
+    # A team header takes the card for its first person.
+    assert grid.drop_at(mime, QPointF(point.x(), header.top + 2))
+    first = model.rows.rows[model.rows.index_of(header.resource_id) + 1]
+    assert drops.calls[-1][:2] == ("card", first.resource_id)
     grid.set_drop_enabled(False)
     assert not grid.drag_over(mime, point)
 

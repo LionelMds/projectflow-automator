@@ -747,7 +747,6 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Stand for what « Tout réinitialiser » empties, with the default local store inside."""
     root = tmp_path / "data"
     root.mkdir()
-    monkeypatch.setattr("projectflow.ui.controller.data_dir", lambda: root)
     monkeypatch.setattr("projectflow.core.planning.poste_config.data_dir", lambda: root)
     return root
 
@@ -760,45 +759,18 @@ def _default_store_with_tasks(data_root: Path) -> Path:
     return store
 
 
-def test_reset_says_the_default_local_planning_is_kept(data_root: Path) -> None:
+def test_reset_says_the_former_local_planning_is_kept(data_root: Path) -> None:
     config = PlanningPosteConfig(user_initials="LM")
     assert planning_reset_notice(config) == (
-        "- les reglages du planning de ce poste (identite, stockage, affichage) ;\n",
-        "",
+        "- les reglages du planning de ce poste et sa copie locale ;\n",
+        " Le planning partage sur OneDrive n'est pas touche.",
     )
 
     _default_store_with_tasks(data_root)
     erased, kept = planning_reset_notice(config)
 
     assert LOST not in erased
-    assert "reglages du planning" in erased
-    assert kept == f" {KEPT}"
-
-
-def test_reset_warns_of_a_local_planning_elsewhere_in_the_data_folder(data_root: Path) -> None:
-    store = data_root / "autre-planning"
-    store.mkdir()
-    (store / "tasks.json").write_text("{}", encoding="utf-8")
-
-    erased, kept = planning_reset_notice(PlanningPosteConfig(local_directory=str(store)))
-
-    assert LOST in erased
-    assert str(store) in erased
-    assert kept == ""
-
-
-def test_reset_keeps_a_local_planning_outside_the_data_folder(
-    data_root: Path,
-    tmp_path: Path,
-) -> None:
-    store = tmp_path / "partage" / "planning"
-
-    erased, kept = planning_reset_notice(PlanningPosteConfig(local_directory=str(store)))
-
-    assert LOST not in erased
-    assert "reglages du planning" in erased
-    assert str(store) in kept
-    assert "n'est pas touche" in kept
+    assert kept.endswith(f" {KEPT}")
 
 
 @pytest.mark.parametrize("former_local_planning", [False, True])
@@ -905,7 +877,7 @@ async def test_copy_to_onedrive_asks_then_copies_and_wakes_the_onedrive_planning
 
     await setup.controller._copy_planning_to_onedrive(dialog, "Planning")  # type: ignore[arg-type]  # noqa: SLF001
 
-    assert [config.backend for config in opened] == ["local", "onedrive"]
+    assert [config.backend for config in opened] == ["onedrive"]
     assert all(config is not setup.poste for config in opened)
     assert len(questions) == 1
     assert "1 élément(s)" in questions[0]

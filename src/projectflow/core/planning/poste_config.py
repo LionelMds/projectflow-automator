@@ -37,9 +37,14 @@ MAX_PANEL_WIDTH: Final = 800
 PLANNING_DATA_FOLDER: Final = "planning"
 LOCAL_STORE_FOLDER: Final = "local-store"
 CACHE_KEY_DIGITS: Final = 8
+VIEWS: Final = frozenset({"day", "week", "month"})
+DEFAULT_OUTLOOK_CALENDAR: Final = "Planning Balz Métal"
+MIN_ROW_HEIGHT: Final = 18
+MAX_ROW_HEIGHT: Final = 96
+MAX_COLUMN_ZOOM: Final = 6.0
 """Hexadecimal digits of the store's hash in the name of its cache folder."""
 
-PlanningBackendName = Literal["local", "onedrive", "sharepoint"]
+PlanningBackendName = Literal["onedrive", "sharepoint"]
 PlanningView = Literal["day", "week", "month"]
 PlanningDensity = Literal["compact", "normal", "large"]
 PlanningColorBy = Literal["type", "dossier"]
@@ -67,7 +72,7 @@ class PlanningPosteConfig(BaseModel):
     model_config = ConfigDict(extra="allow", validate_assignment=True)
 
     enabled: bool = True
-    backend: PlanningBackendName = "local"
+    backend: PlanningBackendName = "onedrive"
     local_directory: str = ""
     """Empty: ``local_store_directory()`` default under the application data."""
     onedrive_folder: str = DEFAULT_ONEDRIVE_FOLDER
@@ -85,12 +90,21 @@ class PlanningPosteConfig(BaseModel):
     user_m365_id: str = ""
     default_view: PlanningView = "week"
     density: PlanningDensity = "normal"
+    row_heights: dict[str, int] = Field(default_factory=dict)
+    """Lane height in pixels chosen for a view (``day``, ``week``, ``month``)."""
+    column_zooms: dict[str, float] = Field(default_factory=dict)
+    """Width of the columns of a view against the width that fits the screen (1)."""
     color_by: PlanningColorBy = "type"
     hidden_resource_ids: list[str] = Field(default_factory=list)
     collapsed_teams: list[str] = Field(default_factory=list)
     panel_open: bool = True
     panel_width: int = DEFAULT_PANEL_WIDTH
     backlog_sort: BacklogSort = "manual"
+    outlook_sync: bool = False
+    """This poste copies the planning into the Outlook calendar (one poste only)."""
+    outlook_calendar: str = DEFAULT_OUTLOOK_CALENDAR
+    outlook_hide_details: bool = False
+    """Leave the clients, places and notes out of the calendar (its link is public)."""
 
     @field_validator(
         "local_directory",
@@ -105,6 +119,13 @@ class PlanningPosteConfig(BaseModel):
     def _strip(cls, value: str) -> str:
         return value.strip()
 
+    @field_validator("backend", mode="before")
+    @classmethod
+    def _backend(cls, value: object) -> object:
+        # The local store is gone (its folder differed from one poste to the next): a poste
+        # still set to it, or to anything unknown, now uses the shared OneDrive planning.
+        return value if value in {"onedrive", "sharepoint"} else "onedrive"
+
     @field_validator("onedrive_folder")
     @classmethod
     def _onedrive_folder(cls, value: str) -> str:
@@ -114,6 +135,11 @@ class PlanningPosteConfig(BaseModel):
     @classmethod
     def _list_name(cls, value: str) -> str:
         return value.strip() or DEFAULT_PLANNING_LIST_NAME
+
+    @field_validator("outlook_calendar")
+    @classmethod
+    def _outlook_calendar(cls, value: str) -> str:
+        return " ".join(value.split()) or DEFAULT_OUTLOOK_CALENDAR
 
     @field_validator("poste_id")
     @classmethod
@@ -134,6 +160,24 @@ class PlanningPosteConfig(BaseModel):
     @classmethod
     def _identifiers(cls, value: list[str]) -> list[str]:
         return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+    @field_validator("row_heights")
+    @classmethod
+    def _row_heights(cls, value: dict[str, int]) -> dict[str, int]:
+        return {
+            view: min(max(int(height), MIN_ROW_HEIGHT), MAX_ROW_HEIGHT)
+            for view, height in value.items()
+            if view in VIEWS and height
+        }
+
+    @field_validator("column_zooms")
+    @classmethod
+    def _column_zooms(cls, value: dict[str, float]) -> dict[str, float]:
+        return {
+            view: min(float(zoom), MAX_COLUMN_ZOOM)
+            for view, zoom in value.items()
+            if view in VIEWS and zoom > 1
+        }
 
     @field_validator("panel_width")
     @classmethod
@@ -161,18 +205,15 @@ class PlanningPosteConfig(BaseModel):
     def cache_key(self) -> str:
         """Name of the cache folder of the store in use, stable from one start to the next.
 
-        ``local-<hash of the store folder>``, ``onedrive-<hash of the drive and the
-        folder>`` or ``sharepoint-<hash of the site and the list>``: switching store or
-        list never reuses another store's cursor, eTags or writes not sent yet. OneDrive
-        compares folder names without case; its drive id is found at the first opening,
-        so that another Microsoft account never shares the cache. A SharePoint list is
-        known by the site address and the list name the poste always has, so that the
-        ids resolved later keep the same cache (the settings clear them whenever the
-        address or the name change); by its ids only when no address is given.
+        ``onedrive-<hash of the drive and the folder>`` or ``sharepoint-<hash of the site
+        and the list>``: switching store or list never reuses another store's cursor, eTags
+        or writes not sent yet. OneDrive compares folder names without case; its drive id is
+        found at the first opening, so that another Microsoft account never shares the
+        cache. A SharePoint list is known by the site address and the list name the poste
+        always has, so that the ids resolved later keep the same cache (the settings clear
+        them whenever the address or the name change); by its ids only when no address is
+        given.
         """
-        if self.backend == "onedrive":
-            identity = f"{self.onedrive_drive_id.casefold()}\n{_folded(self.onedrive_folder)}"
-            return f"onedrive-{_short_hash(identity)}"
         if self.backend == "sharepoint":
             if self.sharepoint_site_url:
                 site, planning_list = self.sharepoint_site_url, self.sharepoint_list_name
@@ -181,7 +222,8 @@ class PlanningPosteConfig(BaseModel):
                 planning_list = self.sharepoint_list_id or self.sharepoint_list_name
             identity = f"{_folded(site)}\n{_folded(planning_list)}"
             return f"sharepoint-{_short_hash(identity)}"
-        return f"local-{_short_hash(_path_identity(self.local_store_directory()))}"
+        identity = f"{self.onedrive_drive_id.casefold()}\n{_folded(self.onedrive_folder)}"
+        return f"onedrive-{_short_hash(identity)}"
 
     def cache_directory(self) -> Path:
         """Folder of ``PlanningCache`` for the store in use (see ``cache_key``)."""
@@ -286,14 +328,6 @@ def _folded(text: str) -> str:
     # SharePoint compares site addresses and list names without case; it serves https only.
     folded = text.strip().rstrip("/").casefold()
     return folded.removeprefix("https://").removeprefix("http://")
-
-
-def _path_identity(path: Path) -> str:
-    """Give one text for a folder however it is written (relative, other case on Windows)."""
-    resolved = path
-    with suppress(OSError, RuntimeError):
-        resolved = path.resolve()
-    return os.path.normcase(str(resolved))
 
 
 def _save_quietly(config: PlanningPosteConfig, path: Path) -> None:

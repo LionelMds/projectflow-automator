@@ -102,6 +102,8 @@ AUTOSCROLL_ZONE = 24
 AUTOSCROLL_STEP = 16
 AUTOSCROLL_MS = 30
 WHEEL_NOTCH = 120
+EDGE_PUSH = 3 * WHEEL_NOTCH
+"""Sideways wheel pushed this far against the end of the period: show the next one."""
 FIT_TOLERANCE = 0.5
 SCROLL_LEAD = 3
 """``scroll_to`` puts the instant at a third of the view width."""
@@ -879,6 +881,16 @@ def _nearest_editable(model: GridModel, row: RowLayout | None, editable: Sequenc
     return editable[-1] if editable else ""
 
 
+def _first_member_row(model: GridModel, header: RowLayout) -> RowLayout | None:
+    """Row of the first person right under the team ``header``; None when folded."""
+    index = model.rows.index_of(header.resource_id)
+    rows = model.rows.rows
+    if index is None or index + 1 >= len(rows):
+        return None
+    following = rows[index + 1]
+    return following if following.kind == "resource" else None
+
+
 def _drag_cursor(state: Gesture, mode: MoveMode) -> Qt.CursorShape:
     if state is not Gesture.MOVE:
         return Qt.CursorShape.SizeHorCursor
@@ -988,10 +1000,24 @@ class PlanningView(QGraphicsView):
         event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
-        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-            bar = self.horizontalScrollBar()
-            delta = event.angleDelta().y() or event.angleDelta().x()
-            bar.setValue(bar.value() - round(delta / WHEEL_NOTCH * bar.singleStep() * 3))
+        """Ctrl: zoom the columns; Shift or a sideways wheel: scroll in time.
+
+        Pushed on against the start or the end of the period, the sideways wheel shows
+        the previous or the next period, so that time scrolls on from view to view.
+        """
+        angle = event.angleDelta()
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            notches = round((angle.y() or angle.x()) / WHEEL_NOTCH)
+            if notches:
+                self.grid.zoom_requested.emit(notches, event.position().x())
+            event.accept()
+            return
+        sideways = abs(angle.x()) > abs(angle.y())
+        if modifiers & Qt.KeyboardModifier.ShiftModifier or sideways:
+            delta = angle.x() if sideways else angle.y()
+            pixels = event.pixelDelta().x() if sideways else 0
+            self.grid.scroll_sideways(delta, pixels)
             event.accept()
             return
         super().wheelEvent(event)
@@ -1088,6 +1114,12 @@ class PlanningGrid(QWidget):
     bar_drag_exported = Signal(str)
     """A bar dragged out of the grid was accepted elsewhere (« À planifier »)."""
     visible_range_changed = Signal(object, object)
+    zoom_requested = Signal(int, float)
+    """Ctrl + wheel: wider (+1 a notch) or narrower (-1) columns, about this viewport x."""
+    row_height_requested = Signal(int)
+    """Ctrl + wheel on the names: taller (+1 a notch) or lower (-1) rows."""
+    period_step_requested = Signal(int)
+    """The sideways wheel went past the start (-1) or the end (+1) of the period."""
     day_clicked = Signal(object)
     week_clicked = Signal(object)
 
@@ -1101,6 +1133,11 @@ class PlanningGrid(QWidget):
         self.drop_enabled = True
         self._read_only_reason = ""
         self._deferred: GridModel | None = None
+        self._edge_push = 0
+        self._keep_x: tuple[float, float] | None = None
+        """Share of the scene width and viewport x to keep together at the next model."""
+        self._land_edge = 0
+        """-1: show the end of the next model (came from its right), +1: its start."""
         self._follow: dict[BarKey, BarKey] = {}
         self._visible_range: tuple[date, date] | None = None
         self._export_grab = 0
@@ -1143,6 +1180,7 @@ class PlanningGrid(QWidget):
         self.rows.row_menu_requested.connect(self.row_menu_requested)
         self.rows.row_clicked.connect(self.row_clicked)
         self.rows.scroll_requested.connect(self._scroll_rows)
+        self.rows.height_requested.connect(self.row_height_requested)
         self.header.day_clicked.connect(self.day_clicked)
         self.header.week_clicked.connect(self.week_clicked)
         theme_notifier().changed.connect(self._on_theme_changed)
@@ -1169,6 +1207,7 @@ class PlanningGrid(QWidget):
         self.rows.set_model(model)
         self.corner.set_count(sum(1 for row in model.rows if row.kind == "resource"))
         self._keep_selection(model)
+        self._place_horizontally(model)
         self._sync_scroll()
 
     def apply_deferred(self) -> None:
@@ -1503,6 +1542,9 @@ class PlanningGrid(QWidget):
             return None
         task = model.task(payload.task_id)
         row = self.scene.row_at(point.y())
+        if row is not None and not _editable(row.resource_id):
+            # A team header takes the drop for its first person shown under it.
+            row = _first_member_row(model, row)
         if task is None or row is None or not _editable(row.resource_id):
             return None
         if _is_bar_drop(payload, task):
@@ -1705,6 +1747,49 @@ class PlanningGrid(QWidget):
         if visible != self._visible_range:
             self._visible_range = visible
             self.visible_range_changed.emit(*visible)
+
+    def keep_point(self, viewport_x: float) -> None:
+        """At the next model (a zoom), keep the instant under ``viewport_x`` where it is."""
+        model = self.model
+        if model is None:
+            return
+        width = max(model.timescale.width, 1.0)
+        x = self.view.horizontalScrollBar().value() + viewport_x
+        self._keep_x = (min(max(x / width, 0.0), 1.0), viewport_x)
+
+    def land_on_edge(self, step: int) -> None:
+        """Show the near end of the next model: the period after (+1) or before (-1)."""
+        self._land_edge = step
+        self._keep_x = None
+
+    def scroll_sideways(self, delta: int, pixels: int = 0) -> None:
+        """Scroll in time by a wheel ``delta`` (or ``pixels``); past an end, change period."""
+        bar = self.view.horizontalScrollBar()
+        step = pixels or round(delta / WHEEL_NOTCH * bar.singleStep() * 3)
+        if not step:
+            return
+        before = bar.value()
+        bar.setValue(before - step)
+        if bar.value() != before:
+            self._edge_push = 0
+            return
+        direction = 1 if step < 0 else -1
+        if self._edge_push and (self._edge_push > 0) != (direction > 0):
+            self._edge_push = 0
+        self._edge_push += direction * (abs(delta) or WHEEL_NOTCH)
+        if abs(self._edge_push) >= EDGE_PUSH:
+            self._edge_push = 0
+            self.period_step_requested.emit(direction)
+
+    def _place_horizontally(self, model: GridModel) -> None:
+        bar = self.view.horizontalScrollBar()
+        if self._land_edge:
+            bar.setValue(bar.minimum() if self._land_edge > 0 else bar.maximum())
+            self._land_edge = 0
+        elif self._keep_x is not None:
+            share, viewport_x = self._keep_x
+            bar.setValue(round(share * model.timescale.width - viewport_x))
+        self._keep_x = None
 
     def _scroll_rows(self, delta: int) -> None:
         bar = self.view.verticalScrollBar()

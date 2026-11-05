@@ -10,6 +10,7 @@ from urllib.parse import quote
 from projectflow.application_settings import ApplicationSettings
 from projectflow.auth.msal_client import (
     GRAPH_SCOPES,
+    OUTLOOK_GRAPH_SCOPES,
     PLANNER_GRAPH_SCOPES,
     PLANNING_GRAPH_SCOPES,
     AccessTokenProvider,
@@ -20,7 +21,6 @@ from projectflow.core.fiche_service import FicheService
 from projectflow.core.local_repertoire import LocalWorkbookGateway
 from projectflow.core.models import ProjectInput
 from projectflow.core.planning.graph_backend import GraphPlanningBackend
-from projectflow.core.planning.local_store import LocalPlanningStore
 from projectflow.core.planning.poste_config import PlanningPosteConfig
 from projectflow.core.planning.store import PlanningStore, StoreUnavailableError
 from projectflow.core.project_service import ProjectService
@@ -29,6 +29,7 @@ from projectflow.exceptions import AuthError, ConfigError, GraphError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.drive_planning_store import DrivePlanningStore
 from projectflow.graph.excel import GraphExcelWorkbookGateway
+from projectflow.graph.outlook_calendar import OutlookCalendarGateway
 from projectflow.graph.planner import GraphPlannerClient, PlannerTaskResult
 from projectflow.graph.planning_store import (
     PlanningListRef,
@@ -58,6 +59,9 @@ HTTP_SERVER_ERROR: Final = 500
 PLANNING_NO_CONNECTOR_MESSAGE: Final = (
     "Planning SharePoint indisponible : cette version de ProjectFlow n'embarque pas le "
     f"connecteur Microsoft. Choisissez le stockage local dans {PLANNING_SETTINGS_PLACE}."
+)
+OUTLOOK_NO_CONNECTOR_MESSAGE: Final = (
+    "Calendrier Outlook indisponible : connexion Microsoft non configurée dans cette version."
 )
 PLANNING_ONEDRIVE_NO_CONNECTOR_MESSAGE: Final = (
     "Planning OneDrive indisponible : cette version de ProjectFlow n'embarque pas le "
@@ -195,6 +199,14 @@ class ServiceContainer:
             register_client=self._graph_clients.append,
         )
 
+    async def open_outlook_calendar(self, *, interactive: bool = False) -> OutlookCalendarGateway:
+        """Calendars of the account; its Graph client is closed with the others."""
+        return await open_outlook_calendar(
+            interactive=interactive,
+            application_settings=self.application_settings,
+            register_client=self._graph_clients.append,
+        )
+
     async def close(self) -> None:
         """Close owned clients after the controller has settled its running tasks."""
         clients, self._graph_clients = self._graph_clients, []
@@ -244,7 +256,7 @@ async def create_planning_store(
 ) -> PlanningStore:
     """Open the planning store this poste is set to use.
 
-    Local: the JSON files of ``local_store_directory()``. OneDrive: the files of the
+    OneDrive: the files of the
     planning folder in the OneDrive of the signed-in account, with the same connection
     (Files.ReadWrite.All) as the répertoire; the drive id found is written into
     ``poste_config``. SharePoint: the list found from
@@ -255,15 +267,13 @@ async def create_planning_store(
     sync state tells them apart; with no cause when Microsoft is out of reach, which
     reads « offline ») and a wrong setting ``ConfigError``, with French messages.
     """
-    if poste_config.backend == "onedrive":
+    if poste_config.backend != "sharepoint":
         return await _open_onedrive_store(
             poste_config,
             application_settings=application_settings,
             graph_factory=graph_factory,
             register_client=register_client,
         )
-    if poste_config.backend != "sharepoint":
-        return LocalPlanningStore(poste_config.local_store_directory())
     settings = application_settings or ApplicationSettings.load()
     client_id = settings.microsoft_client_id.strip()
     if not client_id:
@@ -332,6 +342,34 @@ async def _open_onedrive_store(
         poste_config.onedrive_drive_id = folder.drive_id
         get_logger(__name__).info("planning.onedrive.resolved")
     return store
+
+
+async def open_outlook_calendar(
+    *,
+    interactive: bool = False,
+    application_settings: ApplicationSettings | None = None,
+    graph_factory: GraphFactory | None = None,
+    register_client: Callable[[GraphClient], None] | None = None,
+) -> OutlookCalendarGateway:
+    """Open the Outlook calendars of the signed-in account (Calendars.ReadWrite).
+
+    Without ``interactive`` the browser never opens: a permission not granted yet
+    raises ``AuthError`` at once. With it, Microsoft asks for the consent once.
+    """
+    settings = application_settings or ApplicationSettings.load()
+    client_id = settings.microsoft_client_id.strip()
+    if not client_id:
+        raise ConfigError(OUTLOOK_NO_CONNECTOR_MESSAGE)
+    provider = MsalAccessTokenProvider(
+        client_id=client_id,
+        scopes=OUTLOOK_GRAPH_SCOPES,
+        allow_interactive=interactive,
+    )
+    await provider.access_token()
+    graph = (graph_factory or _planning_graph_client)(provider)
+    if register_client is not None:
+        register_client(graph)
+    return OutlookCalendarGateway(graph)
 
 
 def planning_authorization_error(

@@ -77,7 +77,7 @@ from PySide6.QtWidgets import (
 from projectflow.core.planning.calendar import WorkCalendar
 from projectflow.core.planning.changes import PlanningSnapshot
 from projectflow.core.planning.commands import calendar_resolver
-from projectflow.core.planning.models import PlanningTask, TaskStatus, TaskType
+from projectflow.core.planning.models import PlanningTask, TaskStatus, TaskType, task_label
 from projectflow.core.planning.poste_config import BacklogSort
 from projectflow.core.planning.quick_entry import fold_text, format_days, format_duration
 from projectflow.ui.planning.colors import ColorBy, dossier_colors
@@ -495,9 +495,9 @@ def _card(
         )
     names = [person.name for person in foreseen if person is not None]
     tooltip_lines = [
-        " · ".join(part for part in (task.project_number, cache.client) if part),
-        task.display_title,
-        cache.designation if cache.designation != task.display_title else "",
+        task.label,
+        cache.client,
+        f"Dossier : {cache.designation}" if cache.designation != task.designation else "",
         f"Type : {kind.label}",
         f"Pressentis : {', '.join(names)}" if names else "",
         f"Notes : {task.notes}" if task.notes else "",
@@ -506,7 +506,7 @@ def _card(
         task_id=task.id,
         number=task.project_number,
         client=cache.client,
-        title=task.display_title,
+        title=task.designation,
         duration=format_estimate(task),
         task_type=kind.key,
         type_label=kind.label,
@@ -830,9 +830,9 @@ def _paint_first_line(
     number_font = heading_font(15)
     number_metrics = QFontMetricsF(number_font)
     room = max(0.0, text_right - left)
-    number_text = number_metrics.elidedText(
-        card.number or card.type_label, Qt.TextElideMode.ElideRight, room
-    )
+    # « 2026-5271 - Désignation »: the name of the task, as on the grid.
+    head = task_label(card.number, card.title) if card.number else card.title or card.type_label
+    number_text = number_metrics.elidedText(head, Qt.TextElideMode.ElideRight, room)
     painter.setFont(number_font)
     painter.setPen(theme.color("text"))
     painter.drawText(
@@ -840,18 +840,6 @@ def _paint_first_line(
         int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
         number_text,
     )
-    client_left = left + number_metrics.horizontalAdvance(number_text) + 7
-    if card.client and client_left < text_right:
-        client_font = body_font(12)
-        painter.setFont(client_font)
-        painter.setPen(theme.color("neutral-800"))
-        painter.drawText(
-            QRectF(client_left, line.top(), text_right - client_left, LINE_HEIGHT),
-            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
-            QFontMetricsF(client_font).elidedText(
-                card.client, Qt.TextElideMode.ElideRight, text_right - client_left
-            ),
-        )
 
 
 def _paint_new_mark(painter: QPainter, line: QRectF, right: float, theme: Theme) -> float:
@@ -903,13 +891,15 @@ def _paint_title_line(
     if card.status == "done":
         _paint_check(painter, QPointF(left + CHECK_SIZE / 2, line.center().y()), theme)
         left += CHECK_SIZE + 4
+    # Under « 2026-5271 - Désignation »: the client (the type for an internal task).
+    text = card.client or (card.type_label if card.number else "")
     font = body_font(13, QFont.Weight.Medium)
     painter.setFont(font)
-    painter.setPen(theme.color("text"))
+    painter.setPen(theme.color("neutral-800"))
     painter.drawText(
         QRectF(left, line.top(), right - left, LINE_HEIGHT),
         int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
-        QFontMetricsF(font).elidedText(card.title, Qt.TextElideMode.ElideRight, right - left),
+        QFontMetricsF(font).elidedText(text, Qt.TextElideMode.ElideRight, right - left),
     )
 
 

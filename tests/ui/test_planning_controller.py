@@ -444,6 +444,7 @@ def make_config(
 ) -> PlanningPosteConfig:
     return PlanningPosteConfig(
         local_directory=str(store),
+        onedrive_folder=store.name,  # Another folder: another store, as on OneDrive.
         user_initials=initials,
         user_name="Lionel" if initials == "LM" else initials,
         poste_name=poste,
@@ -536,7 +537,7 @@ def created_task(controller: PlanningController, before: set[str]) -> PlanningTa
 
 def test_helpers_name_tasks_and_rows() -> None:
     fab = task("t", "2026-118", "Fabrication garde-corps", None, None, [])
-    assert task_name(fab) == "2026-118 Fabrication garde-corps"
+    assert task_name(fab) == "2026-118 - Fabrication garde-corps"
     assert task_name(task("t", "", "", None, None, [])) == "tâche sans titre"
     assert project_from_row(("2026-118", "", "Müller SA", "", "Garde-corps")) is not None
     assert project_from_row(("2026-999", "", "", "", "")) is None
@@ -587,7 +588,7 @@ async def test_start_shows_the_seeded_planning(qtbot: Any, tmp_path: Path, data_
     assert ("t-livraison", UNASSIGNED_ROW_ID) in keys
     assert tab.backlog.count() == 5
     assert controller.projects["2026-118"].client == "Müller SA"
-    assert tab.badge.text() == "Planning local (ce poste)"
+    assert tab.badge.text() != "Planning local (ce poste)"  # Always a shared planning now.
     assert not controller.read_only
     assert tab.identity_banner.isHidden()
     await close(controller)
@@ -678,15 +679,15 @@ async def test_grid_gestures_move_add_and_copy(qtbot: Any, tmp_path: Path, data_
     new_start = at(WEEK + timedelta(days=3), 6, 30)
     tab.grid.move_requested.emit("t-debit", "psi", "psi", new_start, "move")
     assert snapshot_of(controller).tasks["t-debit"].start == new_start
-    assert service.undo_label == "Déplacer 2026-129 Débit main courante"
+    assert service.undo_label == "Déplacer 2026-129 - Débit main courante"
 
     tab.grid.move_requested.emit("t-debit", "psi", "mre", new_start, "move")
     assert snapshot_of(controller).tasks["t-debit"].assignee_ids == ("mre",)
-    assert service.undo_label == "Déplacer 2026-129 Débit main courante vers MRE"
+    assert service.undo_label == "Déplacer 2026-129 - Débit main courante vers MRE"
 
     tab.grid.move_requested.emit("t-debit", "mre", "jdu", new_start, "add")
     assert snapshot_of(controller).tasks["t-debit"].assignee_ids == ("mre", "jdu")
-    assert service.undo_label == "Ajouter JDU à 2026-129 Débit main courante"
+    assert service.undo_label == "Ajouter JDU à 2026-129 - Débit main courante"
 
     before = set(snapshot_of(controller).tasks)
     copy_start = at(WEEK + timedelta(days=1), 6, 30)  # another time: a real copy
@@ -701,7 +702,7 @@ async def test_grid_gestures_move_add_and_copy(qtbot: Any, tmp_path: Path, data_
     tab.grid.move_requested.emit("t-debit", "mre", "psi", new_start, "copy")
     assert set(snapshot_of(controller).tasks) == before
     assert snapshot_of(controller).tasks["t-debit"].assignee_ids == ("mre", "jdu", "psi")
-    assert service.undo_label == "Ajouter PSI à 2026-129 Débit main courante"
+    assert service.undo_label == "Ajouter PSI à 2026-129 - Débit main courante"
     await close(controller)
 
 
@@ -767,7 +768,7 @@ async def test_delete_removes_one_person_then_sends_back(
     assert not delivery.scheduled
     assert not delivery.deleted
     texts = toast_texts(tab)
-    assert "2026-121 Livraison verre renvoyée à planifier" in texts
+    assert "2026-121 - Livraison verre renvoyée à planifier" in texts
     assert not any("Livraison verre n'a plus personne" in text for text in texts)
     await close(controller)
 
@@ -835,7 +836,7 @@ async def test_detail_panel_edits_go_through_commands(
 
     tab.detail.field_changed.emit("t-fab", "title", "Fabrication garde-corps inox")
     assert snapshot_of(controller).tasks["t-fab"].title == "Fabrication garde-corps inox"
-    assert service.undo_label == "Modifier le titre de 2026-118 Fabrication garde-corps"
+    assert service.undo_label == "Modifier le titre de 2026-118 - Fabrication garde-corps"
 
     tab.detail.status_changed.emit("t-fab", "done")
     assert snapshot_of(controller).tasks["t-fab"].status == "done"
@@ -878,7 +879,7 @@ async def test_two_postes_see_each_other_and_the_remote_toast(
         poke=lambda: (first.wake(), second.wake()),
     )
     assert snapshot_of(second).tasks["t-debit"].updated_by.label == "LM · BUREAU-1"
-    assert "LM · BUREAU-1 a déplacé « 2026-129 Débit main courante »" in toast_texts(second_tab)
+    assert "LM · BUREAU-1 a déplacé « 2026-129 - Débit main courante »" in toast_texts(second_tab)
 
     # A card added by the other poste while the tab is hidden counts in the nav badge.
     second.set_visible(visible=False)
@@ -1127,7 +1128,7 @@ async def test_conflict_toast_restores_the_lost_version(
         )
     )
     toast = next(item for item in tab.toasts.toasts() if "supprimée" in item.message())
-    assert toast.message().startswith("« 2026-129 Débit main courante » a été supprimée")
+    assert toast.message().startswith("« 2026-129 - Débit main courante » a été supprimée")
     assert toast.action_button.text() == "Restaurer"
     toast.trigger()
     assert not snapshot_of(controller).tasks["t-debit"].deleted
@@ -1145,7 +1146,7 @@ async def test_conflict_toast_restores_the_lost_version(
     )
     toast = next(item for item in tab.toasts.toasts() if "entre-temps" in item.message())
     assert toast.tag_label.text() == "PLA · ATELIER-1"
-    assert toast.message() == "a modifié « 2026-118 Fabrication garde-corps » entre-temps"
+    assert toast.message() == "a modifié « 2026-118 - Fabrication garde-corps » entre-temps"
     await close(controller)
 
 
@@ -1161,7 +1162,7 @@ def test_conflict_text_without_author_or_task() -> None:
     )
     assert conflict_text(event, PlanningSnapshot()) == (
         "",
-        "« 2026-118 Pose » : Votre modification est perdue.",
+        "« 2026-118 - Pose » : Votre modification est perdue.",
     )
 
 

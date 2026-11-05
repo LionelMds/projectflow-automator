@@ -104,6 +104,7 @@ def run(argv: Sequence[str]) -> int:
         planning_config=planning_config,
         planning_store_factory=planning_store_factory,
         save_planning_config=save_planning_config,
+        outlook_calendar_factory=None if demo_mode else container.open_outlook_calendar,
     )
     tray = _configure_tray(app, window, controller, app_icon)
     if tray is not None:

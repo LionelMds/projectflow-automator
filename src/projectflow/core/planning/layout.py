@@ -124,8 +124,8 @@ def row_kind(row_id: str) -> RowKind:
     return "resource"
 
 
-def row_height(lane_count: int, density: Density = Density.NORMAL) -> int:
-    """Height of a resource row: one lane at least."""
+def row_height(lane_count: int, density: int = Density.NORMAL) -> int:
+    """Height of a resource row: one lane at least; ``density`` is the lane height."""
     return max(lane_count, 1) * int(density)
 
 
@@ -314,7 +314,7 @@ def layout_rows(
     ids: Sequence[str],
     spans: Mapping[str, Iterable[TaskSpan]],
     *,
-    density: Density = Density.NORMAL,
+    density: int = Density.NORMAL,
     window: tuple[WallTime, WallTime] | None = None,
     team_height: int = TEAM_HEADER_HEIGHT,
 ) -> GridRows:

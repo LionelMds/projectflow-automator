@@ -138,6 +138,8 @@ def build_theme(mode: str, palette: str) -> Theme:
                 "night-edge": "#8390d6",
                 "night-rest": "#a3aeea",
                 "moon": "#f5d76e",
+                "absence": "#ff8352",
+                "absence-ink": "#ffb699",
             },
         )
     else:
@@ -154,6 +156,8 @@ def build_theme(mode: str, palette: str) -> Theme:
                 "night-edge": "#121935",
                 "night-rest": "#3d4a85",
                 "moon": "#f2cf5b",
+                "absence": "#e0480f",
+                "absence-ink": "#a3330a",
             },
         )
     return Theme(mode="dark" if dark else "light", palette=palette, tokens=tokens)

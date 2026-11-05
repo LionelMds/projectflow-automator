@@ -189,7 +189,7 @@ def test_demo_poste_is_identified_and_kept_apart(tmp_path: Path) -> None:
     poste = services.planning_poste_config()
 
     assert poste.author().label == f"DEMO · {DEMO_POSTE_NAME}"
-    assert poste.backend == "local"
+    assert poste.backend == "onedrive"
     assert services.planning_config_path() == tmp_path / "planning.json"
     assert services.planning_config_path().exists()
     poste.user_initials = "AB"
@@ -246,13 +246,12 @@ async def test_demo_sharepoint_shows_the_missing_authorization(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_demo_onedrive_is_unavailable_without_any_request(tmp_path: Path) -> None:
+async def test_demo_onedrive_uses_the_demo_folder_without_any_request(tmp_path: Path) -> None:
     _config, services = build_demo_environment(base_dir=tmp_path)
     poste = services.planning_poste_config()
-    poste.backend = "onedrive"
+    assert poste.backend == "onedrive"
 
-    with pytest.raises(StoreUnavailableError, match="OneDrive") as raised:
-        await services.create_planning_store(poste)
+    store = await services.create_planning_store(poste)
 
-    assert "stockage local" in str(raised.value)
-    assert isinstance(raised.value.__cause__, GraphError)
+    assert (await store.changes(None)).documents
+    await store.aclose()

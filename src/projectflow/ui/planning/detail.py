@@ -940,7 +940,7 @@ class DetailPanel(QWidget):
         ):
             actions.addWidget(action)
 
-        self.title_block = _field_block(_caption("Titre"), self.title_edit)
+        self.title_block = _field_block(_caption("Désignation"), self.title_edit)
         self.dossier_block = _field_block(_caption("Dossier"), self.dossier_edit)
         self.type_block = _field_block(_caption("Type"), self.type_combo)
         self.status_block = _field_block(_caption("Statut"), status_box)
@@ -1210,10 +1210,11 @@ class DetailPanel(QWidget):
                 visible.add(self.read_only_label)
             self._show_blocks(visible)
             self.dossier_card.show_dossier(task, self._project)
-            self._set_line(self.title_edit, task.title, keep=keep_edits)
-            self.title_edit.setPlaceholderText(
-                task.project_cache.designation or "Titre de la tâche"
+            # Filled with the dossier's designation while the task has none of its own.
+            self._set_line(
+                self.title_edit, task.title or self._dossier_designation(task), keep=keep_edits
             )
+            self.title_edit.setPlaceholderText("Désignation de la tâche")
             self._set_line(self.dossier_edit, task.project_number, keep=keep_edits)
             self._fill_types(task.task_type)
             self._check_status(task.status)
@@ -1534,9 +1535,19 @@ class DetailPanel(QWidget):
             self._sent[name] = value
         self.field_changed.emit(target, name, value)
 
+    def _dossier_designation(self, task: PlanningTask) -> str:
+        project = self._project
+        designation = project.designation if project is not None else ""
+        return (designation or task.project_cache.designation).strip()
+
     def _commit_title(self) -> None:
-        if self._mode == "task":
-            self._commit_value("title", self.title_edit.text().strip())
+        if self._mode != "task":
+            return
+        text = self.title_edit.text().strip()
+        task = self._task
+        if task is not None and not task.title and text == self._dossier_designation(task):
+            return  # Still the dossier's designation: nothing typed, nothing to save.
+        self._commit_value("title", text)
 
     def _commit_dossier(self) -> None:
         if self._mode == "task":

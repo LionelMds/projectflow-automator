@@ -68,12 +68,6 @@ DEMO_SHAREPOINT_MESSAGE: Final = (
     f"dans {PLANNING_SETTINGS_PLACE}."
 )
 
-DEMO_ONEDRIVE_MESSAGE: Final = (
-    "Mode démo : le planning OneDrive n'est pas disponible (aucun compte Microsoft n'est "
-    "utilisé en mode démo, autorisation refusée). Choisissez le stockage local dans "
-    f"{PLANNING_SETTINGS_PLACE}."
-)
-
 
 @dataclass(slots=True)
 class DemoServiceContainer:
@@ -134,13 +128,11 @@ class DemoServiceContainer:
     async def create_planning_store(self, poste_config: PlanningPosteConfig) -> PlanningStore:
         """Local planning of the demo, filled once with a plausible week of work.
 
-        Microsoft is never reached from the demo: choosing SharePoint or OneDrive shows
-        the state of a poste without access to the shared planning.
+        Microsoft is never reached from the demo: OneDrive stands for the demo folder,
+        and choosing SharePoint shows the state of a poste without access to it.
         """
         if poste_config.backend == "sharepoint":
             raise planning_authorization_error(DEMO_SHAREPOINT_MESSAGE)
-        if poste_config.backend == "onedrive":
-            raise planning_authorization_error(DEMO_ONEDRIVE_MESSAGE)
         store = LocalPlanningStore(poste_config.local_store_directory())
         await self.seed_planning(store)
         return store

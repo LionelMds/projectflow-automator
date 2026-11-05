@@ -346,10 +346,8 @@ hachurés. La pause de midi reste visible sans hachures et n'est jamais comptée
 
 ### Stockage du planning
 
-`Paramètres > Planning > Stockage du planning` propose trois choix :
+`Paramètres > Planning > Stockage du planning` propose deux choix :
 
-- `Local (ce poste uniquement)` : le planning est enregistré sur ce poste seulement (dossier
-  indiqué sous le choix). Fonctionne sans Microsoft ; les autres postes ne le voient pas.
 - `OneDrive (partagé, recommandé)` : le planning est enregistré dans un dossier du OneDrive
   du compte Microsoft connecté, `ProjectFlow Planning` à la racine par défaut (créé au
   premier usage ; le nom se change dans le champ `Dossier OneDrive`). Tous les postes
@@ -362,8 +360,8 @@ hachurés. La pause de midi reste visible sans hachures et n'est jamais comptée
   manque, le planning reste lisible en consultation seule et l'indicateur de la barre
   d'outils l'explique.
 
-Passer du planning local à OneDrive : choisir `OneDrive`, cliquer `Copier le planning local
-vers OneDrive…`, confirmer, puis `Enregistrer`. La copie ajoute au dossier OneDrive les
+Un poste qui avait encore un ancien planning local (avant OneDrive) affiche le bouton `Copier
+le planning local vers OneDrive…` : le cliquer, confirmer, puis `Enregistrer`. La copie ajoute au dossier OneDrive les
 tâches, personnes, absences et réglages du planning local qu'il ne contient pas encore ; rien
 n'y est remplacé, on peut donc la relancer sans risque (par exemple depuis un deuxième poste
 qui avait aussi un planning local). Le planning local reste sur le poste.
@@ -461,6 +459,30 @@ Le survol d'une barre affiche le dossier : client, contact, désignation, sortie
 par et les autres tâches du dossier. Le panneau `Détail` (double-clic ou `Entrée`) permet de
 tout modifier et d'ouvrir le dossier, la fiche, la ligne du répertoire, le formulaire de
 création ou la sortie dossier.
+
+### Calendrier Outlook et téléphones
+
+Le planning peut être copié, en lecture seule, dans un calendrier Outlook du compte partagé
+(`Planning Balz Métal` par défaut), que les téléphones suivent par un lien d'abonnement :
+
+1. Sur un seul poste, allumé pendant la journée : `Paramètres > Planning > Calendrier
+   Outlook (téléphones)`, cliquer `Connecter le calendrier Outlook…` (Microsoft demande une
+   fois l'accès aux calendriers du compte, `Calendars.ReadWrite`), cocher `Copier le planning
+   dans le calendrier Outlook depuis ce poste`, puis `Enregistrer`.
+2. Une fois, avec le compte partagé sur outlook.office.com : `Paramètres > Calendrier >
+   Calendriers partagés > Publier un calendrier`, choisir ce calendrier et « Peut afficher
+   tous les détails », `Publier`, puis copier le lien ICS.
+3. iPhone : `Réglages > Calendrier > Comptes > Ajouter un compte > Autre > Ajouter un
+   calendrier avec abonnement`, coller le lien. Android : application ICSx⁵ (gratuite),
+   « + », coller le lien.
+
+Chaque tâche donne un rendez-vous par jour travaillé (« 2026-5271 - Désignation · Karim »),
+une nuit un rendez-vous à ses heures exactes, une absence un rendez-vous « Absent : … ». Le
+calendrier est mis à jour quelques secondes après chaque changement ; les téléphones le
+relisent à leur propre rythme (de quelques minutes à environ une heure). Ce qui est changé dans
+Outlook est remplacé par le planning à la synchronisation suivante. Le lien est public :
+cocher `Ne pas copier les clients, les lieux et les notes` pour n'y laisser que le dossier, les
+personnes et les heures ; s'il a circulé, dépublier puis republier le calendrier dans Outlook.
 
 ### Synchronisation et impression
 

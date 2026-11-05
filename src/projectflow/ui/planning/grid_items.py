@@ -196,6 +196,8 @@ class GridStyle:
     absence_pen: QPen
     absence_text: QColor
     absence_font: QFont
+    holiday_fill: QColor
+    holiday_hatch_pen: QPen
     shadow: QColor
     rest_fill: QColor
     rest_hatch_pen: QPen
@@ -232,11 +234,13 @@ def build_grid_style(theme: Theme, *, spaced: bool = True) -> GridStyle:
         today_fill=theme.color("accent", 0.08),
         drop_fill=theme.color("accent", 0.10),
         now_color=theme.color("accent"),
-        absence_fill=theme.color("text", 0.03),
-        absence_hatch_pen=make_pen(theme.color("text", 0.16)),
-        absence_pen=make_pen(theme.color("text", 0.12)),
-        absence_text=theme.color("neutral-700"),
+        absence_fill=theme.color("absence", 0.18 if theme.is_dark else 0.13),
+        absence_hatch_pen=make_pen(theme.color("absence", 0.55 if theme.is_dark else 0.45)),
+        absence_pen=make_pen(theme.color("absence", 0.85)),
+        absence_text=theme.color("absence-ink"),
         absence_font=absence_font,
+        holiday_fill=theme.color("absence", 0.09 if theme.is_dark else 0.06),
+        holiday_hatch_pen=make_pen(theme.color("absence", 0.30 if theme.is_dark else 0.22)),
         shadow=theme.color("text", 0.10),
         rest_fill=theme.color("night-rest", 0.07),
         rest_hatch_pen=make_pen(theme.color("night-rest", 0.24)),
@@ -395,22 +399,24 @@ def _row_runs(rows: Sequence[RowLayout], model: GridModel) -> list[tuple[str, fl
 
 def _off_rects(
     model: GridModel, row_id: str, top: float, bottom: float, rect: QRectF
-) -> list[QRectF]:
+) -> list[tuple[QRectF, bool]]:
+    """Areas not worked, each with whether it is a holiday or a closure (whole day)."""
     scale = model.timescale
     lunch = scale.day_width >= LUNCH_HATCH_MIN_DAY_WIDTH
     day_end = scale.first_minute + scale.display_minutes
     days = model.days_of(row_id)
-    rects: list[QRectF] = []
+    rects: list[tuple[QRectF, bool]] = []
     for column in scale.visible_columns(rect.left(), rect.right()):
         info = days[column.index]
         base = day_start(column.day)
+        day_off = info.holiday is not None or info.closed
         for low, high in info.off:
             if info.workday and not lunch and high < day_end:
                 continue
             left = scale.x_of(base + low)
             right = scale.x_of(base + high)
             if right > left:
-                rects.append(QRectF(left, top, right - left, bottom - top))
+                rects.append((QRectF(left, top, right - left, bottom - top), day_off))
     return rects
 
 
@@ -501,12 +507,16 @@ def _paint_days_off(
     style: GridStyle,
 ) -> None:
     hatches: list[QLineF] = []
+    holiday_hatches: list[QLineF] = []
     for row_id, top, bottom in _row_runs(rows, model):
-        for area in _off_rects(model, row_id, top, bottom, rect):
-            painter.fillRect(area, style.off_fill)
-            hatches.extend(hatch_lines(area.intersected(rect)))
+        for area, day_off in _off_rects(model, row_id, top, bottom, rect):
+            # A holiday or a closure stands out in red-orange, as an absence of everyone.
+            painter.fillRect(area, style.holiday_fill if day_off else style.off_fill)
+            (holiday_hatches if day_off else hatches).extend(hatch_lines(area.intersected(rect)))
     painter.setPen(style.hatch_pen)
     painter.drawLines(hatches)
+    painter.setPen(style.holiday_hatch_pen)
+    painter.drawLines(holiday_hatches)
 
 
 def _paint_row_bands(
@@ -834,7 +844,7 @@ def _second_line(
         extra = _fit(style.sub_metrics, extra_text, line_right - left, elide=False)
         extra_x = line_right - style.sub_metrics.horizontalAdvance(extra)
         line_right = extra_x - TEXT_GAP if extra else line_right
-    sub_text = (bar.title if bar.client else "") if number else bar.type_label
+    sub_text = bar.client if number else bar.type_label
     sub = _fit(style.sub_metrics, sub_text or bar.type_label, line_right - left)
     return sub, extra, extra_x
 
@@ -857,14 +867,15 @@ def layout_bar_text(
     badge_top = round(line1_center - BADGE_HEIGHT / 2)
     badges, check, right = _place_badges(bar, style, width, badge_top, room_left=left, inset=inset)
     room = right - TEXT_GAP - left
-    number = _fit(style.number_metrics, bar.number, room, elide=False)
+    # « 2026-5271 - Désignation »: the whole number when it fits, else « 5271 ».
+    number = _fit(style.number_metrics, bar.project_number, room, elide=False) or _fit(
+        style.number_metrics, bar.number, room, elide=False
+    )
     head_x = left + (style.number_metrics.horizontalAdvance(number) + TEXT_GAP if number else 0)
     if not number:
         head_text = bar.title or bar.type_label
-    elif two_lines:
-        head_text = bar.client or bar.title
     else:
-        head_text = bar.title or bar.client
+        head_text = f"- {bar.title}" if bar.title else bar.client
     head = ""
     if width >= MEDIUM_BAR or not number:
         head = _fit(style.head_metrics, head_text, right - TEXT_GAP - head_x)

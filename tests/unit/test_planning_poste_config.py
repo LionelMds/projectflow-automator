@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from pathlib import Path
 
@@ -41,7 +40,7 @@ def test_first_load_uses_defaults_and_keeps_the_generated_poste_id(planning_dirs
 
     assert planning_config_file() == planning_dirs / "config" / "planning.json"
     assert config.enabled is True
-    assert config.backend == "local"
+    assert config.backend == "onedrive"
     assert config.sharepoint_list_name == "ProjectFlow Planning"
     assert config.poste_name == "ATELIER-PC"
     assert len(config.poste_id) == 32
@@ -57,7 +56,7 @@ def test_first_load_uses_defaults_and_keeps_the_generated_poste_id(planning_dirs
     assert config.backlog_sort == "manual"
     assert config.local_store_directory() == planning_dirs / "data" / "planning" / "local-store"
     assert config.cache_directory() == planning_dirs / "data" / "planning" / config.cache_key()
-    assert re.fullmatch(r"local-[0-9a-f]{8}", config.cache_key())
+    assert re.fullmatch(r"onedrive-[0-9a-f]{8}", config.cache_key())
     assert config.is_identified is False
 
 
@@ -107,7 +106,7 @@ def test_corrupt_file_falls_back_to_defaults_and_keeps_a_backup(planning_dirs: P
     with capture_logs() as logs:
         config = PlanningPosteConfig.load()
 
-    assert config.backend == "local"
+    assert config.backend == "onedrive"
     assert (path.parent / "planning.json.bak").read_text(encoding="utf-8") == "{not json"
     assert _saved()["poste_id"] == config.poste_id
     assert [entry["event"] for entry in logs] == ["planning.config.unreadable"]
@@ -227,7 +226,7 @@ def test_unreadable_file_uses_defaults_without_overwriting(planning_dirs: Path) 
     with capture_logs() as logs:
         config = PlanningPosteConfig.load(path)
 
-    assert config.backend == "local"
+    assert config.backend == "onedrive"
     assert path.is_dir()
     assert logs[0]["event"] == "planning.config.unreadable"
 
@@ -249,7 +248,7 @@ def test_load_survives_an_unwritable_location(monkeypatch: pytest.MonkeyPatch) -
     with capture_logs() as logs:
         config = PlanningPosteConfig.load()
 
-    assert config.backend == "local"
+    assert config.backend == "onedrive"
     assert not planning_config_file().exists()
     assert [entry["event"] for entry in logs] == ["planning.config.save_failed"]
 
@@ -335,31 +334,15 @@ def test_cache_key_changes_with_the_store_the_site_or_the_list() -> None:
         by_ids.cache_key(),
         by_ids.model_copy(update={"sharepoint_list_id": "list-2"}).cache_key(),
         by_ids.model_copy(update={"sharepoint_site_id": "site-2"}).cache_key(),
-        by_ids.model_copy(update={"backend": "local"}).cache_key(),
+        by_ids.model_copy(update={"backend": "onedrive"}).cache_key(),
     }
 
     assert len(keys) == 7
 
 
-def test_cache_key_of_the_local_store_follows_its_folder(
-    planning_dirs: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    default = PlanningPosteConfig()
-    shared = PlanningPosteConfig(local_directory=str(planning_dirs / "partage"))
-    monkeypatch.chdir(planning_dirs)
-    relative = PlanningPosteConfig(local_directory="partage")
-    resolved = (planning_dirs / "data" / "planning" / "local-store").resolve()
+def test_the_former_local_store_now_reads_as_onedrive() -> None:
+    former = PlanningPosteConfig.model_validate({"backend": "local"})
+    unknown = PlanningPosteConfig.model_validate({"backend": "nas"})
 
-    assert default.cache_key() == f"local-{_sha1_prefix(os.path.normcase(str(resolved)))}"
-    assert shared.cache_key() != default.cache_key()
-    assert relative.cache_key() == shared.cache_key()
-    assert default.cache_directory() != default.local_store_directory()
-    assert PlanningPosteConfig().cache_key() == default.cache_key()
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows compares folder names without case")
-def test_cache_key_of_the_local_store_ignores_the_case_on_windows(planning_dirs: Path) -> None:
-    lower = PlanningPosteConfig(local_directory=str(planning_dirs / "partage"))
-    upper = PlanningPosteConfig(local_directory=str(planning_dirs / "PARTAGE"))
-
-    assert lower.cache_key() == upper.cache_key()
+    assert (former.backend, unknown.backend) == ("onedrive", "onedrive")
+    assert former.cache_key() == PlanningPosteConfig().cache_key()

@@ -67,14 +67,16 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QTableView,
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
-from projectflow.core.planning.layout import row_kind
+from projectflow.core.planning.layout import Density, row_kind
 from projectflow.core.planning.quick_entry import EntryContext, fold_text
 from projectflow.core.planning.timescale import (
     MONTH_NAMES,
@@ -93,7 +95,17 @@ from projectflow.ui.planning.backlog import BacklogPanel, build_cards
 from projectflow.ui.planning.colors import ColorBy
 from projectflow.ui.planning.detail import DetailPanel
 from projectflow.ui.planning.grid import PlanningGrid
-from projectflow.ui.planning.grid_model import BarData, GridModel, span_label
+from projectflow.ui.planning.grid_model import (
+    MAX_LANE_HEIGHT,
+    MAX_ZOOM,
+    MIN_LANE_HEIGHT,
+    MIN_ZOOM,
+    BarData,
+    GridModel,
+    clamp_lane_height,
+    clamp_zoom,
+    span_label,
+)
 from projectflow.ui.planning.hovercard import HoverCard
 from projectflow.ui.planning.inline_editor import InlineEditor
 from projectflow.ui.planning.quick_entry_bar import QuickEntryBar
@@ -122,6 +134,18 @@ DENSITY_LABELS: Final[Mapping[str, str]] = {
     "normal": "Normale",
     "large": "Large",
 }
+DENSITY_HEIGHTS: Final[Mapping[str, int]] = {
+    "compact": int(Density.COMPACT),
+    "normal": int(Density.NORMAL),
+    "large": int(Density.LARGE),
+}
+ZOOM_STEP: Final = 1.25
+"""Ctrl + one notch of the wheel: columns 25 % wider (or narrower)."""
+ZOOM_SLIDER_SCALE: Final = 100
+ROW_HEIGHT_STEP: Final = 4
+"""Ctrl + one notch of the wheel on the names: rows 4 px taller (or lower)."""
+SIZE_SLIDER_WIDTH: Final = 160
+ZOOM_TOLERANCE: Final = 0.005
 MONTH_ABBREVIATIONS: Final = (
     "janv.",
     "févr.",
@@ -668,6 +692,8 @@ class PlanningTab(QWidget):
     visibility_changed = Signal()
     """Shown, hidden, or its window activated or deactivated."""
     density_chosen = Signal(str)
+    display_size_changed = Signal()
+    """The row height or the column width of a view changed: keep it for this poste."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -676,6 +702,8 @@ class PlanningTab(QWidget):
         self._view: ViewKind = "week"
         self._anchor = self._today
         self._density = "normal"
+        self._row_heights: dict[ViewKind, int] = {}
+        self._zooms: dict[ViewKind, float] = {}
         self._color_by: ColorBy = "type"
         self._filter = ""
         self._read_only = False
@@ -813,6 +841,10 @@ class PlanningTab(QWidget):
             density_group.addAction(action)
             self.density_actions[key] = action
         density_group.triggered.connect(self._on_density_action)
+        self.display_menu.addSection("Taille")
+        self.size_action = QWidgetAction(self.display_menu)
+        self.size_action.setDefaultWidget(self._build_size_controls())
+        self.display_menu.addAction(self.size_action)
         self.display_menu.addSection("Couleur des barres")
         self.color_actions: dict[str, QAction] = {}
         color_group = QActionGroup(self.display_menu)
@@ -969,6 +1001,9 @@ class PlanningTab(QWidget):
         self.grid.selection_changed.connect(self._update_status)
         self.grid.day_clicked.connect(lambda day: self.set_view("day", anchor=day))
         self.grid.week_clicked.connect(lambda day: self.set_view("week", anchor=day))
+        self.grid.zoom_requested.connect(self._on_zoom_wheel)
+        self.grid.row_height_requested.connect(self._on_row_height_wheel)
+        self.grid.period_step_requested.connect(self._step_from_edge)
         self.side.width_changed.connect(self._place_toasts)
         self.side.collapsed_changed.connect(self._on_panel_collapsed)
         self.backlog.set_color_by(self._color_by)
@@ -995,6 +1030,135 @@ class PlanningTab(QWidget):
         return self._density
 
     @property
+    def row_height(self) -> int:
+        """Height of a lane in the current view: chosen, else from the density."""
+        chosen = self._row_heights.get(self._view)
+        if chosen:
+            return clamp_lane_height(chosen)
+        if self._view == "month":
+            return int(Density.COMPACT)  # « 5231 » alone: the month stays compact.
+        return DENSITY_HEIGHTS.get(self._density, int(Density.NORMAL))
+
+    @property
+    def zoom(self) -> float:
+        """Width of the columns of the current view against the width that fits (1)."""
+        return clamp_zoom(self._zooms.get(self._view, MIN_ZOOM))
+
+    def row_heights(self) -> dict[str, int]:
+        return {view: clamp_lane_height(height) for view, height in self._row_heights.items()}
+
+    def zooms(self) -> dict[str, float]:
+        return {view: clamp_zoom(zoom) for view, zoom in self._zooms.items()}
+
+    def set_row_height(self, height: int) -> None:
+        """Rows of the current view ``height`` pixels a lane (kept per view)."""
+        height = clamp_lane_height(height)
+        if height == self.row_height:
+            return
+        self._row_heights[self._view] = height
+        self._sync_size_controls()
+        self.display_size_changed.emit()
+        self.view_changed.emit()
+
+    def set_zoom(self, zoom: float, *, viewport_x: float | None = None) -> None:
+        """Columns of the current view ``zoom`` times their fitted width.
+
+        The instant under ``viewport_x`` (the middle by default) stays where it is.
+        """
+        zoom = round(clamp_zoom(zoom), 2)
+        if abs(zoom - self.zoom) < ZOOM_TOLERANCE:
+            return
+        self.grid.keep_point(
+            viewport_x if viewport_x is not None else self.grid.viewport_width() / 2
+        )
+        if zoom <= MIN_ZOOM:
+            self._zooms.pop(self._view, None)
+        else:
+            self._zooms[self._view] = zoom
+        self._sync_size_controls()
+        self.display_size_changed.emit()
+        self.view_changed.emit()
+
+    def _build_size_controls(self) -> QWidget:
+        box = QWidget()
+        layout = QGridLayout(box)
+        layout.setContentsMargins(12, 4, 12, 8)
+        layout.setHorizontalSpacing(10)
+        layout.setVerticalSpacing(6)
+        self.row_height_slider = QSlider(Qt.Orientation.Horizontal)
+        self.row_height_slider.setRange(MIN_LANE_HEIGHT, MAX_LANE_HEIGHT)
+        self.row_height_slider.setSingleStep(2)
+        self.row_height_slider.setPageStep(8)
+        self.row_height_slider.setAccessibleName("Hauteur des lignes")
+        self.row_height_slider.setToolTip(
+            native_keys("Hauteur des lignes de cette vue (aussi Ctrl + molette sur les noms)")
+        )
+        self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
+        self.zoom_slider.setRange(
+            round(MIN_ZOOM * ZOOM_SLIDER_SCALE), round(MAX_ZOOM * ZOOM_SLIDER_SCALE)
+        )
+        self.zoom_slider.setSingleStep(5)
+        self.zoom_slider.setPageStep(25)
+        self.zoom_slider.setAccessibleName("Largeur des colonnes")
+        self.zoom_slider.setToolTip(
+            native_keys(
+                "Largeur des colonnes de cette vue (aussi Ctrl + molette sur le planning) ; "
+                "au-delà de 100 %, le planning défile de côté (Maj + molette)"
+            )
+        )
+        for slider in (self.row_height_slider, self.zoom_slider):
+            slider.setMinimumWidth(SIZE_SLIDER_WIDTH)
+        self.row_height_value = QLabel()
+        self.zoom_value = QLabel()
+        self.fit_button = QPushButton("Ajuster")
+        self.fit_button.setToolTip("Toutes les colonnes de la période à l'écran (100 %)")
+        self.fit_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(QLabel("Lignes"), 0, 0)
+        layout.addWidget(self.row_height_slider, 0, 1)
+        layout.addWidget(self.row_height_value, 0, 2)
+        layout.addWidget(QLabel("Colonnes"), 1, 0)
+        layout.addWidget(self.zoom_slider, 1, 1)
+        layout.addWidget(self.zoom_value, 1, 2)
+        layout.addWidget(self.fit_button, 1, 3)
+        self.row_height_slider.valueChanged.connect(self.set_row_height)
+        self.zoom_slider.valueChanged.connect(self._on_zoom_slider)
+        self.fit_button.clicked.connect(self.fit_columns)
+        return box
+
+    def fit_columns(self) -> None:
+        """Back to every column of the period on screen."""
+        self.set_zoom(MIN_ZOOM)
+
+    def _on_zoom_slider(self, value: int) -> None:
+        self.set_zoom(value / ZOOM_SLIDER_SCALE)
+
+    def _sync_size_controls(self) -> None:
+        if not hasattr(self, "row_height_slider"):
+            return
+        height, zoom = self.row_height, self.zoom
+        for slider, value in (
+            (self.row_height_slider, height),
+            (self.zoom_slider, round(zoom * ZOOM_SLIDER_SCALE)),
+        ):
+            blocked = slider.blockSignals(True)  # noqa: FBT003 - Qt's API
+            slider.setValue(value)
+            slider.blockSignals(blocked)
+        self.row_height_value.setText(f"{height} px")
+        self.zoom_value.setText(f"{round(zoom * ZOOM_SLIDER_SCALE)} %")
+        self.fit_button.setEnabled(zoom > MIN_ZOOM)
+
+    def _on_zoom_wheel(self, notches: int, viewport_x: float) -> None:
+        self.set_zoom(self.zoom * ZOOM_STEP**notches, viewport_x=viewport_x)
+
+    def _on_row_height_wheel(self, notches: int) -> None:
+        self.set_row_height(self.row_height + ROW_HEIGHT_STEP * notches)
+
+    def _step_from_edge(self, step: int) -> None:
+        """Show the period past the end the sideways wheel went beyond."""
+        self.grid.land_on_edge(step)
+        self.step(step)
+
+    @property
     def color_by(self) -> ColorBy:
         return self._color_by
 
@@ -1019,8 +1183,22 @@ class PlanningTab(QWidget):
         view: ViewKind | None = None,
         density: str | None = None,
         color_by: ColorBy | None = None,
+        row_heights: Mapping[str, int] | None = None,
+        zooms: Mapping[str, float] | None = None,
     ) -> None:
         """Show the preferences of this poste without emitting ``view_changed``."""
+        if row_heights is not None:
+            self._row_heights = {
+                view: clamp_lane_height(height)
+                for view in VIEW_KINDS
+                if (height := row_heights.get(view))
+            }
+        if zooms is not None:
+            self._zooms = {
+                view: clamp_zoom(zoom)
+                for view in VIEW_KINDS
+                if (zoom := zooms.get(view)) and zoom > MIN_ZOOM
+            }
         if view is not None and view in VIEW_KINDS:
             self._view = view
             self._anchor = self._normalized(self._anchor)
@@ -1059,9 +1237,15 @@ class PlanningTab(QWidget):
         self._change(self._view, self._today)
 
     def set_density(self, density: str) -> None:
-        if density in DENSITY_LABELS and density != self._density:
+        chosen = any(view in self._row_heights for view in ("day", "week"))
+        if density in DENSITY_LABELS and (density != self._density or chosen):
             self._density = density
+            # A density sets the rows of the day and the week again, past a height chosen.
+            self._row_heights.pop("day", None)
+            self._row_heights.pop("week", None)
             self._sync_toolbar()
+            if chosen:
+                self.display_size_changed.emit()
             self.density_chosen.emit(density)
             self.view_changed.emit()
 
@@ -1096,6 +1280,7 @@ class PlanningTab(QWidget):
             action.setChecked(key == self._density)
         for key, action in self.color_actions.items():
             action.setChecked(key == self._color_by)
+        self._sync_size_controls()
         self._fit_toolbar()
 
     def _on_view_clicked(self, index: int) -> None:

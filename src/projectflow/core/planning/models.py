@@ -379,6 +379,14 @@ class ProjectCache(_Frozen):
     read_at: str = ""
 
 
+def task_label(number: str, designation: str) -> str:
+    """« 2026-5271 - Local grillagé »; the number or the designation alone without the other."""
+    number, designation = number.strip(), designation.strip()
+    if number and designation:
+        return f"{number} - {designation}"
+    return number or designation
+
+
 class PlanningTask(PlanningDocument):
     """A piece of work.
 
@@ -429,8 +437,18 @@ class PlanningTask(PlanningDocument):
         return tuple(self.assignments)
 
     @property
+    def designation(self) -> str:
+        """Designation shown: the one typed for the task, else the dossier's."""
+        return self.title.strip() or self.project_cache.designation.strip()
+
+    @property
     def display_title(self) -> str:
-        return self.title or self.project_cache.designation or self.project_number
+        return self.designation or self.project_number
+
+    @property
+    def label(self) -> str:
+        """« [Numéro du dossier] - [Désignation] », the name of a task everywhere."""
+        return task_label(self.project_number, self.designation)
 
 
 # ------------------------------------------------------------- absences ----

@@ -87,6 +87,10 @@ MIN_VIEWPORT_WIDTH = 200.0
 EMPTY_UNASSIGNED_HEIGHT = 20
 """Height of « Non affecté » while it holds no bar in the shown range."""
 FIT_MARGIN = 0.5
+MIN_ZOOM = 1.0
+MAX_ZOOM = 6.0
+MIN_LANE_HEIGHT = 18
+MAX_LANE_HEIGHT = 96
 """Pixels kept free so that a fitted axis never needs a horizontal scroll bar."""
 NOON_MINUTE = 12 * MINUTES_PER_HOUR
 """Split between morning and afternoon on a day worked in a single period."""
@@ -340,7 +344,8 @@ class GridModel:
     closures: Mapping[date, str]
     today: date
     now: WallTime
-    density: Density
+    density: int
+    """Height of one lane in pixels (a ``Density`` or the height the poste chose)."""
     color_by: ColorBy
     calendar_for: CalendarFor
     viewport_width: float
@@ -358,6 +363,8 @@ class GridModel:
     rests_by_row: Mapping[str, tuple[RestBlock, ...]] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    zoom: float = 1.0
+    """Width of the columns against the width that fits the viewport (1: no scrolling)."""
 
     @property
     def night_axis(self) -> bool:
@@ -510,6 +517,7 @@ class GridModel:
             len(self.timescale.columns),
             self.timescale.display_minutes,
             night=self.night_axis,
+            zoom=self.zoom,
         )
         return replace(
             self.with_day_width(width), viewport_width=max(viewport_width, MIN_VIEWPORT_WIDTH)
@@ -538,18 +546,31 @@ def fitted_day_width(
     display_minutes: int,
     *,
     night: bool = False,
+    zoom: float = 1.0,
 ) -> float:
     """Return the width of a day for ``view`` in a viewport of ``viewport_width``.
 
     The day view shows the whole drawn day (60 px per hour at least, 40 px for the 24
     hours of a night), the week and month views fit their shown days in the viewport.
+    ``zoom`` widens the columns past the viewport, which then scrolls sideways.
     """
     width = max(viewport_width, MIN_VIEWPORT_WIDTH) - FIT_MARGIN
+    factor = clamp_zoom(zoom)
     if view == "day":
         hour = NIGHT_AXIS_MIN_HOUR_WIDTH if night else DAY_VIEW_MIN_HOUR_WIDTH
-        return max(width, hour * display_minutes / MINUTES_PER_HOUR)
+        return max(width, hour * display_minutes / MINUTES_PER_HOUR) * factor
     minimum = WEEK_MIN_DAY_WIDTH if view == "week" else MONTH_MIN_DAY_WIDTH
-    return max(width / max(column_count, 1), minimum)
+    return max(width / max(column_count, 1), minimum) * factor
+
+
+def clamp_zoom(zoom: float) -> float:
+    """Zoom of the columns kept between ``MIN_ZOOM`` (fit) and ``MAX_ZOOM``."""
+    return min(max(float(zoom), MIN_ZOOM), MAX_ZOOM)
+
+
+def clamp_lane_height(height: int) -> int:
+    """Lane height kept between ``MIN_LANE_HEIGHT`` and ``MAX_LANE_HEIGHT`` pixels."""
+    return min(max(int(height), MIN_LANE_HEIGHT), MAX_LANE_HEIGHT)
 
 
 def short_number(number: str, current_year: int) -> str:
@@ -1007,12 +1028,13 @@ def build_grid_model(
     viewport_width: float,
     today: date,
     now: WallTime,
-    density: Density = Density.NORMAL,
+    density: int = Density.NORMAL,
     color_by: ColorBy = "type",
     hidden_resource_ids: Collection[str] = (),
     collapsed_teams: Collection[str] = (),
     project_exists: ProjectExists | None = None,
     show_night: bool = False,
+    zoom: float = 1.0,
 ) -> GridModel:
     """Build what the grid draws for ``view`` around ``anchor``.
 
@@ -1028,7 +1050,9 @@ def build_grid_model(
     night_axis = view == "day" and (show_night or _has_night(snapshot, first))
     day_window = NIGHT_WINDOW if night_axis else None
     probe = TimeScale(axis, first, last, 1.0, window=day_window)
-    width = fitted_day_width(view, viewport_width, columns, probe.display_minutes, night=night_axis)
+    width = fitted_day_width(
+        view, viewport_width, columns, probe.display_minutes, night=night_axis, zoom=zoom
+    )
     scale = TimeScale(axis, first, last, width, window=day_window)
     window = (scale.start, scale.end)
     resources = row_resources(snapshot, window=window)
@@ -1120,6 +1144,7 @@ def build_grid_model(
         open_places=open_places,
         rests=rests,
         rests_by_row=MappingProxyType(_group_rests(rests)),
+        zoom=clamp_zoom(zoom),
     )
 
 

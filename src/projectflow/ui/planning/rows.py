@@ -473,6 +473,8 @@ class RowColumn(QWidget):
     row_clicked = Signal(str, object)
     row_menu_requested = Signal(str, QPoint)
     scroll_requested = Signal(int)
+    height_requested = Signal(int)
+    """Ctrl + wheel on the names: taller (+1 a notch) or lower (-1) rows."""
     width_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -603,6 +605,12 @@ class RowColumn(QWidget):
         event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            notches = round(event.angleDelta().y() / 120)
+            if notches:
+                self.height_requested.emit(notches)
+            event.accept()
+            return
         delta = event.pixelDelta().y() or round(event.angleDelta().y() / 120 * 3 * 20)
         if delta:
             self.scroll_requested.emit(-delta)

@@ -754,7 +754,7 @@ def test_planning_identity_is_chosen_from_microsoft_members(qtbot) -> None:  # t
     assert planning.user_name == "Kevin Duc"
     assert planning.user_initials == "KDU"
     assert planning.author().label == "KDU · BUREAU-LM"
-    assert dialog._section_meta["planning"].text() == "KDU · Local"  # noqa: SLF001
+    assert dialog._section_meta["planning"].text() == "KDU · OneDrive"  # noqa: SLF001
 
 
 def test_saved_planning_member_is_selected_and_another_name_unlinks_it(qtbot) -> None:  # type: ignore[no-untyped-def]
@@ -810,7 +810,7 @@ def test_planning_initials_default_to_the_fiche_initials(qtbot) -> None:  # type
 
 def test_sharepoint_storage_shows_the_admin_consent_banner(qtbot) -> None:  # type: ignore[no-untyped-def]
     dialog = _planning_dialog(qtbot, PlanningPosteConfig())
-    assert dialog.planning_local_radio.isChecked()
+    assert dialog.planning_onedrive_radio.isChecked()
     assert dialog.planning_storage_banner.isHidden()
     assert dialog.planning_sharepoint_fields.isHidden()
 
@@ -821,10 +821,9 @@ def test_sharepoint_storage_shows_the_admin_consent_banner(qtbot) -> None:  # ty
     message = dialog.planning_storage_banner.message_label.text()
     assert "Sites.ReadWrite.All" in message
     assert "administrateur" in message
-    assert "n'est pas copié automatiquement" in message
     assert dialog._section_meta["planning"].text() == "SharePoint"  # noqa: SLF001
 
-    dialog.planning_local_radio.click()
+    dialog.planning_onedrive_radio.click()
     assert dialog.planning_storage_banner.isHidden()
 
 
@@ -869,9 +868,9 @@ def test_apply_to_planning_config_writes_storage_and_view_defaults(qtbot) -> Non
     assert planning.sharepoint_list_name == "Planning atelier"
 
     dialog.planning_site_edit.setText("https://balz.sharepoint.com/sites/bureau")
-    dialog.planning_local_radio.click()
+    dialog.planning_onedrive_radio.click()
     dialog.apply_to_planning_config(planning)
-    assert planning.backend == "local"
+    assert planning.backend == "onedrive"
     assert planning.sharepoint_site_url == "https://balz.sharepoint.com/sites/bureau"
     assert (planning.sharepoint_site_id, planning.sharepoint_list_id) == ("", "")
 
@@ -903,7 +902,7 @@ def test_sharepoint_without_site_is_refused(qtbot, monkeypatch) -> None:  # type
 
     assert dialog.result() != QDialog.DialogCode.Accepted
     assert warnings == [
-        "Indiquez l'adresse du site SharePoint du planning ou choisissez le stockage local.",
+        "Indiquez l'adresse du site SharePoint du planning ou choisissez OneDrive.",
         "L'adresse du site SharePoint commence par https://.",
     ]
 

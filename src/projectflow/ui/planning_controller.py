@@ -18,9 +18,10 @@ import asyncio
 import re
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final, cast, get_args
 
 from PySide6.QtCore import QPoint, Qt, QTimer
@@ -41,8 +42,6 @@ from projectflow.core.planning.commands import (
 from projectflow.core.planning.conflicts import Finding, findings_by_bar, resource_load
 from projectflow.core.planning.layout import (
     UNASSIGNED_ROW_ID,
-    Density,
-    density_from_name,
     row_kind,
 )
 from projectflow.core.planning.models import (
@@ -59,6 +58,7 @@ from projectflow.core.planning.models import (
     utc_now_text,
 )
 from projectflow.core.planning.night import MOON, elapsed_text, rest_text
+from projectflow.core.planning.outlook_sync import CalendarGateway, OutlookCalendarSync, SyncReport
 from projectflow.core.planning.poste_config import PlanningDensity, PlanningPosteConfig
 from projectflow.core.planning.quick_entry import (
     EntryContext,
@@ -132,6 +132,10 @@ class PlanningHooks:
     save_config: Callable[[PlanningPosteConfig], None] | None = None
     """Optional: keep the display choices of this poste (view, density, panel width…)
     where its settings live. Without it they change in ``poste_config`` only."""
+    find_project: Callable[[str], Awaitable[ProjectInfo | None]] | None = None
+    """Optional: details of a dossier older than the répertoire years read (its fiche)."""
+    open_outlook_calendar: Callable[[], Awaitable[CalendarGateway]] | None = None
+    """Optional: the Outlook calendars of the account, for the copy for the phones."""
 
 
 PlanningStoreFactory = Callable[[PlanningPosteConfig], Awaitable[PlanningStore]]
@@ -140,6 +144,14 @@ PlanningStoreFactory = Callable[[PlanningPosteConfig], Awaitable[PlanningStore]]
 REBUILD_DELAY_MS: Final = 30
 PROJECTS_REFRESH_MS: Final = 10 * 60 * 1000
 PROJECTS_STALE_SECONDS: Final = 60.0
+PRELOADED_YEARS: Final = 3
+"""Répertoire sheets read at the start: this year and the two before."""
+LOOKUPS_AT_ONCE: Final = 8
+OUTLOOK_DELAY_MS: Final = 8_000
+"""Calm after the last change before the Outlook calendar is brought up to date."""
+OUTLOOK_REPAIR_MS: Final = 15 * 60 * 1000
+"""The whole calendar read again, to put back what was changed in Outlook."""
+"""Older dossiers looked up in one go (their fiche), the others at the next pass."""
 START_WAIT_SECONDS: Final = 3.0
 STOP_BUDGET_SECONDS: Final = 4.5
 """Stopping a session (engine flush, end of its task) waits this long in all."""
@@ -264,12 +276,22 @@ def _same_slot_other_person(task: PlanningTask, from_row: str, to_row: str, star
     )
 
 
+def outlook_problem(exc: BaseException) -> str:
+    """French reason of a failed copy to Outlook, with what to do."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(exc, AuthError) or status == HTTP_UNAUTHORIZED:
+        return (
+            "connexion au calendrier à autoriser : Paramètres > Planning > "
+            "« Connecter le calendrier Outlook »."
+        )
+    if status == HTTP_FORBIDDEN:
+        return "Microsoft refuse l'accès au calendrier (autorisation Calendars.ReadWrite)."
+    return str(exc) or type(exc).__name__
+
+
 def task_name(task: PlanningTask) -> str:
-    """« 2026-118 Montage garde-corps », the way undo labels and toasts name a task."""
-    title = task.display_title
-    number = task.project_number
-    text = number if title == number else f"{number} {title}".strip()
-    return clip(text or "tâche sans titre")
+    """« 2026-118 - Montage garde-corps », the way undo labels and toasts name a task."""
+    return clip(task.label or "tâche sans titre")
 
 
 def remote_verb(before: PlanningTask | None, after: PlanningTask | None) -> str:
@@ -464,6 +486,11 @@ class PlanningController:
         self._last_snapshot = PlanningSnapshot()
         self._projects: dict[str, ProjectInfo] = {}
         self._project_years: frozenset[int] = frozenset()
+        self._older_projects: dict[str, ProjectInfo] = {}
+        """Dossiers of older years found from their fiche, kept for the session."""
+        self._looked_up: set[str] = set()
+        self._lookup_queue: set[str] = set()
+        self._lookup_running = False
         self._projects_at: float | None = None
         self._projects_running = False
         self._members: list[PlannerMember] | None = None
@@ -502,6 +529,19 @@ class PlanningController:
         self._retry_timer = QTimer(tab)
         self._retry_timer.setSingleShot(True)
         self._retry_timer.timeout.connect(self._on_retry)
+        self._outlook: OutlookCalendarSync | None = None
+        self._outlook_running = False
+        self._outlook_again = False
+        self._outlook_problem = ""
+        self.outlook_report: SyncReport | None = None
+        """Outcome of the last copy to Outlook (tests and the settings read it)."""
+        self._outlook_timer = QTimer(tab)
+        self._outlook_timer.setSingleShot(True)
+        self._outlook_timer.setInterval(OUTLOOK_DELAY_MS)
+        self._outlook_timer.timeout.connect(self._request_outlook_sync)
+        self._outlook_repair_timer = QTimer(tab)
+        self._outlook_repair_timer.setInterval(OUTLOOK_REPAIR_MS)
+        self._outlook_repair_timer.timeout.connect(self._repair_outlook)
 
         self._wire()
         self._apply_config(initial=True)
@@ -578,6 +618,8 @@ class PlanningController:
             self._hover_timer,
             self._projects_timer,
             self._retry_timer,
+            self._outlook_timer,
+            self._outlook_repair_timer,
         ):
             timer.stop()
         self._tab.hover.hide()
@@ -1071,6 +1113,7 @@ class PlanningController:
 
         tab.view_changed.connect(self._on_view_changed)
         tab.density_chosen.connect(self._on_density_chosen)
+        tab.display_size_changed.connect(self._on_display_size_changed)
         tab.undo_requested.connect(self.undo)
         tab.redo_requested.connect(self.redo)
         tab.print_requested.connect(self._on_print)
@@ -1098,7 +1141,11 @@ class PlanningController:
         try:
             if initial:
                 tab.apply_preferences(
-                    view=config.default_view, density=config.density, color_by=config.color_by
+                    view=config.default_view,
+                    density=config.density,
+                    color_by=config.color_by,
+                    row_heights=config.row_heights,
+                    zooms=config.column_zooms,
                 )
                 tab.set_today(self._today())
             else:
@@ -1106,12 +1153,26 @@ class PlanningController:
                     view=config.default_view if changed("default_view") else None,
                     density=config.density,
                     color_by=config.color_by,
+                    row_heights=config.row_heights,
+                    zooms=config.column_zooms,
                 )
             if changed("panel_width"):
                 tab.side.set_panel_width(config.panel_width)
             if changed("panel_open"):
                 tab.side.set_collapsed(not config.panel_open)
             tab.backlog.set_sort(config.backlog_sort)
+            if not config.outlook_sync:
+                self._outlook = None
+                self._outlook_timer.stop()
+                self._outlook_repair_timer.stop()
+            elif not initial and (
+                previous is None
+                or not previous.outlook_sync
+                or previous.outlook_calendar != config.outlook_calendar
+                or previous.outlook_hide_details != config.outlook_hide_details
+            ):
+                self._outlook = None
+                self._outlook_timer.start()
             tab.backlog.set_my_initials(config.user_initials)
             tab.set_identity(identified=config.is_identified, label_text=config.author().label)
         finally:
@@ -1223,7 +1284,7 @@ class PlanningController:
     def _apply_status(self) -> None:
         status = self.sync_status
         tab = self._tab
-        tab.set_sync_status(status, local=self._config.backend == "local")
+        tab.set_sync_status(status, local=False)
         session = self._session
         read_only = session is not None and self.read_only
         message = self._read_only_message() if read_only else ""
@@ -1262,7 +1323,7 @@ class PlanningController:
     def _rebuild(self, session: _Session) -> None:
         tab = self._tab
         service = session.service
-        snapshot = service.snapshot
+        snapshot = self._display_snapshot(service.snapshot)
         today = self._today()
         model = build_grid_model(
             snapshot,
@@ -1271,19 +1332,123 @@ class PlanningController:
             viewport_width=tab.grid.viewport_width(),
             today=today,
             now=self._now(today),
-            density=self._density(),
+            density=tab.row_height,
             color_by=tab.color_by,
             hidden_resource_ids=self._config.hidden_resource_ids,
             collapsed_teams=self._config.collapsed_teams,
             project_exists=self._project_exists,
+            zoom=tab.zoom,
         )
         tab.set_model(model)
         tab.backlog.set_snapshot(snapshot, today=today)
         tab.grid.set_pending(self._pending_ids(session))
         self._after_rebuild()
-        self._refresh_detail(snapshot)
-        self._refresh_team_dialog(snapshot)
+        self._refresh_detail(service.snapshot)
+        self._refresh_team_dialog(service.snapshot)
         tab.set_undo_labels(service.undo_label, service.redo_label)
+        if self._config.outlook_sync and session.loaded.is_set():
+            self._outlook_timer.start()
+
+    # -- copy to Outlook ------------------------------------------------------
+
+    def sync_outlook_now(self) -> None:
+        """Bring the Outlook calendar up to date at once (tests, « Synchroniser »)."""
+        self._outlook_timer.stop()
+        self._request_outlook_sync()
+
+    def _repair_outlook(self) -> None:
+        if self._outlook is not None:
+            self._outlook.forget()
+        self._request_outlook_sync()
+
+    def _request_outlook_sync(self) -> None:
+        if self._closed or not self._config.outlook_sync:
+            return
+        if self._outlook_running:
+            self._outlook_again = True
+            return
+        self._outlook_running = True
+        self._hooks.schedule(self._sync_outlook())
+
+    async def _sync_outlook(self) -> None:
+        """Copy the planning into the Outlook calendar; problems are logged, never raised."""
+        try:
+            while not self._closed and self._config.outlook_sync:
+                self._outlook_again = False
+                session = self._session
+                if session is None or not session.loaded.is_set():
+                    return
+                outlook = await self._outlook_sync()
+                if outlook is None:
+                    return
+                snapshot = self._display_snapshot(session.service.snapshot)
+                report = await outlook.sync(
+                    snapshot,
+                    today=self._today(),
+                    calendar_for=calendar_resolver(snapshot),
+                    hide_details=self._config.outlook_hide_details,
+                )
+                self.outlook_report = report
+                self._outlook_problem = ""
+                if report.created or report.updated or report.deleted or report.failed:
+                    name = outlook.calendar_name
+                    self._log(f"Calendrier Outlook « {name} » : {report.summary()}.")
+                if report.errors:
+                    get_logger(__name__).warning(
+                        "planning.outlook.partial", failed=report.failed, first=report.errors[0]
+                    )
+                if not self._outlook_again:
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the planning works on without the copy
+            self._outlook = None
+            message = outlook_problem(exc)
+            if message != self._outlook_problem:
+                self._outlook_problem = message
+                self._log(f"Calendrier Outlook non mis à jour : {message}")
+            get_logger(__name__).warning("planning.outlook.failed", error=type(exc).__name__)
+        finally:
+            self._outlook_running = False
+
+    async def _outlook_sync(self) -> OutlookCalendarSync | None:
+        opener = self._hooks.open_outlook_calendar
+        if opener is None:
+            return None
+        name = self._config.outlook_calendar
+        if self._outlook is None or self._outlook.calendar_name != name:
+            self._outlook = OutlookCalendarSync(await opener(), calendar_name=name)
+            if not self._outlook_repair_timer.isActive() and not self._closed:
+                self._outlook_repair_timer.start()
+        return self._outlook
+
+    def _display_snapshot(self, snapshot: PlanningSnapshot) -> PlanningSnapshot:
+        """Return the snapshot to draw, with the dossier details the tasks lack filled in.
+
+        Only what is shown changes (« 2026-5271 - Désignation », the client); the shared
+        planning keeps the tasks as they are.
+        """
+        self._want_task_projects(snapshot)
+        filled: dict[str, PlanningTask] = {}
+        for task in snapshot.tasks.values():
+            info = self._projects.get(task.project_number.strip()) if task.project_number else None
+            cache = task.project_cache
+            if info is None or (cache.designation and cache.client):
+                continue
+            filled[task.id] = task.model_copy(
+                update={
+                    "project_cache": cache.model_copy(
+                        update={
+                            "designation": cache.designation or info.designation,
+                            "client": cache.client or info.client,
+                            "contact": cache.contact or info.contact,
+                        }
+                    )
+                }
+            )
+        if not filled:
+            return snapshot
+        return replace(snapshot, tasks=MappingProxyType({**snapshot.tasks, **filled}))
 
     def _after_rebuild(self) -> None:
         tab = self._tab
@@ -1304,12 +1469,6 @@ class PlanningController:
         if self._card_after:
             tab.backlog.select_card(self._card_after)
             self._card_after = ""
-
-    def _density(self) -> Density:
-        """Rows of this poste; the month view is always compact (« 5231 » alone)."""
-        if self._tab.view == "month":
-            return Density.COMPACT
-        return density_from_name(self._tab.density)
 
     def _now(self, today: date) -> WallTime:
         local = datetime.now(UTC).astimezone()
@@ -2158,6 +2317,14 @@ class PlanningController:
             self._save_config()
         self._schedule_rebuild()
 
+    def _on_display_size_changed(self) -> None:
+        tab = self._tab
+        heights, zooms = tab.row_heights(), tab.zooms()
+        if (heights, zooms) != (self._config.row_heights, self._config.column_zooms):
+            self._config.row_heights = heights
+            self._config.column_zooms = zooms
+            self._save_config()
+
     def _on_density_chosen(self, density: str) -> None:
         value = DENSITIES.get(density)
         if value is not None and value != self._config.density:
@@ -2758,7 +2925,67 @@ class PlanningController:
     # -- dossiers -------------------------------------------------------------
 
     def _find_project(self, number: str) -> ProjectInfo | None:
-        return self._projects.get(number.strip())
+        clean = number.strip()
+        found = self._projects.get(clean)
+        if found is None and clean:
+            self._want_project(clean)
+        return found
+
+    def _want_project(self, number: str) -> None:
+        """Look ``number`` up (its fiche) when no répertoire read holds it."""
+        year = number[:4]
+        if (
+            self._hooks.find_project is None
+            or number in self._projects
+            or number in self._looked_up
+            or not (year.isdigit() and len(number) > len(year) and number[len(year)] == "-")
+            or int(year) in self._project_years
+        ):
+            return
+        self._lookup_queue.add(number)
+        if not self._lookup_running and not self._closed:
+            self._lookup_running = True
+            self._hooks.schedule(self._lookup_projects())
+
+    def _want_task_projects(self, snapshot: PlanningSnapshot) -> None:
+        for task in snapshot.live_tasks():
+            if task.project_number:
+                self._want_project(task.project_number.strip())
+
+    async def _lookup_projects(self) -> None:
+        """Read the fiche of the older dossiers asked for, a few at a time."""
+        finder = self._hooks.find_project
+        found_any = False
+        try:
+            while self._lookup_queue and finder is not None and not self._closed:
+                batch = sorted(self._lookup_queue)[:LOOKUPS_AT_ONCE]
+                for number in batch:
+                    self._lookup_queue.discard(number)
+                    self._looked_up.add(number)
+                    try:
+                        info = await finder(number)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - an unread fiche changes nothing
+                        get_logger(__name__).info(
+                            "planning.project.lookup_failed", error=type(exc).__name__
+                        )
+                        continue
+                    if info is not None and not self._closed:
+                        self._older_projects[number] = info
+                        self._projects.setdefault(number, info)
+                        found_any = True
+        finally:
+            self._lookup_running = False
+        if found_any and not self._closed:
+            ordered = sorted(
+                self._projects.values(), key=lambda info: number_key(info.number), reverse=True
+            )
+            tab = self._tab
+            tab.quick.set_projects(ordered)
+            tab.editor.set_projects(ordered)
+            tab.detail.set_project_choices(ordered)
+            self._schedule_rebuild()
 
     def _project_exists(self, number: str) -> bool:
         """Unknown only when the répertoire of that year was read and lacks the dossier."""
@@ -2781,12 +3008,15 @@ class PlanningController:
         self._hooks.schedule(self._refresh_projects())
 
     async def _refresh_projects(self) -> None:
-        """Read the répertoire of this year and the previous one (A:E only)."""
+        """Read the répertoire of the last ``PRELOADED_YEARS`` years (A:E only).
+
+        An older dossier is looked up on its own, from its fiche (``_lookup_projects``).
+        """
         try:
             year = self._today().year
             found: dict[str, ProjectInfo] = {}
             years: list[int] = []
-            for wanted in (year, year - 1):
+            for wanted in range(year, year - PRELOADED_YEARS, -1):
                 snapshot = await self._read_year(wanted, past=wanted < year)
                 if snapshot is None:
                     continue
@@ -2823,8 +3053,12 @@ class PlanningController:
             return None
 
     def _set_projects(self, found: Mapping[str, ProjectInfo], years: Sequence[int]) -> None:
-        self._projects = dict(found)
+        older = {
+            number: info for number, info in self._older_projects.items() if number not in found
+        }
+        self._projects = {**older, **found}
         self._project_years = frozenset(years)
+        found = self._projects
         ordered = sorted(found.values(), key=lambda info: number_key(info.number), reverse=True)
         tab = self._tab
         tab.quick.set_projects(ordered)

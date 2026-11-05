@@ -50,6 +50,7 @@ from projectflow.config import (
 )
 from projectflow.core.planning.local_store import has_documents
 from projectflow.core.planning.poste_config import (
+    DEFAULT_OUTLOOK_CALENDAR,
     PlanningBackendName,
     PlanningColorBy,
     PlanningDensity,
@@ -113,7 +114,6 @@ PLANNING_DENSITIES: tuple[tuple[PlanningDensity, str], ...] = (
     ("large", "Large"),
 )
 PLANNING_STORAGE_NAMES: Final[dict[PlanningBackendName, str]] = {
-    "local": "Local",
     "onedrive": "OneDrive",
     "sharepoint": "SharePoint",
 }
@@ -124,12 +124,25 @@ PLANNING_COLORS: tuple[tuple[PlanningColorBy, str], ...] = (
 SHAREPOINT_CONSENT_TEXT: Final = (
     "Le planning partagé sur SharePoint demande l'autorisation Microsoft "
     "Sites.ReadWrite.All, accordée par un administrateur du compte Microsoft 365 : ce "
-    "consentement administrateur est en attente. Le planning local de ce poste n'est pas "
-    "copié automatiquement vers SharePoint."
+    "consentement administrateur est en attente."
 )
 ONEDRIVE_NOTE_TEXT: Final = (
     "Tous les postes connectés au même compte Microsoft voient ce planning. "
     "Aucune autorisation supplémentaire."
+)
+OUTLOOK_CONNECT_TEXT: Final = "Connecter le calendrier Outlook…"
+OUTLOOK_CONNECT_RUNNING_TEXT: Final = "Connexion en cours…"
+OUTLOOK_HELP_TEXT: Final = (
+    "Une copie en lecture seule du planning, pour les téléphones. Cochez-la sur un seul "
+    "poste, allumé pendant la journée. Ensuite, une fois, avec le compte partagé sur "
+    "outlook.office.com : Paramètres > Calendrier > Calendriers partagés > Publier un "
+    "calendrier, choisissez ce calendrier et « Peut afficher tous les détails », puis "
+    "copiez le lien ICS.\n"
+    "iPhone : Réglages > Calendrier > Comptes > Ajouter un compte > Autre > Ajouter un "
+    "calendrier avec abonnement, puis collez le lien.\n"
+    "Android : application ICSx⁵ (gratuite), « + », collez le lien.\n"
+    "Le lien est public : quiconque l'a voit le planning. Ce qui est changé dans Outlook "
+    "est remplacé par le planning à la synchronisation suivante."
 )
 PLANNING_COPY_TEXT: Final = "Copier le planning local vers OneDrive…"
 PLANNING_COPY_RUNNING_TEXT: Final = "Copie en cours…"
@@ -158,6 +171,8 @@ class SettingsDialog(QDialog):
     planning_team_requested = Signal()
     # Copies this poste's local planning into the OneDrive folder given, at once.
     planning_copy_requested = Signal(str)
+    outlook_connect_requested = Signal(str)
+    """« Connecter le calendrier Outlook »: the permission, then the calendar named."""
 
     def __init__(
         self,
@@ -263,16 +278,14 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "Planning",
-                "Indiquez le nom du dossier OneDrive du planning ou choisissez le stockage local.",
+                "Indiquez le nom du dossier OneDrive du planning.",
             )
             return False
         if not self.planning_sharepoint_radio.isChecked():
             return True
         site = self.planning_site_edit.text().strip()
         if not site:
-            message = (
-                "Indiquez l'adresse du site SharePoint du planning ou choisissez le stockage local."
-            )
+            message = "Indiquez l'adresse du site SharePoint du planning ou choisissez OneDrive."
         elif not site.lower().startswith(SHAREPOINT_URL_PREFIX):
             message = "L'adresse du site SharePoint commence par https://."
         else:
@@ -475,6 +488,9 @@ class SettingsDialog(QDialog):
         config.sharepoint_list_name = list_name
         config.backend = self.selected_planning_backend()
         config.onedrive_folder = self.planning_onedrive_edit.text()
+        config.outlook_sync = self.planning_outlook_check.isChecked()
+        config.outlook_calendar = self.planning_outlook_edit.text()
+        config.outlook_hide_details = self.planning_outlook_hide.isChecked()
         config.default_view = _choice(
             PLANNING_VIEWS,
             self.planning_view_choice.current(),
@@ -531,6 +547,7 @@ class SettingsDialog(QDialog):
         column.setSpacing(16)
         self._planning_identity(column, config, current)
         self._planning_storage(column, current)
+        self._planning_outlook(column, current)
         column.addWidget(label("Équipe du planning", "h5"))
         team = BlueprintFrame(padding=(16, 12, 16, 12), layout="h", spacing=14)
         team.box.addWidget(
@@ -616,31 +633,19 @@ class SettingsDialog(QDialog):
 
     def _planning_storage(self, column: QVBoxLayout, current: PlanningPosteConfig) -> None:
         column.addWidget(label("Stockage du planning", "h5"))
-        self.planning_local_radio = QRadioButton("Local (ce poste uniquement)")
         self.planning_onedrive_radio = QRadioButton("OneDrive (partagé, recommandé)")
         self.planning_sharepoint_radio = QRadioButton(
             "SharePoint (autorisation administrateur requise)",
         )
         self._planning_storage_buttons = QButtonGroup(self)
         for radio in (
-            self.planning_local_radio,
             self.planning_onedrive_radio,
             self.planning_sharepoint_radio,
         ):
             self._planning_storage_buttons.addButton(radio)
-        self.planning_onedrive_radio.setChecked(current.backend == "onedrive")
         self.planning_sharepoint_radio.setChecked(current.backend == "sharepoint")
-        self.planning_local_radio.setChecked(current.backend == "local")
+        self.planning_onedrive_radio.setChecked(current.backend != "sharepoint")
         self._planning_local_directory = current.local_store_directory()
-        column.addWidget(self.planning_local_radio)
-        local_path = label(
-            f"Dossier : {native_path_text(self._planning_local_directory)}",
-            "small",
-            wrap=True,
-            selectable=True,
-        )
-        local_path.setContentsMargins(26, 0, 0, 0)
-        column.addWidget(local_path)
 
         column.addWidget(self.planning_onedrive_radio)
         self.planning_onedrive_edit = QLineEdit(current.onedrive_folder)
@@ -674,6 +679,8 @@ class SettingsDialog(QDialog):
         onedrive_fields.addWidget(self.planning_copy_status)
         column.addWidget(self.planning_onedrive_fields)
         self._planning_has_local = has_documents(self._planning_local_directory)
+        # Only a poste that kept a planning of its own, from before OneDrive, can copy it.
+        self.planning_copy_button.setVisible(self._planning_has_local)
         self._planning_copying = False
 
         column.addWidget(self.planning_sharepoint_radio)
@@ -700,12 +707,79 @@ class SettingsDialog(QDialog):
             radio.toggled.connect(self._planning_storage_changed)
         self.planning_onedrive_edit.textChanged.connect(self._refresh_planning_copy)
 
+    def _planning_outlook(self, column: QVBoxLayout, current: PlanningPosteConfig) -> None:
+        column.addWidget(label("Calendrier Outlook (téléphones)", "h5"))
+        self.planning_outlook_check = QCheckBox(
+            "Copier le planning dans le calendrier Outlook depuis ce poste"
+        )
+        self.planning_outlook_check.setChecked(current.outlook_sync)
+        column.addWidget(self.planning_outlook_check)
+        self.planning_outlook_edit = QLineEdit(current.outlook_calendar)
+        self.planning_outlook_edit.setPlaceholderText(DEFAULT_OUTLOOK_CALENDAR)
+        column.addWidget(
+            field(
+                "Calendrier",
+                self.planning_outlook_edit,
+                help_text="Dans le compte Microsoft connecté ; créé s'il n'existe pas.",
+            ),
+        )
+        self.planning_outlook_hide = QCheckBox("Ne pas copier les clients, les lieux et les notes")
+        self.planning_outlook_hide.setChecked(current.outlook_hide_details)
+        column.addWidget(self.planning_outlook_hide)
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        self.planning_outlook_button = button(OUTLOOK_CONNECT_TEXT)
+        self.planning_outlook_button.setToolTip(
+            "Demande une fois à Microsoft l'accès aux calendriers du compte connecté "
+            "(Calendars.ReadWrite), puis prépare le calendrier."
+        )
+        self.planning_outlook_button.clicked.connect(self._request_outlook_connect)
+        row.addWidget(self.planning_outlook_button)
+        row.addStretch(1)
+        column.addLayout(row)
+        self.planning_outlook_status = label("", "small", wrap=True)
+        self.planning_outlook_status.setVisible(False)
+        column.addWidget(self.planning_outlook_status)
+        self.planning_outlook_help = label(OUTLOOK_HELP_TEXT, "muted", wrap=True)
+        column.addWidget(self.planning_outlook_help)
+        self._outlook_available = True
+
+    def set_outlook_available(self, *, available: bool) -> None:
+        """Without Microsoft (the demo), the copy to Outlook is shown but not offered."""
+        self._outlook_available = available
+        for widget in (
+            self.planning_outlook_check,
+            self.planning_outlook_edit,
+            self.planning_outlook_hide,
+            self.planning_outlook_button,
+        ):
+            widget.setEnabled(available)
+        if not available:
+            self.planning_outlook_status.setText("Non disponible en mode démo.")
+            self.planning_outlook_status.setVisible(True)
+
+    def _request_outlook_connect(self) -> None:
+        if not self._outlook_available:
+            return
+        self.planning_outlook_button.setEnabled(False)
+        self.planning_outlook_button.setText(OUTLOOK_CONNECT_RUNNING_TEXT)
+        self.planning_outlook_status.setVisible(False)
+        self.outlook_connect_requested.emit(self.planning_outlook_edit.text())
+
+    def outlook_connect_finished(self, message: str, *, connected: bool) -> None:
+        """Show how the connection went; the button can be used again."""
+        self.planning_outlook_button.setEnabled(self._outlook_available)
+        self.planning_outlook_button.setText(OUTLOOK_CONNECT_TEXT)
+        self.planning_outlook_status.setText(message)
+        self.planning_outlook_status.setProperty("tone", "" if connected else "error")
+        self.planning_outlook_status.style().unpolish(self.planning_outlook_status)
+        self.planning_outlook_status.style().polish(self.planning_outlook_status)
+        self.planning_outlook_status.setVisible(bool(message))
+
     def selected_planning_backend(self) -> PlanningBackendName:
-        if self.planning_onedrive_radio.isChecked():
-            return "onedrive"
         if self.planning_sharepoint_radio.isChecked():
             return "sharepoint"
-        return "local"
+        return "onedrive"
 
     def _planning_storage_changed(self) -> None:
         sharepoint = self.planning_sharepoint_radio.isChecked()

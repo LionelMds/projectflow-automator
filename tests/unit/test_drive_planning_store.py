@@ -853,7 +853,6 @@ def test_cache_key_follows_the_drive_and_the_folder() -> None:
         ).cache_key()
         != key
     )
-    assert PlanningPosteConfig(backend="local").cache_key().startswith("local-")
 
 
 def test_onedrive_folder_defaults_and_is_normalised() -> None:

@@ -1,4 +1,4 @@
-"""Settings, Planning section: the three storages and the copy of the local planning."""
+"""Settings, Planning section: OneDrive or SharePoint, and the copy of a local planning."""
 
 from __future__ import annotations
 
@@ -30,18 +30,28 @@ async def _local_planning(tmp_path: Path) -> None:
     await store.create("task", "a", {"id": "a", "title": "Pose"})
 
 
-def test_storage_offers_local_onedrive_and_sharepoint(qtbot: Any, tmp_path: Path) -> None:
+def test_storage_offers_onedrive_and_sharepoint(qtbot: Any, tmp_path: Path) -> None:
     dialog = _dialog(qtbot, _poste(tmp_path))
 
-    assert dialog.planning_local_radio.text() == "Local (ce poste uniquement)"
+    assert not hasattr(dialog, "planning_local_radio")
     assert dialog.planning_onedrive_radio.text() == "OneDrive (partagé, recommandé)"
     assert (
         dialog.planning_sharepoint_radio.text()
         == "SharePoint (autorisation administrateur requise)"
     )
-    assert dialog.planning_local_radio.isChecked()
-    assert dialog.planning_onedrive_fields.isHidden()
+    assert dialog.planning_onedrive_radio.isChecked()
+    assert not dialog.planning_onedrive_fields.isHidden()
     assert dialog.planning_sharepoint_fields.isHidden()
+
+
+def test_a_poste_set_to_the_former_local_store_opens_on_onedrive(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    planning = PlanningPosteConfig.model_validate({"backend": "local"})
+    assert planning.backend == "onedrive"
+    dialog = _dialog(qtbot, planning)
+    assert dialog.planning_onedrive_radio.isChecked()
 
 
 def test_onedrive_shows_its_folder_and_note_without_consent_banner(
@@ -87,9 +97,9 @@ def test_apply_to_planning_config_writes_the_onedrive_choice(qtbot: Any, tmp_pat
     assert planning.onedrive_drive_id == "b!drive"
     assert planning.cache_key().startswith("onedrive-")
 
-    dialog.planning_local_radio.click()
+    dialog.planning_sharepoint_radio.click()
     dialog.apply_to_planning_config(planning)
-    assert planning.backend == "local"
+    assert planning.backend == "sharepoint"
     assert planning.onedrive_folder == "Planning atelier"
 
 
@@ -111,7 +121,7 @@ def test_onedrive_without_folder_is_refused(
 
     assert dialog.result() != QDialog.DialogCode.Accepted
     assert warnings == [
-        "Indiquez le nom du dossier OneDrive du planning ou choisissez le stockage local.",
+        "Indiquez le nom du dossier OneDrive du planning.",
     ]
 
 
@@ -121,6 +131,7 @@ def test_copy_button_needs_a_local_planning(qtbot: Any, tmp_path: Path) -> None:
 
     assert dialog.planning_copy_button.text() == "Copier le planning local vers OneDrive…"
     assert not dialog.planning_copy_button.isEnabled()
+    assert dialog.planning_copy_button.isHidden()
 
 
 def test_copy_button_asks_for_the_copy_and_shows_its_outcome(

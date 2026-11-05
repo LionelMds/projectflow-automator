@@ -27,6 +27,8 @@ PLANNER_GRAPH_SCOPES = (
     "GroupMember.Read.All",
 )
 PLANNING_GRAPH_SCOPES = ("Sites.ReadWrite.All",)
+OUTLOOK_GRAPH_SCOPES = ("Calendars.ReadWrite",)
+"""The calendars of the signed-in account only: the copy of the planning for the phones."""
 # Browser sign-in that is never completed must not block every Graph operation.
 INTERACTIVE_TIMEOUT_SECONDS = 300
 SIGN_IN_HINT = "cliquez sur « Se connecter a Microsoft » en haut de la fenetre ProjectFlow"

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
-from collections.abc import Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import replace
 from datetime import date
 from functools import wraps
@@ -30,7 +31,10 @@ from projectflow.core.numero import (
     project_folder_name,
 )
 from projectflow.core.planning.copy import CopyReport, copy_planning
-from projectflow.core.planning.poste_config import PlanningPosteConfig
+from projectflow.core.planning.local_store import LocalPlanningStore
+from projectflow.core.planning.outlook_sync import CalendarGateway
+from projectflow.core.planning.poste_config import DEFAULT_OUTLOOK_CALENDAR, PlanningPosteConfig
+from projectflow.core.planning.quick_entry import ProjectInfo
 from projectflow.core.planning.store import PlanningStore
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireRow, RepertoireService, RepertoireSnapshot
@@ -41,7 +45,6 @@ from projectflow.graph.planner import GraphPlannerClient
 from projectflow.graph.workbook_opening import excel_document_uri
 from projectflow.logging import get_logger, redact_sensitive_links
 from projectflow.platform.filemanager import open_excel_uri, open_file_default_app, open_path
-from projectflow.platform.paths import data_dir
 from projectflow.platform.printing import print_workbook_a4
 from projectflow.platform.sync_paths import is_excel_recovery_copy
 from projectflow.services import ServiceContainer, resolve_repertoire_open_url, uses_microsoft
@@ -123,6 +126,10 @@ def _exclusive_action(
     return guarded
 
 
+_CONCERNE_RE = re.compile(r"^\s*concerne\s*:\s*", re.IGNORECASE)
+"""« Concerne : » that opens the designation of the older fiches."""
+
+
 class ClientSuggestionsTarget(Protocol):
     def data(self) -> CreationFormData:
         """Return current creation form values."""
@@ -142,6 +149,12 @@ class ServiceProvider(Protocol):
         """Return project service."""
 
 
+class OutlookCalendarFactory(Protocol):
+    """``ServiceContainer.open_outlook_calendar``: the browser opens only if interactive."""
+
+    def __call__(self, *, interactive: bool = False) -> Awaitable[CalendarGateway]: ...
+
+
 class ProjectFlowController:
     def __init__(
         self,
@@ -153,14 +166,20 @@ class ProjectFlowController:
         planning_config: PlanningPosteConfig | None = None,
         planning_store_factory: PlanningStoreFactory | None = None,
         save_planning_config: Callable[[PlanningPosteConfig], None] | None = None,
+        outlook_calendar_factory: OutlookCalendarFactory | None = None,
     ) -> None:
-        """Without ``planning_config`` and ``planning_store_factory`` the planning stays off."""
+        """Without ``planning_config`` and ``planning_store_factory`` the planning stays off.
+
+        ``outlook_calendar_factory`` opens the Outlook calendars (the copy of the planning
+        for the phones); without it that copy is not offered.
+        """
         self._window = window
         self._config = config
         self._services = services or ServiceContainer(config, interactive_sign_in=False)
         self._save_config = save_config
         self._planning_store_factory = planning_store_factory
         self._save_planning_config = save_planning_config
+        self._outlook_calendar_factory = outlook_calendar_factory
         self._planning: PlanningController | None = None
         self._planning_started = False
         # Planning work is logged, never shown as an error dialog, and is closed apart:
@@ -306,6 +325,74 @@ class ProjectFlowController:
             ask=self._ask,
             log=self._log,
             save_config=self._store_planning_config,
+            find_project=self._find_older_project,
+            open_outlook_calendar=(
+                self._open_outlook_calendar if self._outlook_calendar_factory else None
+            ),
+        )
+
+    async def _open_outlook_calendar(self) -> CalendarGateway:
+        factory = self._outlook_calendar_factory
+        if factory is None:
+            raise ProjectFlowError("Calendrier Outlook indisponible sur ce poste.")
+        return await factory(interactive=False)
+
+    async def connect_outlook_calendar(self, dialog: SettingsDialog, name: str) -> None:
+        """Ask Microsoft for the calendar permission (once), then find or create ``name``."""
+        factory = self._outlook_calendar_factory
+        if factory is None:
+            dialog.outlook_connect_finished("Calendrier Outlook indisponible.", connected=False)
+            return
+        calendar = " ".join(name.split()) or DEFAULT_OUTLOOK_CALENDAR
+        try:
+            gateway = await factory(interactive=True)
+            await gateway.ensure_calendar(calendar)
+        except ProjectFlowError as exc:
+            self._log(f"-> Calendrier Outlook : {exc}")
+            dialog.outlook_connect_finished(f"Connexion impossible : {exc}", connected=False)
+            return
+        except Exception:
+            dialog.outlook_connect_finished("Connexion interrompue.", connected=False)
+            raise
+        self._log(f"+ Calendrier Outlook « {calendar} » prêt.")
+        dialog.outlook_connect_finished(
+            f"Calendrier « {calendar} » prêt. Cochez la copie, enregistrez, puis publiez-le "
+            "depuis Outlook sur le web.",
+            connected=True,
+        )
+
+    async def _find_older_project(self, number_text: str) -> ProjectInfo | None:
+        """Details of a dossier of any year, read from the fiche of its folder.
+
+        The répertoire holds only the last years; an older dossier keeps its fiche
+        (``Fiche dossier clients.xlsx``) in its folder of the projects root.
+        """
+        try:
+            number = parse_project_number(number_text)
+            project_dir = self._project_dir(number)
+        except (ValueError, ProjectFlowError):
+            return None
+        fiche = self._services.fiche()
+
+        def read() -> FicheData | None:
+            if not project_dir.is_dir():
+                return None
+            path = standard_fiche_path(project_dir, number)
+            if not path.exists():
+                path = fiche.locate_fiche(project_dir, number)
+            return fiche.read_fiche(path)
+
+        try:
+            data = await run_file_io(read)
+        except (ProjectFlowError, OSError, ValueError):
+            return None
+        if data is None or not (data.designation or data.societe):
+            return None
+        return ProjectInfo(
+            number=number_text.strip(),
+            client=data.societe,
+            contact=data.contact,
+            designation=_CONCERNE_RE.sub("", data.designation).strip(),
         )
 
     def _deferred(self, action: Callable[[str], None]) -> Callable[[str], None]:
@@ -1638,6 +1725,10 @@ class ProjectFlowController:
         if planning is not None:
             # The shared roster is applied at once, in its own dialog, never on OK.
             dialog.planning_team_requested.connect(planning.open_team_dialog)
+            dialog.set_outlook_available(available=self._outlook_calendar_factory is not None)
+            dialog.outlook_connect_requested.connect(
+                lambda name: self._schedule_planning(self.connect_outlook_calendar(dialog, name)),
+            )
             dialog.planning_copy_requested.connect(
                 lambda folder: self._schedule_planning(
                     self._copy_planning_to_onedrive(dialog, folder),
@@ -1697,14 +1788,13 @@ class ProjectFlowController:
         factory = self._planning_store_factory
         if planning is None or factory is None:
             raise ProjectFlowError("Planning non disponible sur ce poste.")
-        source_config = planning.poste_config.model_copy(deep=True)
-        source_config.backend = "local"
+        source_directory = planning.poste_config.local_store_directory()
         target_config = planning.poste_config.model_copy(deep=True)
         target_config.backend = "onedrive"
         target_config.onedrive_folder = folder
         stores: list[PlanningStore] = []
         try:
-            stores.append(await factory(source_config))
+            stores.append(LocalPlanningStore(source_directory))
             stores.append(await factory(target_config))
             source, target = stores
             preview = await copy_planning(source, target, dry_run=True)
@@ -2264,50 +2354,18 @@ def _resolved_ids(config: PlanningPosteConfig) -> tuple[str, str, str]:
 def planning_reset_notice(config: PlanningPosteConfig | None) -> tuple[str, str]:
     """Say what « Tout reinitialiser » does to the planning: lines erased, then what stays.
 
-    The reset keeps the default local planning store (``reset_local_data``). Only a local
-    planning kept in another folder of ``data_dir()`` would go with the rest of the data.
+    The shared planning (OneDrive or SharePoint) is never touched; the reset keeps the
+    local planning kept on this poste from before OneDrive (``reset_local_data``).
     """
-    root = data_dir()
     default_store = PlanningPosteConfig(local_directory="").local_store_directory()
-    local = config is None or config.backend == "local"
-    store = config.local_store_directory() if config is not None and local else default_store
-    is_default = _same_path(store, default_store)
-    erased = ""
-    if local and not is_default and _is_inside(store, root) and _holds_files(store):
-        erased = (
-            f"- le planning enregistre dans {store} (taches, personnes, absences) : il "
-            "n'existe nulle part ailleurs et sera definitivement perdu ;\n"
-        )
     kept_local = (
         " Le planning enregistre sur ce poste (taches, personnes, absences) est conserve."
         if _holds_files(default_store)
         else ""
     )
-    if not local:
-        erased += "- les reglages du planning de ce poste et sa copie locale ;\n"
-        shared = "OneDrive" if config is not None and config.backend == "onedrive" else "SharePoint"
-        return erased, f" Le planning partage sur {shared} n'est pas touche." + kept_local
-    erased += "- les reglages du planning de ce poste (identite, stockage, affichage) ;\n"
-    if is_default or _is_inside(store, root):
-        return erased, kept_local
-    return erased, (
-        f" Le planning du dossier {store} n'est pas touche : indiquez ce dossier de nouveau "
-        "dans Parametres > Planning apres le redemarrage."
-    )
-
-
-def _same_path(first: Path, second: Path) -> bool:
-    try:
-        return first.resolve() == second.resolve()
-    except OSError:
-        return first == second
-
-
-def _is_inside(path: Path, root: Path) -> bool:
-    try:
-        return path.resolve().is_relative_to(root.resolve())
-    except OSError:
-        return False
+    erased = "- les reglages du planning de ce poste et sa copie locale ;\n"
+    shared = "SharePoint" if config is not None and config.backend == "sharepoint" else "OneDrive"
+    return erased, f" Le planning partage sur {shared} n'est pas touche." + kept_local
 
 
 def _holds_files(directory: Path) -> bool:
