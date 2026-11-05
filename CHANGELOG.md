@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.66
+
 - Nouvel onglet `Planning` : une ligne par employe ou sous-traitant, vues jour / semaine /
   mois a la demi-heure, horaires 06:30-12:00 et 13:00-16:30 (vendredi jusqu'a 12:00), feries
   GE et VD, sans samedi ni dimanche. Les taches se posent, s'etirent et se deplacent a la
