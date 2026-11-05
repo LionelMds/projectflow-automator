@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.70
+
+- Dossiers numerotes a la main (`2024-4493-A1`, `2026-5102-REV03`, `2026-5102 REV03`,
+  tiret typographique, espaces) : ils apparaissent dans le repertoire, s'ouvrent et sont
+  retrouves par le planning et la saisie rapide. La creation d'un sous-projet reste numerique.
+
 ## 0.1.69
 
 - Planning : plus de petite fenetre « + ajouter » ouverte a part au lancement.
