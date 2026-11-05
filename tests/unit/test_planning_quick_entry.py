@@ -1659,3 +1659,16 @@ def test_fuzzed_entries_are_consistent() -> None:
         problems.extend(f"{name}: {text!r} {cell}" for name, ok in checks.items() if not ok)
 
     assert problems == []
+
+
+def test_a_hand_written_suffix_finds_its_dossier() -> None:
+    projects = {
+        "2024-4493-A1": ProjectInfo("2024-4493-A1", "AIG", "", "Habillage lot A1", ""),
+        "2026-5102-REV03": ProjectInfo("2026-5102-REV03", "Coop", "", "Auvent rév. 3", ""),
+    }
+    found = parse("2024-4493-a1 pose", find_project=projects.get)
+    assert found.project_number == "2024-4493-A1"
+    assert found.project is not None
+    revised = parse("5102-rev03 pose", find_project=projects.get)
+    assert revised.project_number == "2026-5102-REV03"
+    assert parse("118-2 pose").project_number == "2026-118-2"

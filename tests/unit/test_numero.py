@@ -4,8 +4,10 @@ import pytest
 
 from projectflow.core.numero import (
     ProjectNumber,
+    canonical_project_number,
     format_project_number,
     is_main_project_number,
+    is_project_number,
     next_project_id,
     parse_project_number,
     project_folder_name,
@@ -69,7 +71,7 @@ def test_parse_project_number_parses_subproject() -> None:
     assert str(number.parent) == "2026-4995"
 
 
-@pytest.mark.parametrize("value", ["2026-12", "2026-4995-A", "202-4995", "2026/4995"])
+@pytest.mark.parametrize("value", ["2026-12", "202-4995", "2026/4995", "Total"])
 def test_parse_project_number_rejects_invalid_values(value: str) -> None:
     with pytest.raises(ProjectNumberError):
         parse_project_number(value)
@@ -90,3 +92,28 @@ def test_next_project_id_uses_main_projects_for_given_year() -> None:
 
 def test_next_project_id_returns_none_when_year_has_no_projects() -> None:
     assert next_project_id(["2025-8000"], year=2026) is None
+
+
+@pytest.mark.parametrize(
+    ("typed", "number"),
+    [
+        ("2024-4493-A1", "2024-4493-A1"),
+        ("2026-5102-REV03", "2026-5102-REV03"),
+        ("2026-5102 REV03", "2026-5102-REV03"),
+        ("2026-5102_rev03", "2026-5102-REV03"),
+        ("2024 \u2013 4493 a1", "2024-4493-A1"),  # typographic dash
+        (" 2026-118-02 ", "2026-118-2"),
+        ("2026-4995-A", "2026-4995-A"),
+    ],
+)
+def test_hand_written_numbers_are_still_dossiers(typed: str, number: str) -> None:
+    assert canonical_project_number(typed) == number
+    assert is_project_number(typed)
+    parsed = parse_project_number(typed)
+    assert str(parsed) == number
+    assert project_folder_name(parsed) == number.rsplit("-", number.count("-") - 1)[0]
+
+
+def test_text_that_is_no_number_stays_as_it_is() -> None:
+    assert canonical_project_number("  Total  ") == "Total"
+    assert not is_project_number("202-3502-2")

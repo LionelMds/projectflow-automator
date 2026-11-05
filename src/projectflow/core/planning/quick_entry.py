@@ -307,7 +307,10 @@ _DAY_RE = re.compile(
 )
 _FLAG_WORD_RE = re.compile(r"(?P<w>urgente?|provisoire)" + _END)
 _NIGHT_RE = re.compile(r"(?:de\s+)?nuit" + _END)
-_DOSSIER_RE = re.compile(r"(?:(?P<y>\d{4})-)?(?P<n>\d{3,4})(?:-(?P<s>\d{1,2}))?" + _END)
+_DOSSIER_RE = re.compile(
+    r"(?:(?P<y>\d{4})-)?(?P<n>\d{3,4})(?:-(?P<s>\d{1,2}|[a-z]*\d+[a-z0-9]*))?" + _END
+)
+"""``118``, ``2026-118-2``, ``2024-4493-a1``, ``5102-rev03`` (a letter suffix holds a digit)."""
 _BOLT_RE = re.compile(r"m\d{1,2}")
 _TEXT_WORDS_RE = re.compile(r"[^\W_]+")
 _SPACES_RE = re.compile(r"\s+")
@@ -1381,7 +1384,7 @@ class _Parser:
     def _find_project(
         self, year: str | None, number: str, sub: str | None
     ) -> tuple[str, ProjectInfo | None]:
-        suffix = f"-{int(sub)}" if sub else ""
+        suffix = (f"-{int(sub)}" if sub.isdigit() else f"-{sub.upper()}") if sub else ""
         default_year = self.context.default_year
         years = (int(year),) if year else (default_year, default_year - 1)
         for candidate_year in years:

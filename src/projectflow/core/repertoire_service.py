@@ -15,7 +15,7 @@ from projectflow.core.duplication import (
     project_info_columns_empty,
 )
 from projectflow.core.models import ProjectInput
-from projectflow.core.numero import ProjectNumber, parse_project_number
+from projectflow.core.numero import ProjectNumber, is_project_number, parse_project_number
 from projectflow.exceptions import ProjectCreationError
 
 MAIN_PROJECT_RE = re.compile(r"^(\d{4})-(\d+)$")
@@ -108,7 +108,7 @@ class RepertoireService:
                     ),
                 )
                 for index, row in enumerate(rows)
-                if PROJECT_ROW_RE.fullmatch(_cell_as_text(row, 0))
+                if is_project_number(_cell_as_text(row, 0))
             )
             return RepertoireSnapshot(
                 year=year,

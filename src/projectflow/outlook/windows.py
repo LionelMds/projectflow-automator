@@ -15,7 +15,9 @@ OL_FOLDER_DELETED_ITEMS = 3
 OL_FOLDER_JUNK = 23
 # Deep enough for "Boite de reception/00-Archives/2026/<projet>" and a few more levels.
 MAX_PROJECT_SEARCH_DEPTH = 6
-PROJECT_FOLDER_RE = re.compile(r"^(?P<number>\d{4}-\d+(?:-\d+)?)(?:\s|\(|$)")
+PROJECT_FOLDER_RE = re.compile(
+    r"^(?P<number>\d{4}-\d+(?:-(?:\d+|[A-Za-z]*\d+[A-Za-z0-9]*))?)(?:\s|\(|$)"
+)
 
 
 class WindowsLocalOutlookClient:

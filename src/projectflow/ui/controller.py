@@ -2376,9 +2376,9 @@ def _next_subproject_id(parent: ProjectNumber, rows: Sequence[RepertoireRow]) ->
             number = parse_project_number(row.number)
         except ValueError:
             continue
-        if number.parent != parent or number.subproject_id is None:
-            continue
-        used_ids.add(int(number.subproject_id))
+        if number.parent != parent or not (number.subproject_id or "").isdigit():
+            continue  # « -A1 », « -REV03 » written by hand take no number
+        used_ids.add(int(number.subproject_id or "0"))
     candidate = 2
     while candidate in used_ids:
         candidate += 1

@@ -28,6 +28,7 @@ from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMenu, QWidget
 
+from projectflow.core.numero import canonical_project_number
 from projectflow.core.planning import commands
 from projectflow.core.planning.cache import PlanningCache
 from projectflow.core.planning.calendar import WorkCalendar
@@ -316,6 +317,7 @@ def project_from_row(values: Sequence[object], year: int | None = None) -> Proje
     cells = ["" if value is None else str(value).strip() for value in values[:REPERTOIRE_COLUMNS]]
     cells += [""] * (REPERTOIRE_COLUMNS - len(cells))
     number, _created, client, contact, designation = cells
+    number = canonical_project_number(number)
     if year is not None and year < FIRST_DETAILED_YEAR:
         client, contact, designation = "", "", cells[2]
     if not number or not (client or contact or designation):
@@ -2932,7 +2934,7 @@ class PlanningController:
     # -- dossiers -------------------------------------------------------------
 
     def _find_project(self, number: str) -> ProjectInfo | None:
-        clean = number.strip()
+        clean = canonical_project_number(number)
         found = self._projects.get(clean)
         if found is None and clean:
             self._want_project(clean)
