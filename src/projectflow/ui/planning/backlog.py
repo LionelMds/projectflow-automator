@@ -474,7 +474,9 @@ def _card(
         name = person.name if person is not None else resource_id
         chips.append(CardChip(text, "foreseen", f"Pressenti : {name}"))
     if task.deadline is not None:
-        chip_kind: ChipKind = state if state in {"late", "soon"} else "deadline"  # type: ignore[assignment]
+        chip_kind: ChipKind = (
+            "late" if state == "late" else "soon" if state == "soon" else "deadline"
+        )
         chips.append(
             CardChip(
                 f"avant {short_day(task.deadline, today=today)}",
