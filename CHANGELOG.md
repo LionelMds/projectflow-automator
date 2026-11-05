@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.67
+
+- Reprise de la version 0.1.66 (onglet `Planning`), dont la publication avait echoue sur une
+  verification de types ; aucun changement fonctionnel.
+
 ## 0.1.66
 
 - Nouvel onglet `Planning` : une ligne par employe ou sous-traitant, vues jour / semaine /
