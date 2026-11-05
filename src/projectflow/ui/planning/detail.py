@@ -824,6 +824,10 @@ class DetailPanel(QWidget):
         self.people_box = QWidget()
         self.people_flow = FlowLayout(self.people_box, spacing=4)
         self.add_person_button = button("+ ajouter", "chip")
+        # In its box from the start: shown before the first task, a widget without parent
+        # would open as a tiny window of its own.
+        self.add_person_button.setParent(self.people_box)
+        self.people_flow.addWidget(self.add_person_button)
         self.add_person_button.setToolTip("Ajouter une personne")
         self.add_person_button.clicked.connect(self._start_adding_person)
         self.person_edit = QLineEdit()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -23,11 +22,13 @@ from test_planning_controller import (  # type: ignore[import-not-found]
 
 from projectflow.core.planning.models import task_label
 from projectflow.core.planning.poste_config import PlanningPosteConfig
-from projectflow.core.planning.quick_entry import ProjectInfo
+from projectflow.core.repertoire_service import RepertoireRow, RepertoireSnapshot
 from projectflow.ui.planning.grid import EDGE_PUSH, WHEEL_NOTCH
 from projectflow.ui.planning.grid_model import MAX_LANE_HEIGHT, MAX_ZOOM, fitted_day_width
 from projectflow.ui.planning.planning_tab import PlanningTab
-from projectflow.ui.planning_controller import PlanningHooks
+from projectflow.ui.planning_controller import project_from_row
+
+OLD_YEAR = 2019
 
 # ---------------------------------------------------------------- pure parts ----
 
@@ -133,35 +134,49 @@ async def test_zoomed_week_scrolls_and_rows_grow(qtbot: Any, tmp_path: Path) -> 
 
 
 class OldHooks(Hooks):
+    """A répertoire with an older sheet laid out as before 2022 (designation in C)."""
+
     def __init__(self) -> None:
         super().__init__()
-        self.asked: list[str] = []
+        self.years: list[int] = []
 
-    async def find_project(self, number: str) -> ProjectInfo | None:
-        self.asked.append(number)
-        if number == "2019-3056":
-            return ProjectInfo(number=number, client="Efaflex", designation="Park moto")
-        return None
-
-    def build(self) -> PlanningHooks:
-        return replace(super().build(), find_project=self.find_project)
+    async def read_repertoire(self, year: int) -> RepertoireSnapshot:
+        self.years.append(year)
+        if year == OLD_YEAR:
+            row = RepertoireRow(
+                row_index=3,
+                values=("2019-3056", "43479", "EFAFLEX / Rolex - park moto", "", "1250"),
+            )
+            return RepertoireSnapshot(year=year, rows=(row,), next_available=None)
+        return await super().read_repertoire(year)
 
 
 @pytest.mark.asyncio
-async def test_an_older_dossier_is_found_from_its_fiche(qtbot: Any, tmp_path: Path) -> None:
+async def test_an_older_dossier_is_found_in_its_sheet(qtbot: Any, tmp_path: Path) -> None:
     store = tmp_path / "store"
     old = task("t-old", "2019-3056", "", at(WEEK, 7), at(WEEK, 10), ["psi"])
-    await seed_store(store, [*seed_documents(), old])
+    older = task("t-old-2", "2019-3056", "Pose", at(WEEK, 13), at(WEEK, 15), ["psi"])
+    await seed_store(store, [*seed_documents(), old, older])
     hooks = OldHooks()
     controller, tab, _ = make_controller(qtbot, make_config(store), hooks=hooks)
     await started(controller)
     await wait_for(lambda: "2019-3056" in controller.projects, poke=controller.refresh_now)
     controller.refresh_now()
     bars = tab.grid.model.bars_by_task["t-old"]
-    assert (bars[0].title, bars[0].client) == ("Park moto", "Efaflex")
-    assert hooks.asked.count("2019-3056") == 1
-    # Dossiers of the years read from the répertoire are never looked up one by one.
-    assert not any(number.startswith(("2026-", "2025-", "2024-")) for number in hooks.asked)
+    assert (bars[0].title, bars[0].client) == ("EFAFLEX / Rolex - park moto", "")
+    assert hooks.years.count(OLD_YEAR) == 1  # one sheet read once for all its dossiers
+    assert sorted(set(hooks.years)) == [2019, 2024, 2025, 2026]
     # Only what is drawn is filled in: the shared task keeps its own details.
     assert controller.service.snapshot.tasks["t-old"].project_cache.designation == ""
     await controller.aclose()
+
+
+def test_sheets_before_2022_hold_the_designation_in_column_c() -> None:
+    values = ("2019-3056", "43479", "EFAFLEX / park moto", "non", "1250")
+    old = project_from_row(values, 2019)
+    assert old is not None
+    assert (old.designation, old.client, old.contact) == ("EFAFLEX / park moto", "", "")
+    recent = project_from_row(("2022-3821", "44574", "Mairie", "M. X", "Marquise"), 2022)
+    assert recent is not None
+    assert (recent.designation, recent.client) == ("Marquise", "Mairie")
+    assert project_from_row(("2019-3057", "43479", "", "x", "y"), 2019) is None

@@ -132,8 +132,6 @@ class PlanningHooks:
     save_config: Callable[[PlanningPosteConfig], None] | None = None
     """Optional: keep the display choices of this poste (view, density, panel width…)
     where its settings live. Without it they change in ``poste_config`` only."""
-    find_project: Callable[[str], Awaitable[ProjectInfo | None]] | None = None
-    """Optional: details of a dossier older than the répertoire years read (its fiche)."""
     open_outlook_calendar: Callable[[], Awaitable[CalendarGateway]] | None = None
     """Optional: the Outlook calendars of the account, for the copy for the phones."""
 
@@ -146,7 +144,6 @@ PROJECTS_REFRESH_MS: Final = 10 * 60 * 1000
 PROJECTS_STALE_SECONDS: Final = 60.0
 PRELOADED_YEARS: Final = 3
 """Répertoire sheets read at the start: this year and the two before."""
-LOOKUPS_AT_ONCE: Final = 8
 OUTLOOK_DELAY_MS: Final = 8_000
 """Calm after the last change before the Outlook calendar is brought up to date."""
 OUTLOOK_REPAIR_MS: Final = 15 * 60 * 1000
@@ -176,6 +173,8 @@ NAME_LENGTH: Final = 56
 MAX_ADVANCE_DAYS: Final = 60
 DAY_VIEW_CELL_MINUTES: Final = 60
 REPERTOIRE_COLUMNS: Final = 5
+FIRST_DETAILED_YEAR: Final = 2022
+"""First répertoire sheet with Client, Contact and Désignation in C, D and E."""
 HTTP_UNAUTHORIZED: Final = 401
 HTTP_FORBIDDEN: Final = 403
 
@@ -307,12 +306,19 @@ def remote_verb(before: PlanningTask | None, after: PlanningTask | None) -> str:
     return "a réaffecté" if before.assignments != after.assignments else "a modifié"
 
 
-def project_from_row(values: Sequence[object]) -> ProjectInfo | None:
-    """Dossier of a répertoire row A:E (No., Date, Client, Contact, Désignation)."""
+def project_from_row(values: Sequence[object], year: int | None = None) -> ProjectInfo | None:
+    """Dossier of a répertoire row of the sheet of ``year``.
+
+    From 2022: A:E = No., Date, Client, Contact, Désignation. Before 2022 the sheets
+    have No., Date, « Nom du chantier » (« CLIENT / chantier »): column C is the
+    designation, without client nor contact.
+    """
     cells = ["" if value is None else str(value).strip() for value in values[:REPERTOIRE_COLUMNS]]
     cells += [""] * (REPERTOIRE_COLUMNS - len(cells))
     number, _created, client, contact, designation = cells
-    if not number or not any(cells[1:]):
+    if year is not None and year < FIRST_DETAILED_YEAR:
+        client, contact, designation = "", "", cells[2]
+    if not number or not (client or contact or designation):
         return None
     return ProjectInfo(number=number, client=client, contact=contact, designation=designation)
 
@@ -487,9 +493,10 @@ class PlanningController:
         self._projects: dict[str, ProjectInfo] = {}
         self._project_years: frozenset[int] = frozenset()
         self._older_projects: dict[str, ProjectInfo] = {}
-        """Dossiers of older years found from their fiche, kept for the session."""
-        self._looked_up: set[str] = set()
-        self._lookup_queue: set[str] = set()
+        """Dossiers of older répertoire sheets read on demand, kept for the session."""
+        self._older_years: set[int] = set()
+        """Older sheets already read (or found missing): never read twice."""
+        self._lookup_queue: set[int] = set()
         self._lookup_running = False
         self._projects_at: float | None = None
         self._projects_running = False
@@ -2932,17 +2939,18 @@ class PlanningController:
         return found
 
     def _want_project(self, number: str) -> None:
-        """Look ``number`` up (its fiche) when no répertoire read holds it."""
-        year = number[:4]
+        """Read the répertoire sheet of ``number``'s year when it was not read yet."""
+        prefix = number[:4]
         if (
-            self._hooks.find_project is None
-            or number in self._projects
-            or number in self._looked_up
-            or not (year.isdigit() and len(number) > len(year) and number[len(year)] == "-")
-            or int(year) in self._project_years
+            number in self._projects
+            or not (prefix.isdigit() and len(number) > len(prefix) and number[4] == "-")
+            or not self._project_years  # The last years are still being read.
         ):
             return
-        self._lookup_queue.add(number)
+        year = int(prefix)
+        if year in self._project_years or year in self._older_years:
+            return
+        self._lookup_queue.add(year)
         if not self._lookup_running and not self._closed:
             self._lookup_running = True
             self._hooks.schedule(self._lookup_projects())
@@ -2953,27 +2961,21 @@ class PlanningController:
                 self._want_project(task.project_number.strip())
 
     async def _lookup_projects(self) -> None:
-        """Read the fiche of the older dossiers asked for, a few at a time."""
-        finder = self._hooks.find_project
+        """Read the older répertoire sheets asked for, one year at a time."""
         found_any = False
         try:
-            while self._lookup_queue and finder is not None and not self._closed:
-                batch = sorted(self._lookup_queue)[:LOOKUPS_AT_ONCE]
-                for number in batch:
-                    self._lookup_queue.discard(number)
-                    self._looked_up.add(number)
-                    try:
-                        info = await finder(number)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:  # noqa: BLE001 - an unread fiche changes nothing
-                        get_logger(__name__).info(
-                            "planning.project.lookup_failed", error=type(exc).__name__
-                        )
-                        continue
-                    if info is not None and not self._closed:
-                        self._older_projects[number] = info
-                        self._projects.setdefault(number, info)
+            while self._lookup_queue and not self._closed:
+                year = max(self._lookup_queue)
+                self._lookup_queue.discard(year)
+                self._older_years.add(year)
+                snapshot = await self._read_year(year, past=True)
+                if snapshot is None or self._closed:
+                    continue
+                for row in snapshot.rows:
+                    info = project_from_row(tuple(row.values), year)
+                    if info is not None:
+                        self._older_projects.setdefault(info.number, info)
+                        self._projects.setdefault(info.number, info)
                         found_any = True
         finally:
             self._lookup_running = False
@@ -2993,7 +2995,8 @@ class PlanningController:
         if not self._project_years or clean in self._projects:
             return True
         year = clean[:4]
-        return not (year.isdigit() and int(year) in self._project_years)
+        read = self._project_years | (self._older_years - self._missing_years)
+        return not (year.isdigit() and int(year) in read)
 
     def _request_projects(self, *, force: bool = True) -> None:
         if self._projects_running or self._closed:
@@ -3022,7 +3025,7 @@ class PlanningController:
                     continue
                 years.append(wanted)
                 for row in snapshot.rows:
-                    info = project_from_row(tuple(row.values))
+                    info = project_from_row(tuple(row.values), wanted)
                     if info is not None:
                         found.setdefault(info.number, info)
             if years and not self._closed:

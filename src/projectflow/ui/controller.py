@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 import sys
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import replace
@@ -34,7 +33,6 @@ from projectflow.core.planning.copy import CopyReport, copy_planning
 from projectflow.core.planning.local_store import LocalPlanningStore
 from projectflow.core.planning.outlook_sync import CalendarGateway
 from projectflow.core.planning.poste_config import DEFAULT_OUTLOOK_CALENDAR, PlanningPosteConfig
-from projectflow.core.planning.quick_entry import ProjectInfo
 from projectflow.core.planning.store import PlanningStore
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireRow, RepertoireService, RepertoireSnapshot
@@ -124,10 +122,6 @@ def _exclusive_action(
                 controller._mutation_tasks.discard(task)  # noqa: SLF001
 
     return guarded
-
-
-_CONCERNE_RE = re.compile(r"^\s*concerne\s*:\s*", re.IGNORECASE)
-"""« Concerne : » that opens the designation of the older fiches."""
 
 
 class ClientSuggestionsTarget(Protocol):
@@ -325,7 +319,6 @@ class ProjectFlowController:
             ask=self._ask,
             log=self._log,
             save_config=self._store_planning_config,
-            find_project=self._find_older_project,
             open_outlook_calendar=(
                 self._open_outlook_calendar if self._outlook_calendar_factory else None
             ),
@@ -359,40 +352,6 @@ class ProjectFlowController:
             f"Calendrier « {calendar} » prêt. Cochez la copie, enregistrez, puis publiez-le "
             "depuis Outlook sur le web.",
             connected=True,
-        )
-
-    async def _find_older_project(self, number_text: str) -> ProjectInfo | None:
-        """Details of a dossier of any year, read from the fiche of its folder.
-
-        The répertoire holds only the last years; an older dossier keeps its fiche
-        (``Fiche dossier clients.xlsx``) in its folder of the projects root.
-        """
-        try:
-            number = parse_project_number(number_text)
-            project_dir = self._project_dir(number)
-        except (ValueError, ProjectFlowError):
-            return None
-        fiche = self._services.fiche()
-
-        def read() -> FicheData | None:
-            if not project_dir.is_dir():
-                return None
-            path = standard_fiche_path(project_dir, number)
-            if not path.exists():
-                path = fiche.locate_fiche(project_dir, number)
-            return fiche.read_fiche(path)
-
-        try:
-            data = await run_file_io(read)
-        except (ProjectFlowError, OSError, ValueError):
-            return None
-        if data is None or not (data.designation or data.societe):
-            return None
-        return ProjectInfo(
-            number=number_text.strip(),
-            client=data.societe,
-            contact=data.contact,
-            designation=_CONCERNE_RE.sub("", data.designation).strip(),
         )
 
     def _deferred(self, action: Callable[[str], None]) -> Callable[[str], None]:
