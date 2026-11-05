@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.69
+
+- Planning : plus de petite fenetre « + ajouter » ouverte a part au lancement.
+- Planning : un dossier plus ancien que les 3 dernieres annees est retrouve dans l'onglet de
+  son annee du repertoire (lu une fois pour tous ses dossiers) et non plus dans sa fiche.
+  Avant 2022, la designation est la colonne C (« Nom du chantier »).
+
 ## 0.1.68
 
 - Planning : le stockage `Local` disparait (son dossier differait d'un poste a l'autre) ; un
