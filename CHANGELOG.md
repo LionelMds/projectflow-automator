@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.71
+
 - Calendrier Outlook des telephones : nouvelle voie « Par l'Outlook de ce poste », sans
   autorisation d'administrateur. Le planning est ecrit par l'Outlook classique du poste dans
   le compte choisi (`Parametres > Planning > Compte Outlook`, bouton `Detecter`) ; la voie
