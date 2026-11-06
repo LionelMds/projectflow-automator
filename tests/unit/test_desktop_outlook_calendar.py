@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -237,7 +237,8 @@ async def test_events_are_written_found_changed_and_removed(outlook: FakeOutlook
     item = folder.appointments[0]
     assert (item.Subject, item.StartInStartTimeZone, item.ReminderSet) == (
         "2026-118 - Garde-corps",
-        datetime(2026, 11, 10, 6, 30),  # noqa: DTZ001 - wall time
+        # Marked UTC so that pywin32 hands 06:30 over unchanged (Outlook reads it as Swiss).
+        datetime(2026, 11, 10, 6, 30, tzinfo=UTC),
         False,
     )
     found = await gateway.list_events(calendar)
@@ -294,4 +295,43 @@ async def test_a_build_without_win32timezone_says_so_once(
     )
     with pytest.raises(OutlookError, match="win32timezone"):
         await gateway.ensure_calendar("Planning Balz Métal")
+    gateway.close()
+
+
+@pytest.mark.asyncio
+async def test_an_absence_stays_on_its_days(outlook: FakeOutlook) -> None:
+    gateway = DesktopOutlookCalendarGateway(
+        "lionel@balzmetalsa.onmicrosoft.com", app_factory=lambda: outlook
+    )
+    calendar = await gateway.ensure_calendar("Planning Balz Métal")
+    absence = EventSpec(
+        key="absence:a1:2026-11-11",
+        subject="Absent : Karim (Vacances)",
+        start=datetime(2026, 11, 11),  # noqa: DTZ001 - wall time
+        end=datetime(2026, 11, 13),  # noqa: DTZ001 - wall time
+        all_day=True,
+    )
+    await gateway.create_event(calendar, absence)
+    item = outlook.stores[2].calendar.Folders.items[0].appointments[0]
+    assert (item.AllDayEvent, item.Start, item.End) == (
+        True,
+        datetime(2026, 11, 11, tzinfo=UTC),
+        datetime(2026, 11, 13, tzinfo=UTC),
+    )
+    gateway.close()
+
+
+@pytest.mark.asyncio
+async def test_events_written_an_hour_early_are_written_again(outlook: FakeOutlook) -> None:
+    gateway = DesktopOutlookCalendarGateway(
+        "lionel@balzmetalsa.onmicrosoft.com", app_factory=lambda: outlook
+    )
+    calendar = await gateway.ensure_calendar("Planning Balz Métal")
+    await gateway.create_event(calendar, spec())
+    item = outlook.stores[2].calendar.Folders.items[0].appointments[0]
+    fingerprint = item.UserProperties.Find("ProjectFlowFingerprint")
+    assert fingerprint is not None
+    fingerprint.Value = spec().fingerprint  # as 0.1.71 and 0.1.72 wrote it
+    found = await gateway.list_events(calendar)
+    assert found["task:t1:2026-11-10"].fingerprint == ""
     gateway.close()

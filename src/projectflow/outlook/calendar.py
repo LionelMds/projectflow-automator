@@ -17,6 +17,7 @@ import asyncio
 import importlib
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from typing import Any, Final, TypeVar
 
 from projectflow.core.planning.outlook_sync import EventSpec, ExistingEvent
@@ -45,6 +46,10 @@ _PUBLIC_STRINGS: Final = (
 )
 _KEY_COLUMN: Final = f"{_PUBLIC_STRINGS}/{KEY_PROPERTY}/0x0000001f"
 _FINGERPRINT_COLUMN: Final = f"{_PUBLIC_STRINGS}/{FINGERPRINT_PROPERTY}/0x0000001f"
+FORMAT: Final = "2:"
+"""Written before the fingerprint. The events written by 0.1.71 and 0.1.72 lack it (their
+hours were one hour early, two in summer): their fingerprint reads as empty, so the next
+sync writes them again."""
 NO_MAILBOX_MESSAGE: Final = (
     "choisissez le compte Outlook du calendrier : Paramètres > Planning > Calendrier Outlook."
 )
@@ -162,7 +167,9 @@ class DesktopOutlookCalendarGateway:
             row = table.GetNextRow()
             key = _clean_text(row.Item(2))
             if key:
-                found[key] = ExistingEvent(_clean_text(row.Item(1)), _clean_text(row.Item(3)))
+                stored = _clean_text(row.Item(3))
+                fingerprint = stored.removeprefix(FORMAT) if stored.startswith(FORMAT) else ""
+                found[key] = ExistingEvent(_clean_text(row.Item(1)), fingerprint)
         return found
 
     def _create_event(self, calendar_id: str, spec: EventSpec) -> str:
@@ -197,17 +204,17 @@ class DesktopOutlookCalendarGateway:
         # Outlook snaps the times of a day event: say « all day » before the dates.
         item.AllDayEvent = spec.all_day
         if spec.all_day:
-            item.Start = spec.start
-            item.End = spec.end
+            item.Start = _com_time(spec.start)
+            item.End = _com_time(spec.end)
         else:
             zone = self._mapi().Application.TimeZones.Item(TIME_ZONE)
             item.StartTimeZone = zone
             item.EndTimeZone = zone
-            item.StartInStartTimeZone = spec.start
-            item.EndInEndTimeZone = spec.end
+            item.StartInStartTimeZone = _com_time(spec.start)
+            item.EndInEndTimeZone = _com_time(spec.end)
         item.BusyStatus = OL_TENTATIVE if spec.tentative else OL_BUSY
         item.ReminderSet = False
-        _set_property(item, FINGERPRINT_PROPERTY, spec.fingerprint)
+        _set_property(item, FINGERPRINT_PROPERTY, f"{FORMAT}{spec.fingerprint}")
         item.Save()
 
 
@@ -238,3 +245,14 @@ def _require_timezones() -> None:
         raise OutlookError(
             "module win32timezone absent de cette version : mettez ProjectFlow à jour."
         ) from exc
+
+
+def _com_time(value: datetime) -> datetime:
+    """``value`` as Outlook must receive it to keep the wall time.
+
+    pywin32 turns a datetime into UTC before handing it over, and Outlook reads what it
+    gets as a time of the zone of the appointment: 06:30 sent as is became 05:30 (04:30 in
+    summer) and an absence from midnight fell on the day before. Marked UTC, the wall time
+    goes through unchanged.
+    """
+    return value.replace(tzinfo=UTC)
