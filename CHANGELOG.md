@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Calendrier Outlook des telephones : nouvelle voie « Par l'Outlook de ce poste », sans
+  autorisation d'administrateur. Le planning est ecrit par l'Outlook classique du poste dans
+  le compte choisi (`Parametres > Planning > Compte Outlook`, bouton `Detecter`) ; la voie
+  Microsoft 365 reste disponible.
+
 ## 0.1.70
 
 - Dossiers numerotes a la main (`2024-4493-A1`, `2026-5102-REV03`, `2026-5102 REV03`,

@@ -462,14 +462,20 @@ création ou la sortie dossier.
 
 ### Calendrier Outlook et téléphones
 
-Le planning peut être copié, en lecture seule, dans un calendrier Outlook du compte partagé
-(`Planning Balz Métal` par défaut), que les téléphones suivent par un lien d'abonnement :
+Le planning peut être copié, en lecture seule, dans un calendrier Outlook (`Planning Balz
+Métal` par défaut), que les téléphones suivent par un lien d'abonnement :
 
 1. Sur un seul poste, allumé pendant la journée : `Paramètres > Planning > Calendrier
-   Outlook (téléphones)`, cliquer `Connecter le calendrier Outlook…` (Microsoft demande une
-   fois l'accès aux calendriers du compte, `Calendars.ReadWrite`), cocher `Copier le planning
-   dans le calendrier Outlook depuis ce poste`, puis `Enregistrer`.
-2. Une fois, avec le compte partagé sur outlook.office.com : `Paramètres > Calendrier >
+   Outlook (téléphones)`. Choisir la voie :
+   - `Par l'Outlook de ce poste` (sans administrateur) : Outlook classique doit être ouvert
+     sur ce poste. Indiquer dans `Compte Outlook` l'adresse qui reçoit le calendrier
+     (`Détecter` liste les comptes de cet Outlook, il en a souvent plusieurs).
+   - `Par Microsoft 365` : Microsoft demande une fois l'accès aux calendriers
+     (`Calendars.ReadWrite`), qu'un administrateur doit accorder.
+
+   Cliquer `Connecter le calendrier Outlook…` (le calendrier est créé s'il manque), cocher
+   `Copier le planning dans le calendrier Outlook depuis ce poste`, puis `Enregistrer`.
+2. Une fois, avec le compte du calendrier sur outlook.office.com : `Paramètres > Calendrier >
    Calendriers partagés > Publier un calendrier`, choisir ce calendrier et « Peut afficher
    tous les détails », `Publier`, puis copier le lien ICS.
 3. iPhone : `Réglages > Calendrier > Comptes > Ajouter un compte > Autre > Ajouter un

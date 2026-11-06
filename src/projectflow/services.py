@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +22,8 @@ from projectflow.core.fiche_service import FicheService
 from projectflow.core.local_repertoire import LocalWorkbookGateway
 from projectflow.core.models import ProjectInput
 from projectflow.core.planning.graph_backend import GraphPlanningBackend
-from projectflow.core.planning.poste_config import PlanningPosteConfig
+from projectflow.core.planning.outlook_sync import CalendarGateway
+from projectflow.core.planning.poste_config import OutlookRoute, PlanningPosteConfig
 from projectflow.core.planning.store import PlanningStore, StoreUnavailableError
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireService
@@ -40,6 +42,7 @@ from projectflow.graph.planning_store import (
 )
 from projectflow.graph.workbook_opening import resolve_workbook_open_url
 from projectflow.logging import get_logger
+from projectflow.outlook.calendar import NO_MAILBOX_MESSAGE, DesktopOutlookCalendarGateway
 from projectflow.outlook.local import create_local_outlook_client
 from projectflow.platform.filemanager import move_path_to_trash, pin_to_filemanager_favorites
 from projectflow.platform.sync_paths import is_synchronized_path
@@ -59,6 +62,10 @@ HTTP_SERVER_ERROR: Final = 500
 PLANNING_NO_CONNECTOR_MESSAGE: Final = (
     "Planning SharePoint indisponible : cette version de ProjectFlow n'embarque pas le "
     f"connecteur Microsoft. Choisissez le stockage local dans {PLANNING_SETTINGS_PLACE}."
+)
+OUTLOOK_DESKTOP_WINDOWS_MESSAGE: Final = (
+    "La copie par l'Outlook du poste demande Outlook classique sur Windows : choisissez "
+    "Microsoft 365 dans Paramètres > Planning."
 )
 OUTLOOK_NO_CONNECTOR_MESSAGE: Final = (
     "Calendrier Outlook indisponible : connexion Microsoft non configurée dans cette version."
@@ -107,6 +114,9 @@ class ServiceContainer:
     # False for headless requests: an expired session is reported, never prompted.
     interactive_sign_in: bool = True
     _graph_clients: list[GraphClient] = field(default_factory=list, init=False, repr=False)
+    _desktop_calendars: list[DesktopOutlookCalendarGateway] = field(
+        default_factory=list, init=False, repr=False
+    )
 
     def fiche(self) -> FicheService:
         if self.fiche_service is None:
@@ -199,8 +209,16 @@ class ServiceContainer:
             register_client=self._graph_clients.append,
         )
 
-    async def open_outlook_calendar(self, *, interactive: bool = False) -> OutlookCalendarGateway:
-        """Calendars of the account; its Graph client is closed with the others."""
+    async def open_outlook_calendar(
+        self, *, interactive: bool = False, via: OutlookRoute = "graph", mailbox: str = ""
+    ) -> CalendarGateway:
+        """Calendars of the account; its Graph client is closed with the others.
+
+        ``via="desktop"`` writes through the Outlook of this poste instead, in ``mailbox``:
+        no Microsoft permission to grant.
+        """
+        if via == "desktop":
+            return open_desktop_outlook_calendar(mailbox, register=self._desktop_calendars.append)
         return await open_outlook_calendar(
             interactive=interactive,
             application_settings=self.application_settings,
@@ -210,6 +228,9 @@ class ServiceContainer:
     async def close(self) -> None:
         """Close owned clients after the controller has settled its running tasks."""
         clients, self._graph_clients = self._graph_clients, []
+        calendars, self._desktop_calendars = self._desktop_calendars, []
+        for calendar in calendars:
+            calendar.close()
         results = await asyncio.gather(
             *(client.aclose() for client in clients), return_exceptions=True
         )
@@ -342,6 +363,22 @@ async def _open_onedrive_store(
         poste_config.onedrive_drive_id = folder.drive_id
         get_logger(__name__).info("planning.onedrive.resolved")
     return store
+
+
+def open_desktop_outlook_calendar(
+    mailbox: str,
+    *,
+    register: Callable[[DesktopOutlookCalendarGateway], None] | None = None,
+) -> DesktopOutlookCalendarGateway:
+    """Calendar of ``mailbox`` in the classic Outlook of this poste (Windows only)."""
+    if not sys.platform.startswith("win"):
+        raise ConfigError(OUTLOOK_DESKTOP_WINDOWS_MESSAGE)
+    if not mailbox.strip():
+        raise ConfigError(NO_MAILBOX_MESSAGE)
+    gateway = DesktopOutlookCalendarGateway(mailbox)
+    if register is not None:
+        register(gateway)
+    return gateway
 
 
 async def open_outlook_calendar(

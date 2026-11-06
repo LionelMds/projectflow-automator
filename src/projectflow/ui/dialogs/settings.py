@@ -51,6 +51,7 @@ from projectflow.config import (
 from projectflow.core.planning.local_store import has_documents
 from projectflow.core.planning.poste_config import (
     DEFAULT_OUTLOOK_CALENDAR,
+    OutlookRoute,
     PlanningBackendName,
     PlanningColorBy,
     PlanningDensity,
@@ -134,7 +135,8 @@ OUTLOOK_CONNECT_TEXT: Final = "Connecter le calendrier Outlook…"
 OUTLOOK_CONNECT_RUNNING_TEXT: Final = "Connexion en cours…"
 OUTLOOK_HELP_TEXT: Final = (
     "Une copie en lecture seule du planning, pour les téléphones. Cochez-la sur un seul "
-    "poste, allumé pendant la journée. Ensuite, une fois, avec le compte partagé sur "
+    "poste, allumé pendant la journée (avec Outlook classique ouvert si la copie passe "
+    "par l'Outlook du poste). Ensuite, une fois, avec le compte du calendrier sur "
     "outlook.office.com : Paramètres > Calendrier > Calendriers partagés > Publier un "
     "calendrier, choisissez ce calendrier et « Peut afficher tous les détails », puis "
     "copiez le lien ICS.\n"
@@ -171,8 +173,9 @@ class SettingsDialog(QDialog):
     planning_team_requested = Signal()
     # Copies this poste's local planning into the OneDrive folder given, at once.
     planning_copy_requested = Signal(str)
-    outlook_connect_requested = Signal(str)
-    """« Connecter le calendrier Outlook »: the permission, then the calendar named."""
+    outlook_connect_requested = Signal(str, str, str)
+    """« Connecter le calendrier Outlook »: calendar name, route (``desktop`` or ``graph``)
+    and the Outlook account of the calendar."""
 
     def __init__(
         self,
@@ -491,6 +494,8 @@ class SettingsDialog(QDialog):
         config.outlook_sync = self.planning_outlook_check.isChecked()
         config.outlook_calendar = self.planning_outlook_edit.text()
         config.outlook_hide_details = self.planning_outlook_hide.isChecked()
+        config.outlook_via = self.selected_outlook_route()
+        config.outlook_mailbox = self.planning_outlook_mailbox.currentText().strip()
         config.default_view = _choice(
             PLANNING_VIEWS,
             self.planning_view_choice.current(),
@@ -714,13 +719,48 @@ class SettingsDialog(QDialog):
         )
         self.planning_outlook_check.setChecked(current.outlook_sync)
         column.addWidget(self.planning_outlook_check)
+        self.planning_outlook_desktop_radio = QRadioButton(
+            "Par l'Outlook de ce poste (Outlook classique, sans administrateur)"
+        )
+        self.planning_outlook_graph_radio = QRadioButton(
+            "Par Microsoft 365 (autorisation d'un administrateur)"
+        )
+        self._outlook_route_buttons = route_group = QButtonGroup(self)
+        route_group.addButton(self.planning_outlook_desktop_radio)
+        route_group.addButton(self.planning_outlook_graph_radio)
+        desktop = current.outlook_via == "desktop"
+        self.planning_outlook_desktop_radio.setChecked(desktop)
+        self.planning_outlook_graph_radio.setChecked(not desktop)
+        column.addWidget(self.planning_outlook_desktop_radio)
+        column.addWidget(self.planning_outlook_graph_radio)
+        self.planning_outlook_mailbox = QComboBox()
+        self.planning_outlook_mailbox.setEditable(True)
+        self.planning_outlook_mailbox.setPlaceholderText("prenom@balzmetalsa.onmicrosoft.com")
+        if current.outlook_mailbox:
+            self.planning_outlook_mailbox.addItem(current.outlook_mailbox)
+            self.planning_outlook_mailbox.setCurrentIndex(0)
+        self.planning_outlook_detect = QPushButton("Détecter")
+        self.planning_outlook_detect.setToolTip("Liste les comptes de l'Outlook de ce poste.")
+        self.planning_outlook_detect.clicked.connect(self._detect_outlook_mailboxes)
+        mailbox_row = QWidget()
+        mailbox_layout = QHBoxLayout(mailbox_row)
+        mailbox_layout.setContentsMargins(0, 0, 0, 0)
+        mailbox_layout.addWidget(self.planning_outlook_mailbox, 1)
+        mailbox_layout.addWidget(self.planning_outlook_detect)
+        self.planning_outlook_mailbox_field = field(
+            "Compte Outlook",
+            mailbox_row,
+            help_text="Adresse du compte qui reçoit le calendrier, Outlook en a souvent plusieurs.",
+        )
+        column.addWidget(self.planning_outlook_mailbox_field)
+        self.planning_outlook_desktop_radio.toggled.connect(self._refresh_outlook_route)
         self.planning_outlook_edit = QLineEdit(current.outlook_calendar)
         self.planning_outlook_edit.setPlaceholderText(DEFAULT_OUTLOOK_CALENDAR)
         column.addWidget(
             field(
                 "Calendrier",
                 self.planning_outlook_edit,
-                help_text="Dans le compte Microsoft connecté ; créé s'il n'existe pas.",
+                help_text="Créé dans ce compte s'il n'existe pas.",
             ),
         )
         self.planning_outlook_hide = QCheckBox("Ne pas copier les clients, les lieux et les notes")
@@ -743,6 +783,33 @@ class SettingsDialog(QDialog):
         self.planning_outlook_help = label(OUTLOOK_HELP_TEXT, "muted", wrap=True)
         column.addWidget(self.planning_outlook_help)
         self._outlook_available = True
+        self._refresh_outlook_route()
+
+    def selected_outlook_route(self) -> OutlookRoute:
+        return "desktop" if self.planning_outlook_desktop_radio.isChecked() else "graph"
+
+    def _refresh_outlook_route(self) -> None:
+        desktop = self.selected_outlook_route() == "desktop"
+        self.planning_outlook_mailbox_field.setVisible(desktop)
+        self.planning_outlook_button.setToolTip(
+            "Trouve ou crée le calendrier dans le compte choisi de l'Outlook de ce poste."
+            if desktop
+            else "Demande une fois à Microsoft l'accès aux calendriers du compte connecté "
+            "(Calendars.ReadWrite), puis prépare le calendrier."
+        )
+
+    def _detect_outlook_mailboxes(self) -> None:
+        try:
+            accounts = detect_local_outlook_accounts()
+        except ProjectFlowError as exc:
+            self._show_error("Outlook", str(exc))
+            return
+        current = self.planning_outlook_mailbox.currentText().strip()
+        emails = sorted({a.email for a in accounts if a.email}, key=str.casefold)
+        self.planning_outlook_mailbox.clear()
+        self.planning_outlook_mailbox.addItems(emails)
+        match = next((e for e in emails if e.casefold() == current.casefold()), None)
+        self.planning_outlook_mailbox.setCurrentText(match or current or "")
 
     def set_outlook_available(self, *, available: bool) -> None:
         """Without Microsoft (the demo), the copy to Outlook is shown but not offered."""
@@ -752,6 +819,10 @@ class SettingsDialog(QDialog):
             self.planning_outlook_edit,
             self.planning_outlook_hide,
             self.planning_outlook_button,
+            self.planning_outlook_desktop_radio,
+            self.planning_outlook_graph_radio,
+            self.planning_outlook_mailbox,
+            self.planning_outlook_detect,
         ):
             widget.setEnabled(available)
         if not available:
@@ -764,7 +835,11 @@ class SettingsDialog(QDialog):
         self.planning_outlook_button.setEnabled(False)
         self.planning_outlook_button.setText(OUTLOOK_CONNECT_RUNNING_TEXT)
         self.planning_outlook_status.setVisible(False)
-        self.outlook_connect_requested.emit(self.planning_outlook_edit.text())
+        self.outlook_connect_requested.emit(
+            self.planning_outlook_edit.text(),
+            self.selected_outlook_route(),
+            self.planning_outlook_mailbox.currentText().strip(),
+        )
 
     def outlook_connect_finished(self, message: str, *, connected: bool) -> None:
         """Show how the connection went; the button can be used again."""

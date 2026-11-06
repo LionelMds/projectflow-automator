@@ -49,6 +49,8 @@ PlanningView = Literal["day", "week", "month"]
 PlanningDensity = Literal["compact", "normal", "large"]
 PlanningColorBy = Literal["type", "dossier"]
 BacklogSort = Literal["manual", "deadline", "dossier", "added"]
+OutlookRoute = Literal["desktop", "graph"]
+"""``desktop``: through the Outlook of this poste; ``graph``: Microsoft 365 (admin consent)."""
 
 
 def planning_config_file() -> Path:
@@ -103,6 +105,10 @@ class PlanningPosteConfig(BaseModel):
     outlook_sync: bool = False
     """This poste copies the planning into the Outlook calendar (one poste only)."""
     outlook_calendar: str = DEFAULT_OUTLOOK_CALENDAR
+    outlook_via: OutlookRoute = "desktop"
+    outlook_mailbox: str = ""
+    """Address of the Outlook account holding the calendar (``desktop``): Outlook often has
+    several."""
     outlook_hide_details: bool = False
     """Leave the clients, places and notes out of the calendar (its link is public)."""
 
@@ -114,6 +120,7 @@ class PlanningPosteConfig(BaseModel):
         "sharepoint_list_id",
         "user_name",
         "user_m365_id",
+        "outlook_mailbox",
     )
     @classmethod
     def _strip(cls, value: str) -> str:

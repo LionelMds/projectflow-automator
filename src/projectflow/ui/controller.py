@@ -32,7 +32,11 @@ from projectflow.core.numero import (
 from projectflow.core.planning.copy import CopyReport, copy_planning
 from projectflow.core.planning.local_store import LocalPlanningStore
 from projectflow.core.planning.outlook_sync import CalendarGateway
-from projectflow.core.planning.poste_config import DEFAULT_OUTLOOK_CALENDAR, PlanningPosteConfig
+from projectflow.core.planning.poste_config import (
+    DEFAULT_OUTLOOK_CALENDAR,
+    OutlookRoute,
+    PlanningPosteConfig,
+)
 from projectflow.core.planning.store import PlanningStore
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireRow, RepertoireService, RepertoireSnapshot
@@ -144,9 +148,14 @@ class ServiceProvider(Protocol):
 
 
 class OutlookCalendarFactory(Protocol):
-    """``ServiceContainer.open_outlook_calendar``: the browser opens only if interactive."""
+    """``ServiceContainer.open_outlook_calendar``: the browser opens only if interactive.
 
-    def __call__(self, *, interactive: bool = False) -> Awaitable[CalendarGateway]: ...
+    ``via="desktop"`` goes through the Outlook of this poste, in the account ``mailbox``.
+    """
+
+    def __call__(
+        self, *, interactive: bool = False, via: OutlookRoute = "graph", mailbox: str = ""
+    ) -> Awaitable[CalendarGateway]: ...
 
 
 class ProjectFlowController:
@@ -328,17 +337,30 @@ class ProjectFlowController:
         factory = self._outlook_calendar_factory
         if factory is None:
             raise ProjectFlowError("Calendrier Outlook indisponible sur ce poste.")
-        return await factory(interactive=False)
+        planning = self._planning
+        if planning is None:
+            return await factory(interactive=False)
+        config = planning.poste_config
+        return await factory(
+            interactive=False, via=config.outlook_via, mailbox=config.outlook_mailbox
+        )
 
-    async def connect_outlook_calendar(self, dialog: SettingsDialog, name: str) -> None:
-        """Ask Microsoft for the calendar permission (once), then find or create ``name``."""
+    async def connect_outlook_calendar(
+        self,
+        dialog: SettingsDialog,
+        name: str,
+        via: str = "graph",
+        mailbox: str = "",
+    ) -> None:
+        """Find or create the calendar ``name``, after the Microsoft permission (``graph``)."""
+        route: OutlookRoute = "desktop" if via == "desktop" else "graph"
         factory = self._outlook_calendar_factory
         if factory is None:
             dialog.outlook_connect_finished("Calendrier Outlook indisponible.", connected=False)
             return
         calendar = " ".join(name.split()) or DEFAULT_OUTLOOK_CALENDAR
         try:
-            gateway = await factory(interactive=True)
+            gateway = await factory(interactive=True, via=route, mailbox=mailbox)
             await gateway.ensure_calendar(calendar)
         except ProjectFlowError as exc:
             self._log(f"-> Calendrier Outlook : {exc}")
@@ -347,9 +369,10 @@ class ProjectFlowController:
         except Exception:
             dialog.outlook_connect_finished("Connexion interrompue.", connected=False)
             raise
-        self._log(f"+ Calendrier Outlook « {calendar} » prêt.")
+        where = f" dans {mailbox.strip()}" if route == "desktop" and mailbox.strip() else ""
+        self._log(f"+ Calendrier Outlook « {calendar} »{where} prêt.")
         dialog.outlook_connect_finished(
-            f"Calendrier « {calendar} » prêt. Cochez la copie, enregistrez, puis publiez-le "
+            f"Calendrier « {calendar} »{where} prêt. Cochez la copie, enregistrez, puis publiez-le "
             "depuis Outlook sur le web.",
             connected=True,
         )
@@ -1686,7 +1709,9 @@ class ProjectFlowController:
             dialog.planning_team_requested.connect(planning.open_team_dialog)
             dialog.set_outlook_available(available=self._outlook_calendar_factory is not None)
             dialog.outlook_connect_requested.connect(
-                lambda name: self._schedule_planning(self.connect_outlook_calendar(dialog, name)),
+                lambda name, via, mailbox: self._schedule_planning(
+                    self.connect_outlook_calendar(dialog, name, via, mailbox)
+                ),
             )
             dialog.planning_copy_requested.connect(
                 lambda folder: self._schedule_planning(

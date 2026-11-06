@@ -1178,6 +1178,8 @@ class PlanningController:
                 previous is None
                 or not previous.outlook_sync
                 or previous.outlook_calendar != config.outlook_calendar
+                or previous.outlook_via != config.outlook_via
+                or previous.outlook_mailbox.casefold() != config.outlook_mailbox.casefold()
                 or previous.outlook_hide_details != config.outlook_hide_details
             ):
                 self._outlook = None

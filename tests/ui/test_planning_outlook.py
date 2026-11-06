@@ -122,13 +122,18 @@ def test_settings_write_the_outlook_choices(qtbot: Any) -> None:
     qtbot.addWidget(dialog)
     assert not dialog.planning_outlook_check.isChecked()
     assert dialog.planning_outlook_edit.text() == "Planning Balz Métal"
-    requested: list[str] = []
-    dialog.outlook_connect_requested.connect(requested.append)
+    assert dialog.planning_outlook_desktop_radio.isChecked()
+    assert not dialog.planning_outlook_mailbox_field.isHidden()
+    requested: list[tuple[str, str, str]] = []
+    dialog.outlook_connect_requested.connect(lambda *args: requested.append(args))
     dialog.planning_outlook_check.setChecked(True)
     dialog.planning_outlook_hide.setChecked(True)
     dialog.planning_outlook_edit.setText("  Planning   atelier ")
+    dialog.planning_outlook_mailbox.setCurrentText(" lionel@balzmetalsa.onmicrosoft.com ")
     dialog.planning_outlook_button.click()
-    assert requested == ["  Planning   atelier "]
+    assert requested == [
+        ("  Planning   atelier ", "desktop", "lionel@balzmetalsa.onmicrosoft.com"),
+    ]
     assert not dialog.planning_outlook_button.isEnabled()
     dialog.outlook_connect_finished("Calendrier prêt.", connected=True)
     assert dialog.planning_outlook_button.isEnabled()
@@ -139,6 +144,14 @@ def test_settings_write_the_outlook_choices(qtbot: Any) -> None:
         "Planning atelier",
         True,
     )
+    assert (planning.outlook_via, planning.outlook_mailbox) == (
+        "desktop",
+        "lionel@balzmetalsa.onmicrosoft.com",
+    )
+    dialog.planning_outlook_graph_radio.setChecked(True)
+    assert dialog.planning_outlook_mailbox_field.isHidden()
+    dialog.apply_to_planning_config(planning)
+    assert planning.outlook_via == "graph"
     dialog.set_outlook_available(available=False)
     assert not dialog.planning_outlook_check.isEnabled()
     assert "démo" in dialog.planning_outlook_status.text()

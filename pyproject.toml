@@ -90,6 +90,7 @@ ignore = [
 "src/projectflow/cad/document_manager.py" = ["ANN401"]
 "src/projectflow/cad/solidworks_app.py" = ["ANN401"]
 "src/projectflow/outlook/windows.py" = ["ANN401"]
+"src/projectflow/outlook/calendar.py" = ["ANN401"]
 "src/projectflow/platform/printing.py" = ["ANN401"]
 "tools/**/*.py" = ["C901", "PLR0912", "PLR2004", "S311", "T201"]
 "tests/**/*.py" = [
