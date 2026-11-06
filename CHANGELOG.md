@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.73
+
+- Calendrier Outlook par l'Outlook du poste : les heures etaient avancees d'une heure (deux en
+  ete), tout commencait a 05:30 et une absence tombait la veille. Les rendez-vous deja ecrits
+  sont recrits a la bonne heure a la synchronisation suivante.
+
 ## 0.1.72
 
 - Calendrier Outlook par l'Outlook du poste : les rendez-vous s'ecrivent enfin depuis la
