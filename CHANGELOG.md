@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.72
+
+- Calendrier Outlook par l'Outlook du poste : les rendez-vous s'ecrivent enfin depuis la
+  version installee (le module `win32timezone` de pywin32 manquait a l'executable). La cause
+  d'un echec s'affiche maintenant dans le journal.
+
 ## 0.1.71
 
 - Calendrier Outlook des telephones : nouvelle voie « Par l'Outlook de ce poste », sans
