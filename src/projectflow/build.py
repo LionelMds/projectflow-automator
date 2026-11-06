@@ -172,6 +172,8 @@ def _hidden_imports(target: BuildTarget) -> tuple[str, ...]:
             "pythoncom",
             "pywintypes",
             "win32com.client",
+            # pywin32 needs it to hand a date to Outlook (the planning calendar).
+            "win32timezone",
         ])
     if target == "macos":
         hidden_imports.append("keyring.backends.macOS")

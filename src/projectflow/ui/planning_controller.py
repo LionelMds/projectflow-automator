@@ -1403,7 +1403,8 @@ class PlanningController:
                 self._outlook_problem = ""
                 if report.created or report.updated or report.deleted or report.failed:
                     name = outlook.calendar_name
-                    self._log(f"Calendrier Outlook « {name} » : {report.summary()}.")
+                    cause = f" ({clip(report.errors[0])})" if report.errors else ""
+                    self._log(f"Calendrier Outlook « {name} » : {report.summary()}{cause}.")
                 if report.errors:
                     get_logger(__name__).warning(
                         "planning.outlook.partial", failed=report.failed, first=report.errors[0]

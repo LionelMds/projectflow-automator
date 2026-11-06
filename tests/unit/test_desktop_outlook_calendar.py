@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import re
 from datetime import datetime
 from typing import Any
@@ -194,6 +195,7 @@ class FakeOutlook:
 @pytest.fixture
 def outlook(monkeypatch: pytest.MonkeyPatch) -> FakeOutlook:
     monkeypatch.setattr("projectflow.outlook.calendar._com_error_type", lambda: ComError)
+    monkeypatch.setattr("projectflow.outlook.calendar._require_timezones", lambda: None)
     return FakeOutlook(
         "lionel@balzmetal.ch",
         "Contact@balzmetalsa.onmicrosoft.com",
@@ -272,3 +274,24 @@ def test_the_desktop_route_needs_a_mailbox(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr("projectflow.services.sys.platform", "darwin")
     with pytest.raises(ConfigError, match="Windows"):
         open_desktop_outlook_calendar("lionel@balzmetalsa.onmicrosoft.com")
+
+
+@pytest.mark.asyncio
+async def test_a_build_without_win32timezone_says_so_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real = importlib.import_module
+
+    def missing(name: str, package: str | None = None) -> Any:
+        if name == "win32timezone":
+            raise ModuleNotFoundError(name)
+        return real(name, package)
+
+    monkeypatch.setattr("projectflow.outlook.calendar.importlib.import_module", missing)
+    outlook = FakeOutlook("lionel@balzmetalsa.onmicrosoft.com")
+    gateway = DesktopOutlookCalendarGateway(
+        "lionel@balzmetalsa.onmicrosoft.com", app_factory=lambda: outlook
+    )
+    with pytest.raises(OutlookError, match="win32timezone"):
+        await gateway.ensure_calendar("Planning Balz Métal")
+    gateway.close()

@@ -100,6 +100,7 @@ class DesktopOutlookCalendarGateway:
 
     def _mapi(self) -> Any:
         if self._namespace is None:
+            _require_timezones()
             self._namespace = self._app_factory().GetNamespace("MAPI")
         return self._namespace
 
@@ -223,3 +224,17 @@ def _com_initialize() -> None:
     except ImportError:
         return
     pythoncom.CoInitialize()
+
+
+def _require_timezones() -> None:
+    """pywin32 imports ``win32timezone`` the first time it hands a date to Outlook.
+
+    Checked once, at the start: a build that left it out fails here with one clear
+    message, not on every appointment.
+    """
+    try:
+        importlib.import_module("win32timezone")
+    except ImportError as exc:
+        raise OutlookError(
+            "module win32timezone absent de cette version : mettez ProjectFlow à jour."
+        ) from exc
