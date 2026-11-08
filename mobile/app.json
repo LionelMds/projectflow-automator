@@ -7,14 +7,23 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/ed47a3cf-6583-4ec0-86f3-2b79152aaed2"
+    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "ch.balzmetal.projectflow"
+      "bundleIdentifier": "ch.balzmetal.projectflow",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "ch.balzmetal.projectflow",
       "adaptiveIcon": {
-        "backgroundColor": "#F2F2F3",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -30,7 +39,16 @@
       "expo-web-browser",
       "expo-secure-store",
       "expo-font",
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#F2F2F3"
+        }
+      ]
     ],
     "extra": {
       "router": {

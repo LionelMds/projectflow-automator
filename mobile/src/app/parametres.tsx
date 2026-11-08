@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -9,17 +9,21 @@ import { Field } from '@/components/Field';
 import { MicrosoftSignIn } from '@/components/MicrosoftSignIn';
 import { Body, Caps, Kicker, Muted, SectionHeading, Title } from '@/components/Text';
 import { useAuth } from '@/lib/auth';
+import { COMPANY_LABELS, companySettingsFor, emptyCompanyFields, type CompanyField } from '@/lib/companySettings';
 import { DEMO_PLAN_ID, demoPlanner } from '@/lib/demoProjects';
 import { close } from '@/lib/navigation';
 import { errorMessage } from '@/lib/projects/creation';
+import { graphDrive } from '@/lib/projects/drive';
+import { RACINE_LABEL, REFERENCE_LABEL } from '@/lib/projects/location';
 import { graphPlanner, plannerPlanIdFromText, type PlannerBucket, type PlannerMember } from '@/lib/projects/planner';
+import { resolveWorkbook } from '@/lib/repertoire/workbook';
 import { useSettings, type Settings } from '@/lib/settings';
 import { colors, fonts, touch } from '@/theme/tokens';
 
 export default function ParametresScreen() {
   const { status, account, error, canSignIn, busy, signInPage, signIn, finishSignIn, cancelSignIn, signOut, getAccessToken } =
     useAuth();
-  const { settings, save } = useSettings();
+  const { settings, loaded, save } = useSettings();
   // Untouched fields follow the stored settings (read asynchronously at start-up).
   const [edits, setEdits] = useState<Partial<Settings>>({});
   const draft: Settings = { ...settings, ...edits };
@@ -33,6 +37,35 @@ export default function ParametresScreen() {
   const [plannerLoading, setPlannerLoading] = useState(false);
   const [plannerError, setPlannerError] = useState('');
   const planner = useMemo(() => (draft.demo ? demoPlanner() : graphPlanner(getAccessToken)), [draft.demo, getAccessToken]);
+
+  // The company's settings, once the sign-in is done: each one checked with that account
+  // first, only those still empty, once per account.
+  const [companySetup, setCompanySetup] = useState<
+    { state: 'checking' } | { state: 'done'; filled: CompanyField[]; missing: CompanyField[] } | null
+  >(null);
+  const checkedFor = useRef('');
+  useEffect(() => {
+    if (!loaded || settings.demo || status !== 'signedIn') return;
+    const who = account?.username || 'compte';
+    if (checkedFor.current === who || !emptyCompanyFields(settings).length) return;
+    checkedFor.current = who;
+    const drive = graphDrive(getAccessToken);
+    const apply = async () => {
+      await Promise.resolve();
+      setCompanySetup({ state: 'checking' });
+      const result = await companySettingsFor(settings, async (field, value) => {
+        if (field === 'repertoire') {
+          await resolveWorkbook(getAccessToken, value);
+          return true;
+        }
+        const item = await drive.resolve(value, field === 'racine' ? RACINE_LABEL : REFERENCE_LABEL);
+        return item.folder;
+      });
+      if (Object.keys(result.filled).length) await save({ ...settings, ...result.filled });
+      setCompanySetup({ state: 'done', filled: Object.keys(result.filled) as CompanyField[], missing: result.missing });
+    };
+    void apply();
+  }, [loaded, settings, status, account, getAccessToken, save]);
 
   const update = (field: keyof Settings) => (value: string) => setEdits((previous) => ({ ...previous, [field]: value }));
 
@@ -117,6 +150,18 @@ export default function ParametresScreen() {
             {status === 'signedIn' ? (
               <>
                 <Body>{account ? `${account.name} · ${account.username}` : 'Connecté'}</Body>
+                {companySetup?.state === 'checking' ? <Muted>Vérification des dossiers de l’entreprise…</Muted> : null}
+                {companySetup?.state === 'done' && companySetup.filled.length ? (
+                  <Text style={styles.applied}>
+                    Réglages de l’entreprise vérifiés et remplis : {companySetup.filled.map((field) => COMPANY_LABELS[field]).join(', ')}.
+                  </Text>
+                ) : null}
+                {companySetup?.state === 'done' && companySetup.missing.length ? (
+                  <Text style={styles.error}>
+                    Introuvable avec ce compte : {companySetup.missing.map((field) => COMPANY_LABELS[field]).join(', ')}. Vérifiez le
+                    compte connecté, ou collez le lien ci-dessous.
+                  </Text>
+                ) : null}
                 <Button label="Se déconnecter" onPress={() => void signOut()} style={styles.start} />
               </>
             ) : (
@@ -321,6 +366,7 @@ const styles = StyleSheet.create({
   start: { alignSelf: 'flex-start' },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   error: { fontFamily: fonts.body, fontSize: 14, color: colors.err },
+  applied: { fontFamily: fonts.body, fontSize: 14, color: colors.ok },
   group: { gap: 6 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   due: { width: 140 },

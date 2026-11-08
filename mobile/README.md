@@ -104,17 +104,33 @@ npm start          # serveur de développement pour un téléphone
 ```
 
 Sur téléphone, **Expo Go** suffit pour tout essayer, connexion Microsoft comprise : scanner le QR
-code du serveur, avec le même compte Expo dans Expo Go et sur le PC (exigé pour un iPhone). Pour
-installer l'app elle-même, EAS la construit dans le cloud (compte Expo ; pour un iPhone, compte
-Apple Developer). Le projet Expo est `@lionel.mds/projectflow` ; les profils sont dans `eas.json` :
+code du serveur, avec le même compte Expo dans Expo Go et sur le PC (exigé pour un iPhone).
+
+## Installer l'app (sans PC ni Expo Go)
+
+EAS construit l'app dans le cloud. Le projet Expo est `@lionel.mds/projectflow` ; il faut un
+compte Apple Developer (individuel suffit). Distribution interne (ad hoc) : chaque iPhone est
+enregistré une fois, 100 au plus par an.
 
 ```bash
-npx eas-cli@latest build --profile development --platform android
-npx eas-cli@latest build --profile development --platform ios
+npx eas-cli@latest device:create                            # lien à ouvrir sur chaque iPhone
+npx eas-cli@latest build --profile preview --platform ios   # identifiant Apple demandé la première fois
 ```
 
-Pour distribuer l'app à l'équipe sans les outils de développement : profil `preview`
-(distribution interne), puis `production` pour les stores.
+Le build donne un lien et un QR code d'installation. Icône et écran de démarrage : le logo du
+poste (`src/projectflow/ui/resources/logo.png`).
+
+## Mises à jour
+
+L'app installée se met à jour seule (EAS Update) : elle télécharge la nouvelle version au
+démarrage et l'applique au lancement suivant. Publier une version :
+
+```bash
+npx eas-cli@latest update --channel preview --environment preview --message "Ce qui change"
+```
+
+`runtimeVersion` suit l'empreinte native (`fingerprint`) : une mise à jour ne va qu'aux builds
+compatibles. Après l'ajout d'un module Expo (code natif), refaire un build.
 
 ## Qualité
 
