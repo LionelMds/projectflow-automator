@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "ProjectFlow",
+    "slug": "projectflow",
+    "version": "0.1.0",
+    "scheme": "projectflow",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ch.balzmetal.projectflow"
+    },
+    "android": {
+      "package": "ch.balzmetal.projectflow",
+      "adaptiveIcon": {
+        "backgroundColor": "#F2F2F3",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-secure-store",
+      "expo-font",
+      "expo-sharing"
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "ed47a3cf-6583-4ec0-86f3-2b79152aaed2"
+      }
+    },
+    "owner": "lionel.mds"
+  }
+}
