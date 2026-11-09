@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Connexion Microsoft sous Windows : le fichier qui la garde est maintenant chiffre pour le
+  compte Windows (comme le Gestionnaire d'identifiants). La connexion existante est reprise
+  sans nouvelle connexion, puis chiffree au premier rafraichissement.
+- Mise a jour de secours (sans installateur) : le script PowerShell echouait des son lancement.
+
 ## 0.1.74
 
 - Planning : la densite des lignes (Compacte, Normale, Large) s'applique aussi a la vue mois,

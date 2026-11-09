@@ -271,9 +271,13 @@ def test_prepare_windows_install_plan_keeps_legacy_portable_fallback(tmp_path: P
     )
 
     assert plan.command[0] == "powershell"
+    assert plan.command[plan.command.index("-ProcessId") + 1] == "123"
     script_path = tmp_path / "legacy_projectflow_update.ps1"
     assert script_path.exists()
-    assert "Copy-Item" in script_path.read_text(encoding="utf-8")
+    script = script_path.read_text(encoding="utf-8")
+    assert "Copy-Item" in script
+    # $Pid is read-only in PowerShell: a parameter of that name stops the script.
+    assert "$Pid" not in script
 
 
 def test_prepare_macos_install_plan_opens_dmg(tmp_path: Path) -> None:

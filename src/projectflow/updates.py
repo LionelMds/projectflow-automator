@@ -181,7 +181,7 @@ def prepare_install_plan(
                 str(asset_path),
                 "-Target",
                 str(executable),
-                "-Pid",
+                "-ProcessId",
                 str(process_id or 0),
             ),
             should_quit_app=True,
@@ -335,13 +335,14 @@ def _looks_like_windows_installer_name(name: str) -> bool:
 def _write_windows_legacy_update_script(directory: Path) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     script_path = directory / "legacy_projectflow_update.ps1"
+    # Not $Pid: PowerShell's read-only automatic variable made the script fail at once.
     script_path.write_text(
         """param(
   [Parameter(Mandatory=$true)][string]$Source,
   [Parameter(Mandatory=$true)][string]$Target,
-  [Parameter(Mandatory=$true)][int]$Pid
+  [Parameter(Mandatory=$true)][int]$ProcessId
 )
-if ($Pid -gt 0) { Wait-Process -Id $Pid -ErrorAction SilentlyContinue }
+if ($ProcessId -gt 0) { Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue }
 Copy-Item -LiteralPath $Source -Destination $Target -Force
 Start-Process -FilePath $Target
 """,

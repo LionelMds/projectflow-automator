@@ -33,6 +33,7 @@ def test_windows_pyinstaller_command_uses_onefile(tmp_path: Path) -> None:
     assert "keyring.backends.Windows" in command
     assert "win32com.client" in command
     assert "win32timezone" in command
+    assert "win32crypt" in command
     assert "comtypes.client" in command
     assert "pythoncom" in command
     assert "pywintypes" in command

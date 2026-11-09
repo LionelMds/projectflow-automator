@@ -172,6 +172,7 @@ def _hidden_imports(target: BuildTarget) -> tuple[str, ...]:
             "pythoncom",
             "pywintypes",
             "win32com.client",
+            "win32crypt",  # Encrypts the Microsoft token cache file.
             # pywin32 needs it to hand a date to Outlook (the planning calendar).
             "win32timezone",
         ])
