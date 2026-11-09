@@ -72,6 +72,11 @@ TEXT_LEFT = 5.0
 TEXT_RIGHT = 4.0
 TEXT_GAP = 5.0
 TWO_LINE_HEIGHT = 30.0
+TEXT_GROWTH_FROM = 38
+"""Lane height (« Normale ») up to which the text of the bars keeps its designed size."""
+TEXT_GROWTH_STEP = 8
+"""One pixel more of text for each step of lane height past ``TEXT_GROWTH_FROM``."""
+MAX_TEXT_GROWTH = 4
 WIDE_BAR = 150.0
 MEDIUM_BAR = 70.0
 NARROW_BAR = 30.0
@@ -267,6 +272,7 @@ class BarStyle:
 
     theme: Theme
     compact: bool
+    growth: int
     number_font: QFont
     head_font: QFont
     sub_font: QFont
@@ -331,16 +337,27 @@ def _resolve(theme: Theme, colors: BarColors) -> ResolvedColors:
     )
 
 
-def build_bar_style(theme: Theme, *, compact: bool) -> BarStyle:
-    number_font = heading_font(12 if compact else 13)
-    head_font = body_font(12, QFont.Weight.Medium)
-    sub_font = body_font(11)
+def text_growth(lane_height: float) -> int:
+    """Pixels added to the text of the bars in lanes of ``lane_height``.
+
+    Taller rows, larger text: +2 at « Large », at most ``MAX_TEXT_GROWTH``.
+    """
+    steps = (int(lane_height) - TEXT_GROWTH_FROM) // TEXT_GROWTH_STEP
+    return min(max(steps, 0), MAX_TEXT_GROWTH)
+
+
+def build_bar_style(theme: Theme, *, compact: bool, growth: int = 0) -> BarStyle:
+    """``growth`` pixels are added to the number, the title and the second line."""
+    number_font = heading_font((12 if compact else 13) + growth)
+    head_font = body_font(12 + growth, QFont.Weight.Medium)
+    sub_font = body_font(11 + growth)
     badge_font = body_font(10, QFont.Weight.DemiBold)
     dark = theme.is_dark
     warn = QColor(warn_color(dark=dark))
     return BarStyle(
         theme=theme,
         compact=compact,
+        growth=growth,
         number_font=number_font,
         head_font=head_font,
         sub_font=sub_font,
@@ -1462,8 +1479,9 @@ class PlanningScene(QGraphicsScene):
 
     def set_model(self, model: GridModel) -> None:
         compact = int(model.density) < TWO_LINE_HEIGHT + 2
-        if compact != self.bar_style.compact:
-            self.bar_style = build_bar_style(self.grid_style.theme, compact=compact)
+        growth = text_growth(model.density)
+        if (compact, growth) != (self.bar_style.compact, self.bar_style.growth):
+            self.bar_style = build_bar_style(self.grid_style.theme, compact=compact, growth=growth)
         self.model = model
         self.day_view = model.view == "day"
         stale = set(self.items_by_key)
@@ -1492,7 +1510,9 @@ class PlanningScene(QGraphicsScene):
         """Rebuild the styles after a theme change and repaint everything."""
         theme = current_theme()
         self.grid_style = build_grid_style(theme)
-        self.bar_style = build_bar_style(theme, compact=self.bar_style.compact)
+        self.bar_style = build_bar_style(
+            theme, compact=self.bar_style.compact, growth=self.bar_style.growth
+        )
         for item in self.items_by_key.values():
             item.set_bar(item.bar)
             item.update()

@@ -376,6 +376,9 @@ consultation seule et se synchronise de nouveau dès le retour du réseau.
 - `‹` `›` ou `PgPréc` / `PgSuiv` changent de période ; `Aujourd'hui` ou `Ctrl+T` y revient ; un
   clic sur le libellé de la période ouvre un calendrier avec les numéros de semaine.
 - Les barres s'aimantent à la demi-heure en vue Jour et Semaine, à la demi-journée en vue Mois.
+- Hauteur des lignes : la densité (`Compacte`, `Normale`, `Large`, menu `≡` de la barre)
+  s'applique aux trois vues ; les boutons `Lignes − / +` (ou `Ctrl` + molette sur les noms)
+  ajustent ensuite la vue affichée seule. Le texte des barres grossit avec les lignes.
 - `Couleur : Type | Dossier`, la densité et le filtre (dossier, client, initiales) sont gardés
   par poste. `F1` affiche tous les raccourcis.
 

@@ -24,7 +24,13 @@ from projectflow.core.planning.models import task_label
 from projectflow.core.planning.poste_config import PlanningPosteConfig
 from projectflow.core.repertoire_service import RepertoireRow, RepertoireSnapshot
 from projectflow.ui.planning.grid import EDGE_PUSH, WHEEL_NOTCH
-from projectflow.ui.planning.grid_model import MAX_LANE_HEIGHT, MAX_ZOOM, fitted_day_width
+from projectflow.ui.planning.grid_items import text_growth
+from projectflow.ui.planning.grid_model import (
+    MAX_LANE_HEIGHT,
+    MAX_ZOOM,
+    MIN_LANE_HEIGHT,
+    fitted_day_width,
+)
 from projectflow.ui.planning.planning_tab import PlanningTab
 from projectflow.ui.planning_controller import project_from_row
 
@@ -58,6 +64,18 @@ def test_zoom_widens_the_columns_past_the_viewport() -> None:
     )
 
 
+def test_the_text_of_the_bars_grows_with_the_rows() -> None:
+    assert [text_growth(height) for height in (22, 38, 45, 46, 54, 70, MAX_LANE_HEIGHT)] == [
+        0,
+        0,
+        0,
+        1,
+        2,
+        4,
+        4,
+    ]
+
+
 def test_old_settings_get_sizes_kept_per_view() -> None:
     config = PlanningPosteConfig(
         row_heights={"week": 60, "year": 50, "day": 999}, column_zooms={"day": 2.5, "week": 1}
@@ -81,7 +99,7 @@ def test_row_height_and_zoom_are_kept_per_view(qtbot: Any) -> None:
     assert tab.row_height_slider.value() == 60
     assert tab.zoom_value.text() == "200 %"
     tab.set_view("month")
-    assert (tab.row_height, tab.zoom) == (22, 1.0)
+    assert (tab.row_height, tab.zoom) == (38, 1.0)  # The month follows the density too.
     tab.set_view("week")
     assert (tab.row_height, tab.zoom) == (60, 2.0)
     assert tab.row_heights() == {"week": 60}
@@ -93,6 +111,44 @@ def test_row_height_and_zoom_are_kept_per_view(qtbot: Any) -> None:
     assert tab.row_height == 54
     tab.apply_preferences(row_heights={"week": 30}, zooms={"week": 3.0, "day": 0.5})
     assert (tab.row_height, tab.zoom) == (30, 3.0)
+
+
+def test_the_month_follows_the_density(qtbot: Any) -> None:
+    tab = PlanningTab()
+    qtbot.addWidget(tab)
+    tab.set_view("month")
+    heights: dict[str, int] = {}
+    for density in ("compact", "normal", "large"):
+        tab.set_density(density)
+        heights[density] = tab.row_height
+    assert heights == {"compact": 22, "normal": 38, "large": 54}
+    tab.set_row_height(70)
+    tab.set_density("large")  # A density sets the month again, past a height chosen.
+    assert tab.row_height == 54
+    assert tab.row_heights() == {}
+
+
+def test_the_lines_buttons_step_the_rows_of_the_view(qtbot: Any) -> None:
+    tab = PlanningTab()
+    qtbot.addWidget(tab)
+    tab.set_view("month")
+    tab.set_density("compact")
+    tab.taller_rows_button.click()
+    assert tab.row_height == 30
+    tab.taller_rows_button.click()
+    tab.taller_rows_button.click()
+    assert tab.row_height == 46
+    assert "46 px" in tab.taller_rows_button.toolTip()
+    assert tab.row_heights() == {"month": 46}
+    tab.set_view("week")
+    assert tab.row_height == 22  # Kept per view: the week keeps its density.
+    tab.set_row_height(MAX_LANE_HEIGHT)
+    assert not tab.taller_rows_button.isEnabled()
+    tab.lower_rows_button.click()
+    assert tab.row_height == MAX_LANE_HEIGHT - 8
+    assert tab.taller_rows_button.isEnabled()
+    tab.set_row_height(MIN_LANE_HEIGHT)
+    assert not tab.lower_rows_button.isEnabled()
 
 
 def test_the_sideways_wheel_past_the_end_shows_the_next_period(qtbot: Any) -> None:

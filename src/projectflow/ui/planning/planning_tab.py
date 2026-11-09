@@ -144,6 +144,8 @@ ZOOM_STEP: Final = 1.25
 ZOOM_SLIDER_SCALE: Final = 100
 ROW_HEIGHT_STEP: Final = 4
 """Ctrl + one notch of the wheel on the names: rows 4 px taller (or lower)."""
+ROW_HEIGHT_BUTTON_STEP: Final = 8
+"""A click on « Lignes - / + »: from 22 px, the steps go through 38 (Normale) and 54 (Large)."""
 SIZE_SLIDER_WIDTH: Final = 160
 ZOOM_TOLERANCE: Final = 0.005
 MONTH_ABBREVIATIONS: Final = (
@@ -267,6 +269,8 @@ TOOL_ICONS: Final[Mapping[str, str]] = {
     '2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/>'
     '<rect x="6" y="14" width="12" height="8" rx="1"/>',
     "rows": '<path d="M3 6h18"/><path d="M3 12h18"/><path d="M3 18h18"/>',
+    "minus": '<path d="M5 12h14"/>',
+    "plus": '<path d="M5 12h14"/><path d="M12 5v14"/>',
 }
 ICON_SIZE: Final = 16
 ICON_RATIO: Final = 2.0
@@ -822,6 +826,20 @@ class PlanningTab(QWidget):
         )
         color_layout.addWidget(colors)
 
+        self.lines_box = QWidget()
+        lines_layout = QHBoxLayout(self.lines_box)
+        lines_layout.setContentsMargins(0, 0, 0, 0)
+        lines_layout.setSpacing(4)
+        lines_layout.addWidget(label("Lignes", "caps"))
+        self.lower_rows_button = button("", size="sm")
+        self.lower_rows_button.setAccessibleName("Lignes moins hautes")
+        self.lower_rows_button.setFixedWidth(SQUARE_BUTTON)
+        self.taller_rows_button = button("", size="sm")
+        self.taller_rows_button.setAccessibleName("Lignes plus hautes")
+        self.taller_rows_button.setFixedWidth(SQUARE_BUTTON)
+        lines_layout.addWidget(self.lower_rows_button)
+        lines_layout.addWidget(self.taller_rows_button)
+
         self.display_button = QToolButton()
         self.display_button.setProperty("variant", "icon")
         self.display_button.setToolTip("Densité des lignes et affichage")
@@ -903,6 +921,7 @@ class PlanningTab(QWidget):
         layout.addWidget(self.period_button)
         layout.addWidget(self.view_box)
         layout.addStretch(1)
+        layout.addWidget(self.lines_box)
         layout.addWidget(self.color_box)
         layout.addWidget(self.display_button)
         layout.addWidget(self.filter_edit, 4)
@@ -913,10 +932,12 @@ class PlanningTab(QWidget):
         layout.addWidget(self.badge)
         # Hidden first, then the next ones, when the tab is too narrow: each is also
         # reachable from the display menu.
-        self._optional = (self.color_box, self.print_button, self.team_button)
+        self._optional = (self.color_box, self.print_button, self.team_button, self.lines_box)
         self._icon_buttons: tuple[tuple[QAbstractButton, str], ...] = (
             (self.prev_button, "chevron-left"),
             (self.next_button, "chevron-right"),
+            (self.lower_rows_button, "minus"),
+            (self.taller_rows_button, "plus"),
             (self.undo_button, "undo"),
             (self.redo_button, "redo"),
             (self.print_button, "printer"),
@@ -982,6 +1003,8 @@ class PlanningTab(QWidget):
         self.next_button.clicked.connect(lambda: self.step(1))
         self.today_button.clicked.connect(self.go_today)
         self.period_button.clicked.connect(self.open_calendar)
+        self.lower_rows_button.clicked.connect(lambda: self.step_row_height(-1))
+        self.taller_rows_button.clicked.connect(lambda: self.step_row_height(1))
         self.view_group.idClicked.connect(self._on_view_clicked)
         self.color_group.idClicked.connect(self._on_color_clicked)
         self.filter_edit.textChanged.connect(self.set_filter)
@@ -1035,8 +1058,6 @@ class PlanningTab(QWidget):
         chosen = self._row_heights.get(self._view)
         if chosen:
             return clamp_lane_height(chosen)
-        if self._view == "month":
-            return int(Density.COMPACT)  # « 5231 » alone: the month stays compact.
         return DENSITY_HEIGHTS.get(self._density, int(Density.NORMAL))
 
     @property
@@ -1059,6 +1080,10 @@ class PlanningTab(QWidget):
         self._sync_size_controls()
         self.display_size_changed.emit()
         self.view_changed.emit()
+
+    def step_row_height(self, steps: int) -> None:
+        """Taller (``steps`` > 0) or lower rows in the current view, a button step each."""
+        self.set_row_height(self.row_height + ROW_HEIGHT_BUTTON_STEP * steps)
 
     def set_zoom(self, zoom: float, *, viewport_x: float | None = None) -> None:
         """Columns of the current view ``zoom`` times their fitted width.
@@ -1146,6 +1171,11 @@ class PlanningTab(QWidget):
         self.row_height_value.setText(f"{height} px")
         self.zoom_value.setText(f"{round(zoom * ZOOM_SLIDER_SCALE)} %")
         self.fit_button.setEnabled(zoom > MIN_ZOOM)
+        self.lower_rows_button.setEnabled(height > MIN_LANE_HEIGHT)
+        self.taller_rows_button.setEnabled(height < MAX_LANE_HEIGHT)
+        wheel = native_keys("aussi Ctrl + molette sur les noms")
+        self.lower_rows_button.setToolTip(f"Lignes moins hautes : {height} px ({wheel})")
+        self.taller_rows_button.setToolTip(f"Lignes plus hautes : {height} px ({wheel})")
 
     def _on_zoom_wheel(self, notches: int, viewport_x: float) -> None:
         self.set_zoom(self.zoom * ZOOM_STEP**notches, viewport_x=viewport_x)
@@ -1237,12 +1267,11 @@ class PlanningTab(QWidget):
         self._change(self._view, self._today)
 
     def set_density(self, density: str) -> None:
-        chosen = any(view in self._row_heights for view in ("day", "week"))
+        chosen = bool(self._row_heights)
         if density in DENSITY_LABELS and (density != self._density or chosen):
             self._density = density
-            # A density sets the rows of the day and the week again, past a height chosen.
-            self._row_heights.pop("day", None)
-            self._row_heights.pop("week", None)
+            # A density sets the rows of every view again, past a height chosen.
+            self._row_heights.clear()
             self._sync_toolbar()
             if chosen:
                 self.display_size_changed.emit()

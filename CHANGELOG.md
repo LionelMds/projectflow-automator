@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Planning : la densite des lignes (Compacte, Normale, Large) s'applique aussi a la vue mois,
+  qui restait toujours compacte. Nouveaux boutons `Lignes - / +` dans la barre du planning pour
+  regler la hauteur des lignes de la vue affichee ; le texte des barres grossit avec les lignes.
+
 ## 0.1.73
 
 - Calendrier Outlook par l'Outlook du poste : les heures etaient avancees d'une heure (deux en
