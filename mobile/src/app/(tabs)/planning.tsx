@@ -55,7 +55,7 @@ import {
 } from '@/lib/planning/models';
 import { usePlanning } from '@/lib/planning/PlanningContext';
 import { snap } from '@/lib/planning/calendar';
-import { todayNumber } from '@/lib/planning/walltime';
+import { parseDate, todayNumber } from '@/lib/planning/walltime';
 import { buildBoard, DAY_END, DAY_START, NOON, AFTERNOON, UNASSIGNED, type Board, type Column, type Segment, type WeekRow } from '@/lib/planning/week';
 import { withDossiers } from '@/lib/planning/dossiers';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
@@ -101,7 +101,23 @@ export default function PlanningScreen() {
 
   // « Voir dans le planning »: the week of the dossier's next task, its bars and cards outlined.
   const [focus, setFocus] = useState('');
-  const params = useLocalSearchParams<{ dossier?: string; at?: string }>();
+  const params = useLocalSearchParams<{ dossier?: string; at?: string; jour?: string }>();
+
+  // The « Planning » widget's day (« 2026-11-09 »): the day view on that day. The link is
+  // cleared once followed, so that the same day asked again from the widget works again.
+  const [followedDay, setFollowedDay] = useState('');
+  if (params.jour && params.jour !== followedDay) {
+    setFollowedDay(params.jour);
+    const day = parseDate(params.jour);
+    if (day !== null) {
+      setView('day');
+      setAnchor(shownDay(day));
+    }
+  } else if (!params.jour && followedDay) setFollowedDay('');
+  useEffect(() => {
+    if (params.jour) router.setParams({ jour: undefined });
+  }, [params.jour]);
+
   const request = params.dossier ? `${params.dossier}@${params.at ?? ''}` : '';
   const [handled, setHandled] = useState('');
   if (request && request !== handled && data) {

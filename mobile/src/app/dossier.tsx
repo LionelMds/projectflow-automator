@@ -28,6 +28,7 @@ import type { DriveItem } from '@/lib/projects/drive';
 import { dateText, fileKind, openerName, sizeText, type FileKind } from '@/lib/projects/fileKinds';
 import { parseProjectNumber } from '@/lib/projects/numbers';
 import { openDriveFile, openOnWeb, shareDriveFile } from '@/lib/projects/openFile';
+import { useRecentDossiers } from '@/lib/recent/RecentContext';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
 import { useSettings } from '@/lib/settings';
 import { colors, fonts, iconStroke, touch } from '@/theme/tokens';
@@ -66,6 +67,7 @@ export default function DossierScreen() {
   const { settings, loaded } = useSettings();
   const { drive } = useProjectsBackend();
   const { projects, wantProjects } = useRepertoire();
+  const { remember } = useRecentDossiers();
   const [path, setPath] = useState<DriveItem[]>([]);
   const [listing, setListing] = useState<{ folderId: string; items: DriveItem[] } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -87,6 +89,7 @@ export default function DossierScreen() {
       try {
         if (given) {
           if (alive) setPath([{ ...given, folder: true, size: 0, modified: '', webUrl: '' }]);
+          if (number) remember(number);
           return;
         }
         if (!settings.demo && !settings.racine) throw new Error('Collez la racine projets dans les paramètres.');
@@ -96,6 +99,7 @@ export default function DossierScreen() {
           setPath([found.folder]);
           setError('');
         }
+        remember(number);
       } catch (exc) {
         if (alive) setError(message(exc));
       }
@@ -106,7 +110,7 @@ export default function DossierScreen() {
     };
     // `given` is rebuilt at each render from its three parameters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, drive, settings.demo, settings.racine, number, params.driveId, params.itemId]);
+  }, [loaded, drive, settings.demo, settings.racine, number, params.driveId, params.itemId, remember]);
 
   const current = path[path.length - 1] ?? null;
 

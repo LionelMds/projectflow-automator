@@ -12,12 +12,14 @@ import { useAuth } from '@/lib/auth';
 import { COMPANY_LABELS, companySettingsFor, emptyCompanyFields, type CompanyField } from '@/lib/companySettings';
 import { DEMO_PLAN_ID, demoPlanner } from '@/lib/demoProjects';
 import { close } from '@/lib/navigation';
+import { usePlanning } from '@/lib/planning/PlanningContext';
 import { errorMessage } from '@/lib/projects/creation';
 import { graphDrive } from '@/lib/projects/drive';
 import { RACINE_LABEL, REFERENCE_LABEL } from '@/lib/projects/location';
 import { graphPlanner, plannerPlanIdFromText, type PlannerBucket, type PlannerMember } from '@/lib/projects/planner';
 import { resolveWorkbook } from '@/lib/repertoire/workbook';
 import { useSettings, type Settings } from '@/lib/settings';
+import { planningTeams } from '@/lib/widgets/planningWidget';
 import { colors, fonts, touch } from '@/theme/tokens';
 
 export default function ParametresScreen() {
@@ -115,6 +117,19 @@ export default function ParametresScreen() {
         index >= 0 ? names.filter((_, position) => position !== index) : [...names, member.name || member.email || member.id],
     }));
   };
+
+  // « Ma sélection » of the « Planning » widget: the planning's people, team by team.
+  const { data: planning, load: loadPlanning } = usePlanning();
+  const teams = useMemo(() => (planning ? planningTeams(planning) : []), [planning]);
+  const canReadPlanning = loaded && (settings.demo || status === 'signedIn');
+  useEffect(() => {
+    if (Platform.OS !== 'android' && canReadPlanning && !planning) void loadPlanning();
+  }, [canReadPlanning, planning, loadPlanning]);
+  const togglePerson = (id: string) =>
+    setEdits((previous) => {
+      const chosen = previous.widgetPeople ?? settings.widgetPeople;
+      return { ...previous, widgetPeople: chosen.includes(id) ? chosen.filter((other) => other !== id) : [...chosen, id] };
+    });
 
   const buckets =
     plannerOptions?.buckets ??
@@ -332,6 +347,35 @@ export default function ParametresScreen() {
               compte Microsoft si Microsoft les refuse.
             </Muted>
           </Blueprint>
+
+          {Platform.OS !== 'android' ? (
+            <Blueprint style={styles.section}>
+              <SectionHeading number="08">Widget Planning</SectionHeading>
+              <Muted>
+                Sur l’iPhone, touchez longuement le widget « Planning », puis « Modifier le widget » : « Afficher » propose Moi,
+                Ma sélection, une équipe, une personne ou tout le monde. « Ma sélection » montre les personnes cochées ici.
+              </Muted>
+              {teams.length ? (
+                teams.map((team) => (
+                  <View key={team.key} style={styles.group}>
+                    <Caps>{team.name}</Caps>
+                    <View style={styles.chips}>
+                      {team.members.map((person) => (
+                        <Chip
+                          key={person.id}
+                          label={person.initials?.trim() ? `${person.initials.trim().toUpperCase()} · ${person.name}` : person.name}
+                          selected={draft.widgetPeople.includes(person.id)}
+                          onPress={() => togglePerson(person.id)}
+                        />
+                      ))}
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <Muted>Les personnes apparaissent une fois le planning lu (connexion Microsoft ou mode démo).</Muted>
+              )}
+            </Blueprint>
+          ) : null}
 
           {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
           <Button label="Enregistrer" variant="primary" busy={saving} onPress={() => void onSave()} />

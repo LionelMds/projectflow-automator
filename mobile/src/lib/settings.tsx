@@ -30,6 +30,8 @@ export type Settings = {
   /** Members preselected in the creation form: the connected account may be shared. */
   plannerAssigneeIds: string[];
   plannerAssigneeNames: string[];
+  /** « Ma sélection » of the iPhone's « Planning » widget: planning people, by id. */
+  widgetPeople: string[];
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -46,6 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   plannerDueDays: DEFAULT_PLANNER_DUE_DAYS,
   plannerAssigneeIds: [],
   plannerAssigneeNames: [],
+  widgetPeople: [],
 };
 const STORAGE_KEY = 'projectflow.settings';
 
@@ -94,6 +97,7 @@ export function parseSettings(raw: string | null): Settings {
       plannerDueDays: dueDays(data.plannerDueDays),
       plannerAssigneeIds: strings(data.plannerAssigneeIds),
       plannerAssigneeNames: strings(data.plannerAssigneeNames),
+      widgetPeople: strings(data.widgetPeople),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -123,6 +127,7 @@ export function cleanSettings(next: Settings): Settings {
     plannerDueDays: dueDays(next.plannerDueDays),
     plannerAssigneeIds: ids,
     plannerAssigneeNames: names,
+    widgetPeople: [...new Set(next.widgetPeople)],
   };
 }
 

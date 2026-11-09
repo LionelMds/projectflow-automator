@@ -74,6 +74,21 @@ du poste sont reprises en TypeScript avec leurs propres tests unitaires (portés
     « Android » : sans initiales, le planning reste en lecture, comme sur le poste.
 - **Mode démo** (Paramètres) : données d'exemple en mémoire, rien n'est lu ni écrit chez
   Microsoft. Tout peut s'essayer sans compte Microsoft.
+- **Widgets iPhone** (écran d'accueil et écran verrouillé, `src/widgets/`) :
+  - « **Planning** » : la journée des personnes choisies sur le widget (appui long, « Modifier le
+    widget », « Afficher ») : **Moi** (initiales de Paramètres), **Ma sélection** (personnes
+    cochées dans Paramètres, « Widget Planning »), une équipe, une personne ou **Tout le monde**.
+    Une personne : ses tâches comme sa ligne du planning (numéro, titre, matin / après-midi /
+    journée, absence, jour férié) ; petit : deux tâches, moyen : quatre, grand : la journée et le
+    jour ouvré suivant ; toucher une tâche l'ouvre. Plusieurs personnes : une ligne chacune
+    (initiales, tâches du jour ou absence), comme la vue Jour du planning. Il passe seul au jour
+    suivant à minuit (deux semaines écrites d'avance) ; le samedi et le dimanche, il montre le
+    lundi. Toucher le widget ouvre le planning sur ce jour. Il montre ce que l'app a lu en dernier
+    (heure en haut à droite) : l'app relit le planning à chaque ouverture. Les widgets demandent
+    iOS 17 (`plugins/withWidgetsIos17.js`) ; l'app reste installable dès iOS 16.4 ;
+  - « **Dossiers récents** » : les derniers dossiers ouverts sur le téléphone (dossier, fiche,
+    Création), chacun ouvrant son dossier ; la même liste est en tête de l'Explorer.
+  - Android n'a pas de widget : la bibliothèque ne sait pas encore y ouvrir l'app au toucher.
 
 Restent sur le poste : la **Sortie dossier**, gestion des équipes, des personnes et des réglages partagés du planning,
 ordre manuel des cartes « À planifier », duplication et détachement d'une tâche, travail de nuit
@@ -150,7 +165,10 @@ chemins OneDrive (raccourcis vers SharePoint).
 ## Organisation
 
 - `src/app/` : écrans (Expo Router). `(tabs)/` : les trois modules et l'Explorer ; écrans modaux : `ligne`
-  (répertoire), `tache`, `absence`, `saisie` (planning), `parametres`.
+  (répertoire), `tache`, `absence`, `saisie` (planning), `dossier`, `parametres`.
+- `src/widgets/` : les widgets iPhone (`expo-widgets`, code exécuté hors de l'app : tout ce
+  qu'ils utilisent est déclaré dans leur fonction). `src/lib/widgets/` prépare leur contenu
+  (`WidgetSync`) ; liens : `projectflow://planning?jour=…`, `tache?id=…`, `dossier?number=…`.
 - `src/lib/` : logique sans interface — `repertoire/`, `planning/`, `projects/` (création),
   Graph, connexion, démo.
 - `src/components/`, `src/theme/` : composants et jetons du thème Industry.

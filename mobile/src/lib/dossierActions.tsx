@@ -14,6 +14,7 @@ import { useProjectsBackend } from '@/lib/projects/backend';
 import { findDossier } from '@/lib/projects/creation';
 import { parseProjectNumber } from '@/lib/projects/numbers';
 import { openWorkbook } from '@/lib/projects/openFile';
+import { useRecentDossiers } from '@/lib/recent/RecentContext';
 import { useSettings } from '@/lib/settings';
 import { iconStroke } from '@/theme/tokens';
 
@@ -22,6 +23,7 @@ export type DossierAction = 'creation' | 'folder' | 'fiche' | 'repertoire' | 'pl
 export function useDossierActions() {
   const { settings } = useSettings();
   const { drive } = useProjectsBackend();
+  const { remember } = useRecentDossiers();
 
   const locate = useCallback(
     async (number: string) => {
@@ -38,8 +40,9 @@ export function useDossierActions() {
       if (!fiche) throw new Error(`Aucune fiche Excel dans ${folderPath}`);
       // In the Excel app, edited in place on OneDrive (Excel for the web without the app).
       await openWorkbook(fiche);
+      remember(number);
     },
-    [locate],
+    [locate, remember],
   );
 
   // `at` makes each request new, so that asking twice for the same dossier works twice.

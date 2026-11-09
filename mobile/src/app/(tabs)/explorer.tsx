@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { ChevronRight, Folder, FolderOpen, Search } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ActionSheet } from '@/components/ActionSheet';
 import { Notice } from '@/components/Notice';
@@ -15,6 +15,7 @@ import { useProjectsBackend } from '@/lib/projects/backend';
 import { findChildFolder, type DriveItem } from '@/lib/projects/drive';
 import { RACINE_LABEL } from '@/lib/projects/location';
 import { canonicalProjectNumber, isProjectNumber } from '@/lib/projects/numbers';
+import { useRecentDossiers } from '@/lib/recent/RecentContext';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
 import { useSettings } from '@/lib/settings';
 import { colors, fonts, iconStroke, touch } from '@/theme/tokens';
@@ -55,6 +56,9 @@ export default function ExplorerScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [reload, setReload] = useState(0);
   const [menu, setMenu] = useState<DriveItem | null>(null);
+  // The dossiers last opened on this phone, as the « Dossiers récents » widget shows them.
+  const { recent } = useRecentDossiers();
+  const [recentMenu, setRecentMenu] = useState<string | null>(null);
 
   const ready = loaded && (settings.demo || (status === 'signedIn' && settings.racine !== ''));
 
@@ -148,6 +152,34 @@ export default function ExplorerScreen() {
         <Title>{racineName || 'Dossiers'}</Title>
       </View>
 
+      {recent.length ? (
+        <View style={styles.recent}>
+          <Caps>Récents</Caps>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentRow}>
+            {recent.map((item) => (
+              <Pressable
+                key={item.number}
+                accessibilityRole="button"
+                accessibilityLabel={[item.number, item.designation, item.client].filter(Boolean).join(', ')}
+                accessibilityHint="Appui long : actions du dossier"
+                onPress={() => router.push({ pathname: '/dossier', params: { number: item.number } })}
+                onLongPress={() => {
+                  pressFeedback();
+                  setRecentMenu(item.number);
+                }}
+                delayLongPress={350}
+                style={({ pressed }) => [styles.recentCard, pressed && styles.pressed]}
+              >
+                <DossierNumber style={styles.recentNumber}>{item.number}</DossierNumber>
+                <Text style={styles.recentText} numberOfLines={1}>
+                  {item.designation || item.client || ' '}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
+
       <View accessibilityRole="tablist" style={styles.years}>
         {years.map((candidate) => {
           const selected = candidate === year && !otherOpen;
@@ -232,6 +264,7 @@ export default function ExplorerScreen() {
 
   const menuNumber = menu ? numberOf(menu) : '';
   const menuProject = menuNumber ? projects.get(menuNumber) : undefined;
+  const recentItem = recentMenu ? recent.find((item) => item.number === recentMenu) : undefined;
 
   return (
     <Screen>
@@ -324,6 +357,23 @@ export default function ExplorerScreen() {
             : []
         }
       />
+
+      <ActionSheet
+        visible={recentMenu !== null}
+        onClose={() => setRecentMenu(null)}
+        kicker={recentMenu ?? undefined}
+        title={recentItem?.designation || 'Désignation inconnue'}
+        subtitle={recentItem?.client ?? ''}
+        sections={
+          recentMenu
+            ? [
+                { actions: dossier.actions(recentMenu, ['folder', 'fiche', 'creation']) },
+                { actions: dossier.actions(recentMenu, ['task', 'planning', 'repertoire']) },
+                { actions: dossier.actions(recentMenu, ['copy']) },
+              ]
+            : []
+        }
+      />
     </Screen>
   );
 }
@@ -333,6 +383,20 @@ const styles = StyleSheet.create({
   empty: { padding: 20, gap: 12 },
   list: { paddingHorizontal: 20, paddingBottom: 28 },
   head: { paddingTop: 18, paddingBottom: 6, gap: 12 },
+  recent: { gap: 6 },
+  recentRow: { gap: 8, paddingRight: 4 },
+  recentCard: {
+    width: 156,
+    minHeight: touch + 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 2,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+  },
+  recentNumber: { fontSize: 16 },
+  recentText: { fontFamily: fonts.body, fontSize: 13, color: colors.muted },
   years: { flexDirection: 'row', borderWidth: 1, borderColor: colors.accent },
   year: { flex: 1, minHeight: touch, alignItems: 'center', justifyContent: 'center' },
   yearOn: { backgroundColor: colors.accent700 },

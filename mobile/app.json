@@ -48,6 +48,61 @@
           "resizeMode": "contain",
           "backgroundColor": "#F2F2F3"
         }
+      ],
+      [
+        "./plugins/withWidgetsIos17",
+        {
+          "widgets": [
+            {
+              "name": "PlanningJour",
+              "displayName": "Planning",
+              "description": "La journée de vos personnes, d’après le planning partagé.",
+              "ios": {
+                "supportedFamilies": [
+                  "systemSmall",
+                  "systemMedium",
+                  "systemLarge",
+                  "accessoryRectangular",
+                  "accessoryInline"
+                ],
+                "initialLayout": "./src/widgets/PlanningJour.tsx",
+                "configuration": {
+                  "title": "Planning",
+                  "description": "Moi, Ma sélection (cochée dans Paramètres de ProjectFlow), une équipe, une personne ou tout le monde.",
+                  "parameters": {
+                    "afficher": {
+                      "title": "Afficher",
+                      "type": "enum",
+                      "dynamic": true,
+                      "default": "moi",
+                      "values": [
+                        { "name": "Moi", "value": "moi" },
+                        { "name": "Ma sélection", "value": "selection" },
+                        { "name": "Tout le monde", "value": "tous" }
+                      ]
+                    }
+                  }
+                }
+              },
+              "android": null
+            },
+            {
+              "name": "DossiersRecents",
+              "displayName": "Dossiers récents",
+              "description": "Les derniers dossiers ouverts sur ce téléphone.",
+              "ios": {
+                "supportedFamilies": [
+                  "systemSmall",
+                  "systemMedium",
+                  "systemLarge",
+                  "accessoryRectangular"
+                ],
+                "initialLayout": "./src/widgets/DossiersRecents.tsx"
+              },
+              "android": null
+            }
+          ]
+        }
       ]
     ],
     "extra": {

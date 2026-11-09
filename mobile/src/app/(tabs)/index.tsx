@@ -32,6 +32,7 @@ import type { DriveItem } from '@/lib/projects/drive';
 import { numberText, parseProjectNumber } from '@/lib/projects/numbers';
 import { openWorkbook } from '@/lib/projects/openFile';
 import type { PlannerBucket, PlannerMember } from '@/lib/projects/planner';
+import { useRecentDossiers } from '@/lib/recent/RecentContext';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
 import type { RepertoireRow } from '@/lib/repertoire/rows';
 import { useSettings, type Settings } from '@/lib/settings';
@@ -81,6 +82,7 @@ export default function CreationScreen() {
     [stored],
   );
   const { peek, upsertProject } = useRepertoire();
+  const { remember } = useRecentDossiers();
   const backend = useProjectsBackend();
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
 
@@ -161,6 +163,7 @@ export default function CreationScreen() {
       : outcome.folderPath;
     setBanner({ kind: 'success', message: title, detail });
     setResult({ number: outcome.number, folder: outcome.folder, fiche: outcome.fiche });
+    remember(outcome.number);
   };
 
   const rememberRows = (year: string, snapshotRows: RepertoireRow[]) => setRows({ year, rows: snapshotRows });
@@ -209,6 +212,7 @@ export default function CreationScreen() {
       }));
       setBanner({ kind: 'success', message: `Projet ${numberText(number)} chargé`, detail: loadedProject.folderPath });
       setResult({ number: numberText(number), folder: loadedProject.folder, fiche: loadedProject.fiche });
+      remember(numberText(number));
     });
   const onLoad = () => loadNumber({ year: form.year, projectId: form.projectId, subprojectId: form.subprojectId });
 
