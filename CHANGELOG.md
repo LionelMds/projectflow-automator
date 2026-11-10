@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.75
+
 - Planning : `Suppr` sur la derniere personne d'une tache la supprime (toast « Annuler ») au
   lieu de la renvoyer dans « A planifier » ; pour l'y renvoyer, la glisser dans la colonne ou
   clic droit > « Renvoyer a planifier ».
