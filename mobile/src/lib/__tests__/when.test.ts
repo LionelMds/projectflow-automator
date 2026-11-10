@@ -67,6 +67,15 @@ describe('début et fin sur les roues', () => {
     expect(firstWhen(calendar, monday, { days: 2 }).end).toBe(at(monday + 2, 16, 30));
   });
 
+  it('offers the planning cell touched: its half day, else a day from that minute', () => {
+    const afternoon = { start: at(friday - 1, 13), end: at(friday - 1, 16, 30) };
+    expect(firstWhen(calendar, monday, {}, afternoon)).toEqual(afternoon);
+    expect(firstWhen(calendar, monday, { minutes: 90 }, { start: at(monday, 9), end: null })).toEqual({
+      start: at(monday, 9),
+      end: at(monday, 10, 30),
+    });
+  });
+
   it('says what the planning will change, and refuses an end before the start', () => {
     expect(whenNotes(calendar, { start: at(monday, 6, 30), end: at(monday, 16, 30) })).toEqual([]);
     expect(whenNotes(calendar, { start: at(monday, 18), end: at(monday + 1, 12) })).toEqual([

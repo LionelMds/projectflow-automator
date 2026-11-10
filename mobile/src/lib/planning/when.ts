@@ -39,15 +39,17 @@ export function movedStart(calendar: WorkCalendar, when: When, start: Instant): 
 }
 
 /**
- * The span first offered to a task without one: the next working morning, as long as its
- * estimate (hours typed, else days, else one day).
+ * The span first offered to a task without one: the planning cell touched, else the next
+ * working morning; as long as the cell, else the estimate (hours typed, else days, else a day).
  */
 export function firstWhen(
   calendar: WorkCalendar,
   today: number,
   estimate: { minutes?: number; days?: number } = {},
+  cell: { start: Instant; end: Instant | null } | null = null,
 ): When {
-  const start = halfDayStart(calendar, calendar.nextWorkday(today), false);
+  if (cell?.end != null) return { start: cell.start, end: cell.end };
+  const start = cell ? calendar.workingStart(snap(cell.start)) : halfDayStart(calendar, calendar.nextWorkday(today), false);
   if (estimate.minutes && !estimate.days) return { start, end: calendar.addWork(start, estimate.minutes) };
   return { start, end: endOfDays(calendar, start, estimate.days || 1) };
 }

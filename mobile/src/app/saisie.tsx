@@ -102,17 +102,27 @@ export default function SaisieScreen() {
   const today = todayNumber();
   const [picked, setPicked] = useState<{ when: When | null; basis: string } | null>(null);
   const basis = `${entry?.start ?? ''}|${entry?.end ?? ''}`;
+  if (picked && picked.basis !== basis) setPicked(null);
   const override = picked && picked.basis === basis ? picked : null;
   const calendar = context ? (context.calendarFor?.(entry?.resourceIds[0] ?? null) ?? context.calendar) : null;
-  const shownEntry = entry && override && calendar ? entryWithWhen(entry, calendar, override.when) : entry;
-  const when: When | null = override
-    ? override.when
-    : entry && entry.start !== null && entry.end !== null
-      ? { start: entry.start, end: entry.end }
-      : null;
+  // Shown at once, as in the Calendar: the span typed, else the planning cell touched or the
+  // next working morning. « Sans date » sends the task to « À planifier ».
+  const typedWhen = entry && entry.start !== null && entry.end !== null ? { start: entry.start, end: entry.end } : null;
+  const offered = calendar
+    ? firstWhen(
+        calendar,
+        today,
+        { minutes: entry?.estimateMinutes, days: entry?.estimateDays },
+        cellStart !== null ? { start: cellStart, end: cellEnd } : null,
+      )
+    : null;
+  // The span replacing the text's (null: « Sans date »); undefined keeps the span typed.
+  const applied: When | null | undefined = override ? override.when : typedWhen ? undefined : offered;
+  const shownEntry = entry && calendar && applied !== undefined ? entryWithWhen(entry, calendar, applied) : entry;
+  const when: When | null = applied === undefined ? typedWhen : applied;
   // An absence keeps its days, a night task its typed hours: no wheels for them.
   const timed = !entry || (entry.destination !== 'absence' && !entry.offHours);
-  const refused = Boolean(override?.when && calendar && whenRefused(calendar, override.when));
+  const refused = Boolean(applied && calendar && whenRefused(calendar, applied));
 
   const typedNumber = entry?.projectNumber ?? '';
   useEffect(() => {
@@ -138,7 +148,7 @@ export default function SaisieScreen() {
         parsed = parseEntry(text, { ...context, findProject: (number) => directory.get(number) ?? null });
       }
     }
-    await createFrom(override && calendar ? entryWithWhen(parsed, calendar, override.when) : parsed, keep);
+    await createFrom(calendar && applied !== undefined ? entryWithWhen(parsed, calendar, applied) : parsed, keep);
   };
 
   const createFrom = async (entry: ParsedEntry, keep: boolean) => {
@@ -330,13 +340,8 @@ export default function SaisieScreen() {
                 <Pressable
                   accessibilityRole="button"
                   disabled={!calendar || Boolean(editBlocker)}
-                  onPress={() =>
-                    calendar &&
-                    setPicked({
-                      when: firstWhen(calendar, today, { minutes: entry?.estimateMinutes, days: entry?.estimateDays }),
-                      basis,
-                    })
-                  }
+                  // Back to the span typed, else the one offered.
+                  onPress={() => setPicked(null)}
                   style={({ pressed }) => [styles.choose, pressed && styles.suggestionPressed]}
                 >
                   <Text style={styles.chooseText}>À planifier, sans date</Text>
@@ -387,7 +392,7 @@ export default function SaisieScreen() {
                       ))}
                     </View>
                   ) : null}
-                  {override ? null : <Muted>{shownEntry.interpretation}</Muted>}
+                  {applied !== undefined ? null : <Muted>{shownEntry.interpretation}</Muted>}
                 </>
               )}
               {destination ? <Text style={styles.destination}>{destination}</Text> : null}
@@ -401,8 +406,8 @@ export default function SaisieScreen() {
 
           <View style={styles.syntax}>
             <Muted style={styles.small}>
-              Tout se tape aussi : heures 7h30-11h, 4h, 2p personnes requises, /vac LBI 26.10-30.10 pour une absence. Sans jour, la
-              tâche va dans « À planifier ».
+              Tout se tape aussi : lun, heures 7h30-11h, 4h, 2p personnes requises, /vac LBI 26.10-30.10 pour une absence. « Sans
+              date » envoie la tâche dans « À planifier ».
             </Muted>
           </View>
 
