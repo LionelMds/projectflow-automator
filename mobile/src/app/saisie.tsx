@@ -8,6 +8,7 @@ import { Button } from '@/components/Button';
 import { Chip } from '@/components/Chip';
 import { Notice } from '@/components/Notice';
 import { Caps, DossierNumber, Kicker, Muted } from '@/components/Text';
+import { WhenPicker } from '@/components/WhenPicker';
 import { close } from '@/lib/navigation';
 import { calendarResolver, contextFor, createAbsence, createTask } from '@/lib/planning/commands';
 import type { Change } from '@/lib/planning/documents';
@@ -17,8 +18,6 @@ import {
   dossierSuggestions,
   hasToken,
   replaceTypedWord,
-  SHORTCUT_DAYS,
-  SHORTCUT_DURATIONS,
   toggleToken,
   type ShortcutKind,
 } from '@/lib/planning/entryShortcuts';
@@ -28,6 +27,7 @@ import { useLoadedPlanning } from '@/lib/planning/PlanningContext';
 import { DAY_ABBREVIATIONS, parseEntry, type EntryContext, type ParsedEntry } from '@/lib/planning/quickEntry';
 import { UNASSIGNED } from '@/lib/planning/week';
 import { dateParts, mondayOf, parseDate, todayNumber, weekday } from '@/lib/planning/walltime';
+import { entryWithWhen, firstWhen, movedStart, whenRefused, type When } from '@/lib/planning/when';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
 import { useSettings } from '@/lib/settings';
 import { colors, fonts, touch } from '@/theme/tokens';
@@ -97,6 +97,23 @@ export default function SaisieScreen() {
     }
   }, [context, text]);
 
+  // « Début » and « Fin » turned on the wheels. The text wins again as soon as it changes the
+  // day or the hours it gives (the last one who spoke is right).
+  const today = todayNumber();
+  const [picked, setPicked] = useState<{ when: When | null; basis: string } | null>(null);
+  const basis = `${entry?.start ?? ''}|${entry?.end ?? ''}`;
+  const override = picked && picked.basis === basis ? picked : null;
+  const calendar = context ? (context.calendarFor?.(entry?.resourceIds[0] ?? null) ?? context.calendar) : null;
+  const shownEntry = entry && override && calendar ? entryWithWhen(entry, calendar, override.when) : entry;
+  const when: When | null = override
+    ? override.when
+    : entry && entry.start !== null && entry.end !== null
+      ? { start: entry.start, end: entry.end }
+      : null;
+  // An absence keeps its days, a night task its typed hours: no wheels for them.
+  const timed = !entry || (entry.destination !== 'absence' && !entry.offHours);
+  const refused = Boolean(override?.when && calendar && whenRefused(calendar, override.when));
+
   const typedNumber = entry?.projectNumber ?? '';
   useEffect(() => {
     if (source && typedNumber && !projects.has(typedNumber)) void wantProjects([typedNumber]);
@@ -121,7 +138,7 @@ export default function SaisieScreen() {
         parsed = parseEntry(text, { ...context, findProject: (number) => directory.get(number) ?? null });
       }
     }
-    await createFrom(parsed, keep);
+    await createFrom(override && calendar ? entryWithWhen(parsed, calendar, override.when) : parsed, keep);
   };
 
   const createFrom = async (entry: ParsedEntry, keep: boolean) => {
@@ -209,7 +226,7 @@ export default function SaisieScreen() {
     setText((current) => toggleToken(current, token, kind));
     setError('');
   };
-  const destination = entry ? destinationText(entry, label) : '';
+  const destination = shownEntry ? destinationText(shownEntry, label) : '';
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={styles.safe}>
@@ -279,21 +296,55 @@ export default function SaisieScreen() {
                 ))}
               </ShortcutRow>
             ) : null}
-            <ShortcutRow label="Quand">
-              {SHORTCUT_DAYS.map((day) => (
-                <Chip key={day} label={day} on={hasToken(text, day)} onPress={() => toggle(day, 'day')} />
-              ))}
-            </ShortcutRow>
-            <ShortcutRow label="Durée">
-              {SHORTCUT_DURATIONS.map((duration) => (
-                <Chip key={duration} label={duration} on={hasToken(text, duration)} onPress={() => toggle(duration, 'duration')} />
-              ))}
-            </ShortcutRow>
             <ShortcutRow label="Statut">
               <Chip label="? Provisoire" on={hasToken(text, '?')} onPress={() => toggle('?', 'flag')} />
               <Chip label="! Urgent" on={hasToken(text, '!')} onPress={() => toggle('!', 'flag')} />
             </ShortcutRow>
           </View>
+
+          {timed ? (
+            <View style={styles.whenBlock}>
+              <View style={styles.whenHead}>
+                <Caps style={styles.flex}>Quand</Caps>
+                {when ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setPicked({ when: null, basis })}
+                    style={styles.whenLink}
+                  >
+                    <Text style={styles.whenLinkText}>Sans date</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              {when && calendar ? (
+                <WhenPicker
+                  value={when}
+                  calendar={calendar}
+                  today={today}
+                  disabled={Boolean(editBlocker)}
+                  onChange={(next, edge) =>
+                    setPicked({ when: edge === 'start' ? movedStart(calendar, when, next.start) : next, basis })
+                  }
+                />
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={!calendar || Boolean(editBlocker)}
+                  onPress={() =>
+                    calendar &&
+                    setPicked({
+                      when: firstWhen(calendar, today, { minutes: entry?.estimateMinutes, days: entry?.estimateDays }),
+                      basis,
+                    })
+                  }
+                  style={({ pressed }) => [styles.choose, pressed && styles.suggestionPressed]}
+                >
+                  <Text style={styles.chooseText}>À planifier, sans date</Text>
+                  <Text style={styles.chooseAction}>Choisir le début et la fin</Text>
+                </Pressable>
+              )}
+            </View>
+          ) : null}
 
           {waiting ? <Muted>Chargement du planning…</Muted> : null}
           {loadError ? <Notice tone="error" message={loadError} /> : null}
@@ -301,19 +352,19 @@ export default function SaisieScreen() {
           {done ? <Notice message={done} /> : null}
           {error ? <Notice tone="error" message={error} /> : null}
 
-          {entry ? (
+          {shownEntry ? (
             <Blueprint style={styles.preview}>
-              {entry.destination === 'absence' && entry.absence ? (
+              {shownEntry.destination === 'absence' && shownEntry.absence ? (
                 <>
-                  <Text style={styles.previewTitle}>{ABSENCE_LABELS[entry.absence.reason] ?? entry.absence.reason}</Text>
-                  <Muted>{entry.interpretation}</Muted>
+                  <Text style={styles.previewTitle}>{ABSENCE_LABELS[shownEntry.absence.reason] ?? shownEntry.absence.reason}</Text>
+                  <Muted>{shownEntry.interpretation}</Muted>
                 </>
               ) : (
                 <>
                   <View style={styles.previewHead}>
-                    {entry.projectNumber ? <DossierNumber style={styles.previewNumber}>{entry.projectNumber}</DossierNumber> : null}
+                    {shownEntry.projectNumber ? <DossierNumber style={styles.previewNumber}>{shownEntry.projectNumber}</DossierNumber> : null}
                     <Text style={styles.previewTitle} numberOfLines={2}>
-                      {capitalized(entry.title.trim()) || entry.project?.designation || (entry.projectNumber ? '' : 'Sans titre')}
+                      {capitalized(shownEntry.title.trim()) || shownEntry.project?.designation || (shownEntry.projectNumber ? '' : 'Sans titre')}
                     </Text>
                   </View>
                   {type ? (
@@ -323,24 +374,24 @@ export default function SaisieScreen() {
                     </View>
                   ) : null}
                   <Text style={styles.when}>
-                    {entry.start !== null && entry.end !== null
-                      ? `${describeInstant(entry.start)} → ${describeInstant(entry.end)}`
+                    {shownEntry.start !== null && shownEntry.end !== null
+                      ? `${describeInstant(shownEntry.start)} → ${describeInstant(shownEntry.end)}`
                       : 'À planifier'}
                   </Text>
-                  {entry.resourceIds.length ? (
+                  {shownEntry.resourceIds.length ? (
                     <View style={styles.people}>
-                      {entry.resourceIds.map((id) => (
+                      {shownEntry.resourceIds.map((id) => (
                         <Text key={id} style={styles.person}>
                           {names.get(id) ?? id}
                         </Text>
                       ))}
                     </View>
                   ) : null}
-                  <Muted>{entry.interpretation}</Muted>
+                  {override ? null : <Muted>{shownEntry.interpretation}</Muted>}
                 </>
               )}
               {destination ? <Text style={styles.destination}>{destination}</Text> : null}
-              {[...entry.warnings, ...(data ? absenceWarnings(entry, data, names) : [])].map((warning) => (
+              {[...shownEntry.warnings, ...(data ? absenceWarnings(shownEntry, data, names) : [])].map((warning) => (
                 <Text key={warning} style={styles.warning}>
                   ▲ {warning}
                 </Text>
@@ -358,7 +409,7 @@ export default function SaisieScreen() {
           <View style={styles.actions}>
             <Button
               label="Créer et garder"
-              disabled={!entry || busy || Boolean(editBlocker)}
+              disabled={!entry || busy || refused || Boolean(editBlocker)}
               onPress={() => void create(true)}
               style={styles.flex}
             />
@@ -366,7 +417,7 @@ export default function SaisieScreen() {
               label="Créer"
               variant="primary"
               busy={busy}
-              disabled={!entry || Boolean(editBlocker)}
+              disabled={!entry || refused || Boolean(editBlocker)}
               onPress={() => void create(false)}
               style={styles.flex}
             />
@@ -503,4 +554,11 @@ const styles = StyleSheet.create({
   shortcutLabel: { width: 52 },
   chips: { gap: 6, paddingRight: 12 },
   actions: { flexDirection: 'row', gap: 10 },
+  whenBlock: { gap: 2, padding: 12, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface },
+  whenHead: { flexDirection: 'row', alignItems: 'center', minHeight: 28 },
+  whenLink: { minHeight: 28, justifyContent: 'center', paddingLeft: 12 },
+  whenLinkText: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.accent700, textDecorationLine: 'underline' },
+  choose: { minHeight: touch + 8, justifyContent: 'center', gap: 2, paddingVertical: 6 },
+  chooseText: { fontFamily: fonts.body, fontSize: 15, color: colors.muted },
+  chooseAction: { fontFamily: fonts.heading, fontSize: 15, letterSpacing: 0.8, textTransform: 'uppercase', color: colors.accent700 },
 });

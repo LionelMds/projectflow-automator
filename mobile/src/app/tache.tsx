@@ -1,5 +1,5 @@
 import { useLocalSearchParams } from 'expo-router';
-import { ChevronLeft, ChevronRight, FilePlus, FileSpreadsheet, FolderOpen, Plus, Table, Trash2, X } from 'lucide-react-native';
+import { ChevronRight, FilePlus, FileSpreadsheet, FolderOpen, Plus, Table, Trash2, X } from 'lucide-react-native';
 import { useEffect, useMemo, useState, type ComponentProps, type ReactNode } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,6 +9,7 @@ import { Button } from '@/components/Button';
 import { Notice } from '@/components/Notice';
 import { Segmented, Stepper } from '@/components/Segmented';
 import { Caps, Kicker, Muted } from '@/components/Text';
+import { WhenPicker } from '@/components/WhenPicker';
 import { useDossierActions } from '@/lib/dossierActions';
 import { allowedActions } from '@/lib/restriction/restriction';
 import { useRestriction } from '@/lib/restriction/RestrictionContext';
@@ -18,11 +19,9 @@ import {
   assign,
   contextFor,
   deleteTask,
-  moveTask,
+  resizeTask,
   scheduleTask,
   setStatus,
-  setTaskDays,
-  taskDays,
   unassign,
   unscheduleTask,
   updateTask,
@@ -30,21 +29,18 @@ import {
   type TaskFields,
 } from '@/lib/planning/commands';
 import type { Change } from '@/lib/planning/documents';
-import { describeDay, describeInstant, halfDayStart } from '@/lib/planning/display';
+import { describeInstant } from '@/lib/planning/display';
 import { dossierCache, resolveDossierNumber } from '@/lib/planning/dossiers';
-import { instantDay, minuteOfDay, parseInstant } from '@/lib/planning/instant';
-import { formatDays, formatSpan, roundDays } from '@/lib/planning/quickEntry';
+import { parseInstant } from '@/lib/planning/instant';
+import { formatDays } from '@/lib/planning/quickEntry';
 import { isScheduled, STATUS_LABELS, taskLabel, taskTypeOf, taskTypesOf, teamsOf, type TaskStatus } from '@/lib/planning/models';
 import { useLoadedPlanning } from '@/lib/planning/PlanningContext';
 import { todayNumber } from '@/lib/planning/walltime';
+import { firstWhen, movedStart, whenRefused, type When } from '@/lib/planning/when';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
 import { colors, fonts, iconStroke, touch } from '@/theme/tokens';
 
 const STATUS_OPTIONS = (['provisional', 'confirmed', 'done'] as TaskStatus[]).map((value) => ({ value, label: STATUS_LABELS[value] }));
-const HALF_OPTIONS = [
-  { value: 'am', label: 'Matin' },
-  { value: 'pm', label: 'Après-midi' },
-] as const;
 
 type TextField = 'title' | 'project_number' | 'notes';
 type Picker = 'people' | 'type' | null;
@@ -64,8 +60,8 @@ export default function TacheScreen() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [edits, setEdits] = useState<Partial<Record<TextField, string>>>({});
-  const [cardDay, setCardDay] = useState<number | null>(null);
-  const [cardAfternoon, setCardAfternoon] = useState(false);
+  const [draft, setDraft] = useState<When | null>(null);
+  const [cardPicked, setCardPicked] = useState<When | null>(null);
   const [picker, setPicker] = useState<Picker>(null);
   const [opening, setOpening] = useState<string | null>(null);
   // The dossier's details come from the répertoire, read for the dossier's year if needed.
@@ -163,22 +159,12 @@ export default function TacheScreen() {
   };
 
   // When: the day and half-day of the bar, its days; a card is placed on the next working day.
-  const placeDay = cardDay ?? (calendar.isWorkday(todayNumber()) ? todayNumber() : calendar.nextWorkday(todayNumber()));
-  const afternoon = start !== null && minuteOfDay(start) >= 12 * 60;
-  const moveDay = (step: number) => {
-    if (start === null) return;
-    const day = instantDay(start);
-    const target = step > 0 ? calendar.nextWorkday(day) : calendar.previousWorkday(day);
-    void run(() => moveTask(ctx, task.id, { newStart: halfDayStart(calendar, target, afternoon) }), `Déplacé : ${label}`);
-  };
-  const setHalf = (pm: boolean) => {
-    if (start === null) return;
-    void run(() => moveTask(ctx, task.id, { newStart: halfDayStart(calendar, instantDay(start), pm) }), `Déplacé : ${label}`);
-  };
-  // Whole or half days of the bar, else its worked hours counted to the half day (9 h a day).
-  const days = scheduled ? taskDays(ctx, task) : task.estimate_days || 0;
-  const worked = scheduled && start !== null && end !== null ? calendar.workBetween(start, end) : 0;
-  const stepBase = days || Math.max(0.5, roundDays(worked / 540));
+  // When: « Début » and « Fin » on wheels, as in the iPhone's Calendar. A bar's hours are a
+  // draft until « Enregistrer les heures »; a card is offered the next working morning.
+  const today = todayNumber();
+  const barWhen = draft ?? (start !== null && end !== null ? { start, end } : null);
+  const cardWhen =
+    cardPicked ?? firstWhen(calendar, today, { minutes: task.estimate_minutes ?? 0, days: task.estimate_days ?? 0 });
 
   const openDossier = async (key: 'folder' | 'fiche' | 'repertoire' | 'creation') => {
     setError('');
@@ -337,61 +323,48 @@ export default function TacheScreen() {
                 </>
               ) : (
                 <>
-                  <DayPicker
-                    day={instantDay(start)}
+                  <WhenPicker
+                    value={barWhen ?? { start, end }}
+                    calendar={calendar}
+                    today={today}
                     disabled={locked || busy}
-                    onPrevious={() => moveDay(-1)}
-                    onNext={() => moveDay(1)}
+                    onChange={(next, edge) => setDraft(edge === 'start' ? movedStart(calendar, barWhen ?? { start, end }, next.start) : next)}
                   />
-                  <Segmented
-                    accessibilityLabel="Demi-journée"
-                    options={[...HALF_OPTIONS]}
-                    value={afternoon ? 'pm' : 'am'}
-                    disabled={locked || busy}
-                    onChange={(half) => setHalf(half === 'pm')}
-                  />
-                  <View style={styles.line}>
-                    <Caps style={styles.lineLabel}>Durée</Caps>
-                    <View style={styles.flex}>
-                      <Stepper
-                        value={formatSpan(calendar, start, end)}
-                        lessLabel="Une demi-journée de moins"
-                        moreLabel="Une demi-journée de plus"
-                        lessDisabled={locked || busy || (days > 0 && days <= 0.5)}
-                        moreDisabled={locked || busy}
-                        onLess={() => void run(() => setTaskDays(ctx, task.id, Math.max(0.5, stepBase - (days ? 0.5 : 0))), `Durée : ${label}`)}
-                        onMore={() => void run(() => setTaskDays(ctx, task.id, stepBase + 0.5), `Durée : ${label}`)}
+                  {/* The hours are written once chosen, not at each turn of a wheel. */}
+                  {draft ? (
+                    <View style={styles.draft}>
+                      <LinkButton label="Annuler" disabled={busy} onPress={() => setDraft(null)} />
+                      <Button
+                        label="Enregistrer les heures"
+                        variant="primary"
+                        busy={busy}
+                        disabled={locked || whenRefused(calendar, draft)}
+                        onPress={() =>
+                          void run(() => resizeTask(ctx, task.id, { start: draft.start, end: draft.end }), `Heures : ${label}`, () => setDraft(null))
+                        }
+                        style={styles.flex}
                       />
                     </View>
-                  </View>
-                  <Muted style={styles.small}>
-                    {describeInstant(start)} → {describeInstant(end)}
-                  </Muted>
+                  ) : null}
                 </>
               )
             ) : (
               <>
-                <Muted>À planifier{task.estimate_days ? ` · ${formatDays(task.estimate_days)}` : ''}. Choisissez où la poser :</Muted>
-                <DayPicker
-                  day={placeDay}
-                  disabled={locked}
-                  onPrevious={() => setCardDay(calendar.previousWorkday(placeDay))}
-                  onNext={() => setCardDay(calendar.nextWorkday(placeDay))}
-                />
-                <Segmented
-                  accessibilityLabel="Demi-journée"
-                  options={[...HALF_OPTIONS]}
-                  value={cardAfternoon ? 'pm' : 'am'}
-                  disabled={locked}
-                  onChange={(half) => setCardAfternoon(half === 'pm')}
+                <Muted>À planifier{task.estimate_days ? ` · ${formatDays(task.estimate_days)}` : ''}. Choisissez le début et la fin :</Muted>
+                <WhenPicker
+                  value={cardWhen}
+                  calendar={calendar}
+                  today={today}
+                  disabled={locked || busy}
+                  onChange={(next, edge) => setCardPicked(edge === 'start' ? movedStart(calendar, cardWhen, next.start) : next)}
                 />
                 <Button
                   label="Placer sur le planning"
                   variant="primary"
                   busy={busy}
-                  disabled={locked}
+                  disabled={locked || whenRefused(calendar, cardWhen)}
                   onPress={() =>
-                    void run(() => scheduleTask(ctx, task.id, { start: halfDayStart(calendar, placeDay, cardAfternoon) }), `Planifié : ${label}`)
+                    void run(() => scheduleTask(ctx, task.id, { start: cardWhen.start, end: cardWhen.end }), `Planifié : ${label}`, () => setCardPicked(null))
                   }
                 />
               </>
@@ -573,36 +546,6 @@ function Card({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function DayPicker({ day, disabled, onPrevious, onNext }: { day: number; disabled: boolean; onPrevious: () => void; onNext: () => void }) {
-  const today = day === todayNumber();
-  return (
-    <View style={styles.dayPicker}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Jour ouvré précédent"
-        disabled={disabled}
-        onPress={onPrevious}
-        style={({ pressed }) => [styles.dayArrow, pressed && styles.pressed, disabled && styles.disabled]}
-      >
-        <ChevronLeft size={22} color={colors.accent700} strokeWidth={iconStroke} />
-      </Pressable>
-      <View style={styles.dayValue}>
-        <Text style={styles.dayText}>{describeDay(day)}</Text>
-        {today ? <Text style={styles.today}>Aujourd’hui</Text> : null}
-      </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Jour ouvré suivant"
-        disabled={disabled}
-        onPress={onNext}
-        style={({ pressed }) => [styles.dayArrow, pressed && styles.pressed, disabled && styles.disabled]}
-      >
-        <ChevronRight size={22} color={colors.accent700} strokeWidth={iconStroke} />
-      </Pressable>
-    </View>
-  );
-}
-
 function LabeledInput({
   label,
   ...input
@@ -670,6 +613,7 @@ const styles = StyleSheet.create({
   toolText: { fontFamily: fonts.heading, fontSize: 12, letterSpacing: 0.8, textTransform: 'uppercase', color: colors.accent700 },
   pressed: { backgroundColor: colors.accent100 },
   disabled: { opacity: 0.45 },
+  draft: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8 },
   card: { padding: 14, gap: 10, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface },
   cardTitle: { color: colors.muted },
   strong: { fontFamily: fonts.bodySemiBold, fontSize: 16, color: colors.text },
@@ -677,11 +621,6 @@ const styles = StyleSheet.create({
   center: { textAlign: 'center' },
   line: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   lineLabel: { width: 70 },
-  dayPicker: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.line },
-  dayArrow: { width: touch + 4, height: touch + 4, alignItems: 'center', justifyContent: 'center' },
-  dayValue: { flex: 1, alignItems: 'center' },
-  dayText: { fontFamily: fonts.headingBold, fontSize: 19, textTransform: 'capitalize', color: colors.text },
-  today: { fontFamily: fonts.body, fontSize: 12, color: colors.accent700 },
   people: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   person: {
     flexDirection: 'row',

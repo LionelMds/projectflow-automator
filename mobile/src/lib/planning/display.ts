@@ -117,6 +117,13 @@ export function describeDay(day: number): string {
   return `${WEEKDAY_NAMES[weekday(day)]} ${String(date).padStart(2, '0')}.${String(month).padStart(2, '0')}`;
 }
 
+/** « Aujourd’hui », « Demain », else « Lun 9 nov. », as the iPhone's date wheel names a day. */
+export function wheelDayLabel(day: number, today: number): string {
+  if (day === today) return 'Aujourd’hui';
+  if (day === today + 1) return 'Demain';
+  return `${capitalized(WEEKDAY_SHORT[weekday(day)])} ${shortDay(day)}`;
+}
+
 /** « Lu 9 », the column heading. */
 export function columnHeading(day: number, compact = false): string {
   const { date } = dateParts(day);
