@@ -739,37 +739,37 @@ async def test_resize_shift_reassign_and_card_drop(
 
 
 @pytest.mark.asyncio
-async def test_delete_removes_one_person_then_sends_back(
+async def test_delete_removes_one_person_then_deletes_the_task(
     qtbot: Any, tmp_path: Path, data_dirs: Any
 ) -> None:
     store = tmp_path / "store"
     await seed_store(store)
     controller, tab, _hooks = make_controller(qtbot, make_config(store))
     await started(controller)
+    backlog = {task.id for task in snapshot_of(controller).backlog()}
 
     tab.grid.delete_requested.emit([("t-fab", "jdu")], False)  # noqa: FBT003
     fab = snapshot_of(controller).tasks["t-fab"]
     assert fab.assignee_ids == ("mre",)
     assert fab.scheduled
 
+    # The last person gone, the task is deleted, not sent back to « À planifier ».
     tab.grid.delete_requested.emit([("t-fab", "mre")], False)  # noqa: FBT003
+    assert snapshot_of(controller).tasks["t-fab"].deleted
+    assert any(text.endswith("supprimée") for text in toast_texts(tab))
+    controller.undo()
     fab = snapshot_of(controller).tasks["t-fab"]
-    assert not fab.scheduled
-    assert not fab.deleted
-    assert any("n'a plus personne" in text for text in toast_texts(tab))
+    assert (fab.deleted, fab.scheduled, fab.assignee_ids) == (False, True, ("mre",))
 
     # Two bars of one task in one press: one command, no conflicting saves.
     tab.grid.delete_requested.emit([("t-pose", "kdu"), ("t-pose", "ych")], False)  # noqa: FBT003
-    assert not snapshot_of(controller).tasks["t-pose"].scheduled
+    assert snapshot_of(controller).tasks["t-pose"].deleted
 
-    # « Non affecté » has nobody to remove: the task goes back to « À planifier ».
+    # « Non affecté » has nobody to remove: the task is deleted.
     tab.grid.delete_requested.emit([("t-livraison", UNASSIGNED_ROW_ID)], False)  # noqa: FBT003
-    delivery = snapshot_of(controller).tasks["t-livraison"]
-    assert not delivery.scheduled
-    assert not delivery.deleted
-    texts = toast_texts(tab)
-    assert "2026-121 - Livraison verre renvoyée à planifier" in texts
-    assert not any("Livraison verre n'a plus personne" in text for text in texts)
+    assert snapshot_of(controller).tasks["t-livraison"].deleted
+    assert "2026-121 - Livraison verre supprimée" in toast_texts(tab)
+    assert {task.id for task in snapshot_of(controller).backlog()} == backlog
     await close(controller)
 
 

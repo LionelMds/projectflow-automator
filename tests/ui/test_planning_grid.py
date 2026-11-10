@@ -398,7 +398,9 @@ def test_range_selection_over_rows_and_time(qtbot: Any, grid: PlanningGrid) -> N
     assert not grid.scene.range_item.isVisible()
 
 
-def test_month_range_and_resize_keep_half_days(qtbot: Any, grid: PlanningGrid) -> None:
+def test_month_range_keeps_half_days_and_resize_takes_half_hours(
+    qtbot: Any, grid: PlanningGrid
+) -> None:
     ranges = Recorder(grid.range_selected)
     resizes = Recorder(grid.resize_requested)
     grid.set_model(make_model(grid, view="month", density=Density.COMPACT))
@@ -412,10 +414,23 @@ def test_month_range_and_resize_keep_half_days(qtbot: Any, grid: PlanningGrid) -
     drag(qtbot, grid, edge, edge - QPoint(round(rect.width()) + 20, 0))
     edge = grid.view.mapFromScene(QPointF(rect.left() + 1, rect.center().y()))
     drag(qtbot, grid, edge, edge + QPoint(round(rect.width()) + 20, 0))
+    # Pushed past the other edge, a bar keeps its shortest length: half an hour.
     assert resizes.calls == [
-        ("t2", "jd", None, at(tuesday, 12)),
-        ("t2", "jd", at(tuesday, 13), None),
+        ("t2", "jd", None, at(tuesday, 7)),
+        ("t2", "jd", at(tuesday, 16), None),
     ]
+    # Even in the month, a length is set to the half hour, not to the half day.
+    grid.set_model(make_model(grid, view="month", density=Density.COMPACT, zoom=4.0))
+    model = grid.model
+    assert model is not None
+    rect = grid.scene.items_by_key[("t2", "jd")].scene_rect()
+    grid.view.ensureVisible(rect)
+    edge = grid.view.mapFromScene(QPointF(rect.right() - 1, rect.center().y()))
+    target = grid.view.mapFromScene(
+        QPointF(model.timescale.x_of(at(tuesday, 14, 5)), rect.center().y())
+    )
+    drag(qtbot, grid, edge, QPoint(target.x(), edge.y()))
+    assert resizes.calls[-1] == ("t2", "jd", None, at(tuesday, 14))
 
 
 def test_shift_drag_in_empty_cells_is_a_lasso(qtbot: Any, grid: PlanningGrid) -> None:
@@ -517,22 +532,21 @@ def test_month_arrows_step_to_the_half_day_edges(qtbot: Any, grid: PlanningGrid)
     assert shifted(snap, "un", 210) == (at(THURSDAY, 6, 30), at(THURSDAY, 10))
 
 
-def test_month_shift_arrows_move_the_end_by_half_days(qtbot: Any, grid: PlanningGrid) -> None:
+def test_month_shift_arrows_move_the_end_by_half_hours(qtbot: Any, grid: PlanningGrid) -> None:
     shifts = Recorder(grid.shift_requested)
     grid.set_model(make_model(grid, view="month", density=Density.COMPACT))
     grid.select([("t1", "mr")])
     shift = Qt.KeyboardModifier.ShiftModifier
     qtbot.keyClick(grid.view, Qt.Key.Key_Right, shift)
-    assert shifts.calls == [([("t1", "mr")], 210, True)]
+    assert shifts.calls == [([("t1", "mr")], 30, True)]
     snap = snapshot()
     calendar = calendar_resolver(snap)("mr")
-    end = calendar.add_work(at(MONDAY, 12), 210)
+    end = calendar.add_work(at(MONDAY, 12), 30)
     after = commands.resize_task(command_context(snap), "t1", end=end)[0].after
     assert isinstance(after, PlanningTask)
-    assert after.end == at(MONDAY, 16, 30)
-    # A half-day bar cannot lose its last half day.
+    assert after.end == at(MONDAY, 13, 30)
     qtbot.keyClick(grid.view, Qt.Key.Key_Left, shift)
-    assert len(shifts.calls) == 1
+    assert shifts.calls[-1] == ([("t1", "mr")], -30, True)
 
 
 def test_month_arrows_group_bars_needing_another_step(qtbot: Any, grid: PlanningGrid) -> None:

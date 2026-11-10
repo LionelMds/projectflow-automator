@@ -375,7 +375,9 @@ consultation seule et se synchronise de nouveau dès le retour du réseau.
 - `Jour`, `Semaine` (par défaut) et `Mois`, ou `Ctrl+1`, `Ctrl+2`, `Ctrl+3`.
 - `‹` `›` ou `PgPréc` / `PgSuiv` changent de période ; `Aujourd'hui` ou `Ctrl+T` y revient ; un
   clic sur le libellé de la période ouvre un calendrier avec les numéros de semaine.
-- Les barres s'aimantent à la demi-heure en vue Jour et Semaine, à la demi-journée en vue Mois.
+- Les barres s'aimantent à la demi-heure en vue Jour et Semaine. En vue Mois, un déplacement
+  s'aimante à la demi-journée, mais la durée se règle à la demi-heure dans toutes les vues
+  (bord de la barre étiré à la souris, ou `Maj+←/→`).
 - Hauteur des lignes : la densité (`Compacte`, `Normale`, `Large`, menu `≡` de la barre)
   s'applique aux trois vues ; les boutons `Lignes − / +` (ou `Ctrl` + molette sur les noms)
   ajustent ensuite la vue affichée seule. Le texte des barres grossit avec les lignes.
@@ -410,10 +412,11 @@ consultation seule et se synchronise de nouveau dès le retour du réseau.
 | `Maj` + glisser sur une autre ligne | Ajoute cette personne à la même tâche |
 | `Ctrl` + glisser | Copie indépendante |
 | Glisser une barre sur `À planifier` | La renvoie sans dates |
+| Clic droit > `Renvoyer à planifier` | Idem, sans glisser |
 | `←` `→` / `Maj+←` `→` | Décale / allonge ou raccourcit |
 | `↑` `↓` | Réaffecte à la personne du dessus ou du dessous |
-| `Suppr` | Retire la personne de cette barre ; la dernière renvoie la tâche dans `À planifier` |
-| `Maj+Suppr` | Supprime la tâche (toast « Annuler ») |
+| `Suppr` | Retire la personne de cette barre ; la dernière supprime la tâche (toast « Annuler ») |
+| `Maj+Suppr` | Supprime la tâche pour toutes ses personnes (toast « Annuler ») |
 | `Ctrl+Z` / `Ctrl+Y` | Annule / rétablit ses propres actions, sans limite |
 | Clic droit | Statut, type, affecter, détacher, dossier, fiche, répertoire… |
 
@@ -462,6 +465,28 @@ Le survol d'une barre affiche le dossier : client, contact, désignation, sortie
 par et les autres tâches du dossier. Le panneau `Détail` (double-clic ou `Entrée`) permet de
 tout modifier et d'ouvrir le dossier, la fiche, la ligne du répertoire, le formulaire de
 création ou la sortie dossier.
+
+### Importer des rendez-vous d'un autre calendrier
+
+Des rendez-vous se glissent directement sur le planning pour en faire des tâches :
+
+- **Outlook classique (Windows)** : sélectionner un ou plusieurs rendez-vous, tâches ou mails
+  dans Outlook et les glisser sur le planning.
+- **Fichier `.ics`** : glisser un fichier `.ics` depuis l'Explorateur ou le Finder (tout
+  calendrier en exporte un : Outlook, Calendrier Apple, Google…).
+- **Calendrier Apple (Mac)** : glisser l'événement sur le planning ; si le Mac ne le permet
+  pas, le glisser d'abord sur le bureau (il devient un fichier `.ics`), puis ce fichier.
+
+Déposé sur la ligne d'une personne, le rendez-vous y devient une tâche le jour du dépôt, à
+son heure (au plus tôt au début de la journée de travail) et pour sa durée de travail ;
+plusieurs rendez-vous gardent leurs jours d'écart. Un mail ou une tâche Outlook sans date
+prend l'endroit du dépôt. Déposé dans « À planifier », il y attend sans date, avec sa durée
+comme estimation.
+
+Le numéro de dossier est cherché dans l'objet (« 2026-5154 - Pose porte », « 5154 Pose » si
+le répertoire connaît ce dossier) ; le reste de l'objet devient le titre, le lieu et le texte
+vont dans les notes. Tout l'import s'annule d'un coup (`Ctrl+Z` ou « Annuler »). Rien n'est
+modifié ni supprimé dans Outlook.
 
 ### Calendrier Outlook et téléphones
 

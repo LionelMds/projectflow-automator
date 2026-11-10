@@ -76,7 +76,7 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
-from projectflow.core.planning.layout import Density, row_kind
+from projectflow.core.planning.layout import UNASSIGNED_ROW_ID, Density, row_kind
 from projectflow.core.planning.quick_entry import EntryContext, fold_text
 from projectflow.core.planning.timescale import (
     MONTH_NAMES,
@@ -241,7 +241,7 @@ SHORTCUT_SECTIONS: Final[tuple[tuple[str, tuple[tuple[str, str], ...]], ...]] = 
             ("Ctrl+glisser", "Copier"),
             ("← → / Maj+← →", "Décaler / durée"),
             ("Entrée", "Détail"),
-            ("Suppr", "Retirer la personne"),
+            ("Suppr", "Retirer la personne / supprimer"),
             ("Maj+Suppr", "Supprimer pour tous"),
             ("Ctrl+Z / Ctrl+Y", "Annuler / rétablir"),
         ),
@@ -1528,8 +1528,11 @@ class PlanningTab(QWidget):
             hints = [READ_ONLY_HINT]
         elif bars:
             people = self._removed_people(bars)
-            hints = [*SELECTION_HINTS, f"Suppr retirer {people}" if people else "Suppr retirer"]
-            hints.append("Maj+Suppr supprimer")
+            if self._deletes_all(bars):
+                hints = [*SELECTION_HINTS, "Suppr supprimer"]
+            else:
+                hints = [*SELECTION_HINTS, f"Suppr retirer {people}" if people else "Suppr retirer"]
+                hints.append("Maj+Suppr supprimer")
         else:
             hints = list(IDLE_HINTS)
         self.hints_label.setText(native_keys(" · ".join([*hints, F1_HINT])))
@@ -1542,6 +1545,20 @@ class PlanningTab(QWidget):
         return (
             f"{period_text(self._view, self._anchor)} · {people} lignes · {len(model.bars)} barres"
         )
+
+    def _deletes_all(self, bars: Sequence[tuple[str, str]]) -> bool:
+        """Whether Suppr deletes every task of ``bars`` (nobody left on any of them)."""
+        model = self.grid.model
+        if model is None:
+            return False
+        selected: dict[str, set[str]] = {}
+        for task_id, row_id in bars:
+            selected.setdefault(task_id, set()).add(row_id)
+        for task_id, rows in selected.items():
+            task = model.task(task_id)
+            if task is not None and set(task.assignments) - rows and UNASSIGNED_ROW_ID not in rows:
+                return False
+        return True
 
     def _removed_people(self, bars: Sequence[tuple[str, str]]) -> str:
         names = [self.grid.row_short(row_id) for _task, row_id in bars if row_id]

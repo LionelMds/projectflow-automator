@@ -32,6 +32,7 @@ from projectflow.core.numero import canonical_project_number
 from projectflow.core.planning import commands
 from projectflow.core.planning.cache import PlanningCache
 from projectflow.core.planning.calendar import WorkCalendar
+from projectflow.core.planning.calendar_import import ImportedEvent, drafts_for_drop
 from projectflow.core.planning.changes import DocumentChange, PlanningSnapshot
 from projectflow.core.planning.commands import (
     UNASSIGNED,
@@ -80,7 +81,13 @@ from projectflow.core.planning.sync import SyncEngine, SyncMode, SyncStatus
 from projectflow.core.planning.timescale import WEEKDAY_NAMES, week_start
 from projectflow.core.planning.walltime import WallTime, wall_date, wall_time
 from projectflow.core.repertoire_service import RepertoireSnapshot
-from projectflow.exceptions import AuthError, ConfigError, GraphError, ProjectCreationError
+from projectflow.exceptions import (
+    AuthError,
+    ConfigError,
+    GraphError,
+    ProjectCreationError,
+    ProjectFlowError,
+)
 from projectflow.logging import get_logger
 from projectflow.platform.filemanager import open_file_default_app
 from projectflow.platform.paths import documents_dir
@@ -93,6 +100,7 @@ from projectflow.ui.dialogs.planning_team import (
 )
 from projectflow.ui.planning.backlog import release_day
 from projectflow.ui.planning.detail import MULTI_SELECTION, author_text
+from projectflow.ui.planning.external_drop import ExternalDrop
 from projectflow.ui.planning.grid import bars_by_task
 from projectflow.ui.planning.grid_model import (
     build_grid_model,
@@ -135,12 +143,20 @@ class PlanningHooks:
     where its settings live. Without it they change in ``poste_config`` only."""
     open_outlook_calendar: Callable[[], Awaitable[CalendarGateway]] | None = None
     """Optional: the Outlook calendars of the account, for the copy for the phones."""
+    read_outlook_selection: Callable[[], Awaitable[list[ImportedEvent]]] | None = None
+    """Optional: the items selected in the classic Outlook of the poste (Windows), read
+    when they are dragged onto the planning."""
 
 
 PlanningStoreFactory = Callable[[PlanningPosteConfig], Awaitable[PlanningStore]]
 """Opens the store of a poste config; may raise StoreUnavailableError or ConfigError."""
 
 REBUILD_DELAY_MS: Final = 30
+OUTLOOK_IMPORT_UNAVAILABLE: Final = (
+    "Import depuis Outlook : Outlook classique sur Windows uniquement. Ailleurs, glissez "
+    "un fichier .ics exporté du calendrier."
+)
+NOTHING_TO_IMPORT: Final = "Rien à importer : aucun rendez-vous lisible dans ce qui a été déposé."
 PROJECTS_REFRESH_MS: Final = 10 * 60 * 1000
 PROJECTS_STALE_SECONDS: Final = 60.0
 PRELOADED_YEARS: Final = 3
@@ -1067,6 +1083,7 @@ class PlanningController:
         grid.range_selected.connect(self._on_range)
         grid.cell_activated.connect(self._on_cell_activated)
         grid.card_dropped.connect(self._on_card_dropped)
+        grid.import_dropped.connect(self._on_import_dropped)
         grid.shift_requested.connect(self._on_shift)
         grid.reassign_requested.connect(self._on_reassign)
         grid.delete_requested.connect(self._on_delete)
@@ -1091,6 +1108,7 @@ class PlanningController:
         backlog.card_action.connect(self._on_card_action)
         backlog.reorder_requested.connect(self._on_reorder)
         backlog.unschedule_requested.connect(self._on_unschedule)
+        backlog.import_requested.connect(lambda drop: self._on_import_dropped(drop, "", -1))
         backlog.new_entry_requested.connect(tab.focus_quick_entry)
         backlog.filters_changed.connect(self._on_backlog_filters)
 
@@ -1689,39 +1707,56 @@ class PlanningController:
             if changes:
                 self._toast_undo(f"{names} : supprimé pour tous")
             return
-        steps: list[Step] = []
-        for task_id, rows in grouped.items():
-            if UNASSIGNED_ROW_ID in rows:
-                steps.append(step(commands.unschedule_task, task_id))
-            else:
-                steps.extend(step(commands.unassign, task_id, row) for row in rows)
-        label = self._removal_label(grouped, names)
-        changes = self._execute(label, chain(steps))
-        if not changes:
+        steps, deleted = self._removal_steps(grouped)
+        if not steps:
             return
-        sent_back = [
-            change.after
-            for change in changes
-            if isinstance(change.after, PlanningTask)
-            and isinstance(change.before, PlanningTask)
-            and change.before.scheduled
-            and not change.after.scheduled
-        ]
-        if len(sent_back) == 1:
-            task = sent_back[0]
-            # A bar of « Non affecté » never had anybody: it is only sent back.
-            unassigned = UNASSIGNED_ROW_ID in grouped.get(task.id, ())
-            reason = "" if unassigned else " n'a plus personne :"
-            self._toast_undo(f"{task_name(task)}{reason} renvoyée à planifier")
-        elif sent_back:
-            self._toast_undo(f"{len(sent_back)} tâches renvoyées à planifier")
+        label = self._removal_label(grouped, names, deleted=deleted)
+        if not self._execute(label, chain(steps)):
+            return
+        if len(deleted) == 1:
+            task = self._task(deleted[0])
+            self._toast_undo(f"{task_name(task) if task else names} supprimée")
+        elif deleted:
+            self._toast_undo(f"{len(deleted)} tâches supprimées")
 
-    def _removal_label(self, grouped: Mapping[str, Sequence[str]], names: str) -> str:
+    def _removal_steps(self, grouped: Mapping[str, Sequence[str]]) -> tuple[list[Step], list[str]]:
+        """Build the steps of Suppr on bars; give them and the tasks it deletes.
+
+        A task keeps the people not selected; without anybody left it is deleted, never
+        sent back to « À planifier » (a drag there or « Renvoyer à planifier » does that).
+        """
+        steps: list[Step] = []
+        deleted: list[str] = []
+        for task_id, rows in grouped.items():
+            task = self._task(task_id)
+            if task is None:
+                continue
+            removed = [row for row in rows if row in task.assignments]
+            if UNASSIGNED_ROW_ID in rows or not set(self._shown_people(task)) - set(removed):
+                steps.append(step(commands.delete_task, task_id))
+                deleted.append(task_id)
+            else:
+                steps.extend(step(commands.unassign, task_id, row) for row in removed)
+        return steps, deleted
+
+    def _shown_people(self, task: PlanningTask) -> list[str]:
+        """People of ``task`` whose row is shown (an archived person has no bar to select)."""
+        session = self._session
+        rows = session.service.snapshot.resources if session is not None else {}
+        return [
+            rid
+            for rid in task.assignments
+            if (row := rows.get(rid)) is not None and row.active and not row.deleted
+        ]
+
+    def _removal_label(
+        self, grouped: Mapping[str, Sequence[str]], names: str, *, deleted: Sequence[str]
+    ) -> str:
+        if len(deleted) == len(grouped):
+            return f"Supprimer {names}"
         if len(grouped) != 1:
             return f"Retirer les personnes de {names}"
         rows = next(iter(grouped.values()))
-        if UNASSIGNED_ROW_ID in rows:
-            return f"Renvoyer {names} à planifier"
         people = ", ".join(self._who(row) for row in rows)
         return f"Retirer {people} de {names}"
 
@@ -1740,6 +1775,99 @@ class PlanningController:
             f"Planifier {task_name(task)}",
             step(commands.schedule_task, task_id, start=start, resource_ids=resource_ids),
         )
+
+    # -- appointments from another calendar ---------------------------------
+
+    def _on_import_dropped(self, drop: object, row_id: str, start: int) -> None:
+        """Create tasks from appointments dragged in, on ``row_id`` at ``start``.
+
+        ``start`` below 0 means « À planifier ». Outlook items are read once Outlook has
+        ended its drag.
+        """
+        if not isinstance(drop, ExternalDrop) or self._closed:
+            return
+        if self.read_only:
+            self._toast(self._read_only_message())
+            return
+        if not drop.from_outlook:
+            self.import_events(drop.events, row_id, start, source=drop.source)
+            return
+        reader = self._hooks.read_outlook_selection
+        if reader is None:
+            self._toast(OUTLOOK_IMPORT_UNAVAILABLE)
+            return
+        self._hooks.schedule(self._import_from_outlook(reader, row_id, start))
+
+    async def _import_from_outlook(
+        self, reader: Callable[[], Awaitable[list[ImportedEvent]]], row_id: str, start: int
+    ) -> None:
+        try:
+            events = await reader()
+        except ProjectFlowError as exc:
+            self._toast(f"Import depuis Outlook impossible : {exc}")
+            return
+        except Exception:  # noqa: BLE001 - Outlook may fail in many ways; the planning goes on
+            get_logger(__name__).exception("planning.import.outlook_failed")
+            self._toast("Import depuis Outlook impossible : Outlook n'a pas répondu.")
+            return
+        if not self._closed:
+            self.import_events(events, row_id, start, source="Outlook")
+
+    def import_events(
+        self, events: Sequence[ImportedEvent], row_id: str, start: int, *, source: str
+    ) -> list[str]:
+        """Create one task per appointment; the ids created (one undo step for all)."""
+        session = self._session
+        if session is None:
+            return []
+        if not events:
+            self._toast(NOTHING_TO_IMPORT)
+            return []
+        snapshot = session.service.snapshot
+        person = row_id if row_id and row_kind(row_id) == "resource" else None
+        drafts = drafts_for_drop(
+            events,
+            find_project=self._find_project,
+            default_year=self._today().year,
+            calendar=calendar_resolver(snapshot)(person),
+            drop_start=start if start >= 0 else None,
+        )
+        task_type = snapshot.meta.default_task_type
+        count = len(drafts)
+        noun = "tâche importée" if count == 1 else "tâches importées"
+        changes = self._execute(
+            f"Importer {count} rendez-vous",
+            chain(
+                step(
+                    commands.create_task,
+                    title=draft.title,
+                    task_type=task_type,
+                    project_number=draft.project_number,
+                    project_cache=self._project_cache(draft.project_number, draft.project),
+                    start=draft.start,
+                    resource_ids=(person,) if person else (),
+                    estimate_minutes=draft.estimate_minutes,
+                    estimate_days=draft.estimate_days,
+                    notes=draft.notes,
+                    origin="backlog" if draft.start is None else "grid",
+                )
+                for draft in drafts
+            ),
+        )
+        if not changes:
+            return []
+        created = [
+            change.after
+            for change in changes
+            if isinstance(change.after, PlanningTask) and change.before is None
+        ]
+        if created:
+            self._reveal(created[0])
+        where = "dans « À planifier »" if start < 0 else "dans le planning"
+        origin = f"depuis {source}" if source == "Outlook" else "d'un calendrier"
+        self._toast_undo(f"{count} {noun} {origin} {where}.")
+        self._log(f"Planning : {count} {noun} {origin}.")
+        return [task.id for task in created]
 
     def _on_detail_requested(self, task_id: str, row_id: str) -> None:
         focus = row_id if row_id and row_kind(row_id) == "resource" else None
@@ -2489,10 +2617,10 @@ class PlanningController:
         duplicate.setEnabled(editable)
         duplicate.triggered.connect(lambda: self._on_card_action(task_id, "duplicate"))
         person = row_kind(row_id) == "resource" and row_id in task.assignments
-        if person:
+        if person and len(task.assignments) > 1:
             who = self._who(row_id)
             detach = menu.addAction(f"Détacher {who}")
-            detach.setEnabled(editable and len(task.assignments) > 1)
+            detach.setEnabled(editable)
             detach.triggered.connect(lambda: self._detach(task, row_id))
             remove = menu.addAction(f"Retirer {who}\tSuppr")
             remove.setEnabled(editable)
@@ -2514,7 +2642,8 @@ class PlanningController:
             action.triggered.connect(lambda _checked=False, name=key: self._navigate(name, number))
         menu.addAction("Copier le résumé").triggered.connect(lambda: self._copy_summary(task_id))
         menu.addSeparator()
-        delete = menu.addAction("Supprimer pour tous\tMaj+Suppr")
+        alone = not (person and len(task.assignments) > 1)
+        delete = menu.addAction("Supprimer\tSuppr" if alone else "Supprimer pour tous\tMaj+Suppr")
         delete.setEnabled(editable)
         delete.triggered.connect(lambda: self._on_delete([(task_id, row_id)], True))  # noqa: FBT003
         return menu

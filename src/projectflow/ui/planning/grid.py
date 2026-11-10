@@ -70,11 +70,14 @@ from projectflow.core.planning.night import (
 )
 from projectflow.core.planning.timescale import (
     ViewKind,
+    day_label,
     move_preserving_work,
     snap_end,
     snap_start,
 )
 from projectflow.core.planning.walltime import MINUTES_PER_DAY, WallTime, wall_date
+from projectflow.logging import get_logger
+from projectflow.ui.planning.external_drop import ExternalDrop, external_drop, unknown_formats
 from projectflow.ui.planning.grid_items import (
     BarItem,
     BarState,
@@ -119,7 +122,8 @@ ARROW_KEYS = HORIZONTAL_KEYS | VERTICAL_KEYS
 ACCESSIBLE_NAME = "Planning de l'atelier"
 ACCESSIBLE_DESCRIPTION = (
     "Une ligne par personne. Flèches : choisir puis décaler la barre ; Maj+flèches : "
-    "allonger ou ajouter ; Entrée : détail ; Suppr : retirer la personne."
+    "allonger ou ajouter ; Entrée : détail ; Suppr : retirer la personne, ou supprimer la "
+    "tâche quand il n'en reste pas."
 )
 HEADER_ACCESSIBLE_NAME = "Jours et heures du planning"
 ROWS_ACCESSIBLE_NAME = "Personnes du planning"
@@ -127,6 +131,10 @@ READ_ONLY_TOOLTIP = "Planning en lecture seule : les modifications sont désacti
 ALREADY_ASSIGNED = "déjà affecté"
 REST_WARNING = "Repos de 8 h"
 COPY_SUFFIX = "copie"
+RESIZE_VIEW: ViewKind = "week"
+"""Snapping of a resized edge: the half hour, whatever the view shows."""
+IMPORT_LABEL_MINUTES = 60
+"""Width (in minutes) the label of a drag from another calendar is placed against."""
 
 MoveMode = Literal["move", "copy", "add"]
 MOVE_MODES: tuple[MoveMode, ...] = ("move", "copy", "add")
@@ -676,16 +684,17 @@ class GridGestures:
                 moved = snap(scale.time_at(scale.x_of(bar.end) + delta, end=True))
                 end = max(moved, start + SNAP_MINUTES)
             return night_preview(model, start, end, bar.row_id, mode="move", task_id=bar.task_id)
+        # A length is set to the half hour in every view, the month included.
         if self.state is Gesture.RESIZE_START:
-            value = snap_start(calendar, scale.time_at(scale.x_of(bar.start) + delta), model.view)
+            value = snap_start(calendar, scale.time_at(scale.x_of(bar.start) + delta), RESIZE_VIEW)
             if calendar.work_between(value, end) < MIN_TASK_MINUTES:
-                value = shortest_start(calendar, end, model.view)
+                value = shortest_start(calendar, end, RESIZE_VIEW)
             start = value
         else:
             moved = scale.time_at(scale.x_of(bar.end) + delta, end=True)
-            value = snap_end(calendar, moved, model.view)
+            value = snap_end(calendar, moved, RESIZE_VIEW)
             if calendar.work_between(start, value) < MIN_TASK_MINUTES:
-                value = shortest_end(calendar, start, model.view)
+                value = shortest_end(calendar, start, RESIZE_VIEW)
             end = value
         warn = warned(model, bar.row_id, start, end, bar.task_id)
         return Preview(
@@ -1030,6 +1039,9 @@ class PlanningView(QGraphicsView):
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
         self._drag_over(event)
+        if not event.isAccepted() and (formats := unknown_formats(event.mimeData())):
+            # A calendar not recognised yet: its formats tell how to support it.
+            get_logger(__name__).info("planning.drop.unknown", formats=formats)
 
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802
         self._drag_over(event)
@@ -1037,7 +1049,7 @@ class PlanningView(QGraphicsView):
     def _drag_over(self, event: QDragMoveEvent) -> None:
         point = self.scene_point(event.position())
         if self.grid.drag_over(event.mimeData(), point, event.modifiers()):
-            event.setDropAction(Qt.DropAction.MoveAction)
+            event.setDropAction(_drop_action(event.mimeData()))
             event.accept()
         else:
             event.ignore()
@@ -1048,8 +1060,9 @@ class PlanningView(QGraphicsView):
 
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
         point = self.scene_point(event.position())
+        action = _drop_action(event.mimeData())
         if self.grid.drop_at(event.mimeData(), point, event.modifiers()):
-            event.setDropAction(Qt.DropAction.MoveAction)
+            event.setDropAction(action)
             event.accept()
         else:
             event.ignore()
@@ -1080,6 +1093,9 @@ class PlanningGrid(QWidget):
     cell_activated = Signal(str, int)
     """``(row_id, start)`` of a double-clicked empty cell."""
     card_dropped = Signal(str, str, int)
+    import_dropped = Signal(object, str, int)
+    """Appointments dragged in from another calendar (``ExternalDrop``), the row and the
+    instant of the drop."""
     """``(task_id, row_id, start)`` of a card dropped from « À planifier »."""
     shift_requested = Signal(object, int, bool)
     """``(bars, signed worked minutes, resize_end)`` from the arrow keys (Shift: the end).
@@ -1431,14 +1447,14 @@ class PlanningGrid(QWidget):
     def arrow_shifts(self, direction: int, *, resize_end: bool) -> list[tuple[list[BarKey], int]]:
         """Group the selected bars by the signed worked minutes an arrow key moves them.
 
-        One group of 30 minutes in the day and week views. In the month view each bar
-        steps to the next (or previous) half-day edge of its task's calendar, its start or
-        with ``resize_end`` its end; an end already one half day from the start stays.
+        One group of 30 minutes in the day and week views, and for a length (``resize_end``)
+        in every view. Moved in the month view, each bar steps to the next (or previous)
+        half-day edge of its task's calendar.
         """
         model = self.model
         if model is None or not self.selection:
             return []
-        if model.view != "month":
+        if model.view != "month" or resize_end:
             return [(list(self.selection), SNAP_MINUTES * direction)]
         groups: dict[int, list[BarKey]] = {}
         for key in self.selection:
@@ -1531,6 +1547,35 @@ class PlanningGrid(QWidget):
         self.context_menu_requested.emit("", row.resource_id, start, global_pos)
 
     # Drops ------------------------------------------------------------
+
+    def _import_spot(self, mime: QMimeData | None, point: QPointF) -> tuple[str, int] | None:
+        """Row and instant where appointments from another calendar would land."""
+        model = self.model
+        if model is None or self.read_only or not self.drop_enabled:
+            return None
+        if external_drop(mime) is None:
+            return None
+        row = self.scene.row_at(point.y())
+        if row is not None and not _editable(row.resource_id):
+            row = _first_member_row(model, row)
+        if row is None or not _editable(row.resource_id):
+            return None
+        calendar = model.calendar_of(row.resource_id)
+        pointer = model.timescale.time_at(point.x())
+        return row.resource_id, calendar.working_start(snap_start(calendar, pointer, model.view))
+
+    def _import_over(self, mime: QMimeData | None, point: QPointF) -> bool:
+        spot = self._import_spot(mime, point)
+        drop = external_drop(mime) if spot is not None else None
+        if spot is None or drop is None:
+            self.drag_left()
+            return False
+        row_id, start = spot
+        rect = self.scene.span_rect(start, start + IMPORT_LABEL_MINUTES, row_id)
+        self.scene.set_drop_row(row_id)
+        text = import_hint(drop, wall_date(start), self.row_short(row_id))
+        self.scene.label.show_text(text, rect, self.visible_scene_rect())
+        return True
 
     def _drop_target(
         self, mime: QMimeData | None, point: QPointF, modifiers: Qt.KeyboardModifier | None
@@ -1627,6 +1672,8 @@ class PlanningGrid(QWidget):
         """
         target = self._drop_target(mime, point, modifiers)
         model = self.model
+        if target is None and model is not None:
+            return self._import_over(mime, point)
         if target is None or model is None:
             self.drag_left()
             return False
@@ -1660,7 +1707,14 @@ class PlanningGrid(QWidget):
         target = self._drop_target(mime, point, modifiers)
         self.drag_left()
         if target is None:
-            return False
+            spot = self._import_spot(mime, point)
+            if spot is None:
+                return False
+            drop = external_drop(mime, read=True)
+            if drop is None:
+                return False
+            self.import_dropped.emit(drop, *spot)
+            return True
         payload, task, preview = target
         if not _is_bar_drop(payload, task):
             self.card_dropped.emit(payload.task_id, preview.row_id, preview.start)
@@ -1843,6 +1897,19 @@ class PlanningGrid(QWidget):
         self.view.resetCachedContent()
         for widget in (self.header, self.rows, self.corner):
             widget.update()
+
+
+def _drop_action(mime: QMimeData | None) -> Qt.DropAction:
+    """Copy what comes from another application: a move would ask it to delete it."""
+    if external_drop(mime) is not None:
+        return Qt.DropAction.CopyAction
+    return Qt.DropAction.MoveAction
+
+
+def import_hint(drop: ExternalDrop, day: date, who: str) -> str:
+    """Floating label of a drag from another calendar: « Importer · jeu 12.11 · KDU »."""
+    what = "Importer d'Outlook" if drop.from_outlook else "Importer"
+    return f"{what} · {day_label(day)} · {who}"
 
 
 def warned(model: GridModel, row_id: str, start: WallTime, end: WallTime, task_id: str) -> bool:

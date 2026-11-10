@@ -82,6 +82,7 @@ from projectflow.core.planning.poste_config import BacklogSort
 from projectflow.core.planning.quick_entry import fold_text, format_days, format_duration
 from projectflow.ui.planning.colors import ColorBy, dossier_colors
 from projectflow.ui.planning.colors import warn_color as warn_hex
+from projectflow.ui.planning.external_drop import external_drop
 from projectflow.ui.planning.grid import parse_task_mime, task_mime_data
 from projectflow.ui.theme import Theme, body_font, current_theme, heading_font, icon, theme_notifier
 from projectflow.ui.widgets.industry import button, label, set_role
@@ -114,6 +115,7 @@ CARD_ACTION_LABELS: dict[CardAction, str] = {
 CARD_ACTION_HINTS: dict[CardAction, str] = {"detail": "Entrée", "delete": "Suppr"}
 """Keys of the card list that do the same, shown in the context menu."""
 DROP_HINT = "Déposer ici pour renvoyer dans « À planifier »"
+IMPORT_HINT = "Déposer ici pour importer dans « À planifier »"
 EMPTY_TEXT = "Rien à planifier. Tapez une tâche sans date dans la saisie rapide (Ctrl+K)."
 READ_ONLY_EMPTY_TEXT = "Rien à planifier. Planning en lecture seule : aucune carte à ajouter."
 FILTERED_EMPTY_TEXT = "Aucune carte ne correspond aux filtres."
@@ -1167,6 +1169,9 @@ class _CardList(QListView):
     reorder_dropped = Signal(str, str, str)
     foreign_entered = Signal()
     foreign_dropped = Signal(str)
+    import_entered = Signal()
+    import_dropped = Signal(object)
+    """Appointments dragged in from another calendar (``ExternalDrop``)."""
     drag_left = Signal()
 
     def __init__(self, model: _CardModel, state: _ViewState, parent: QWidget | None = None) -> None:
@@ -1249,6 +1254,12 @@ class _CardList(QListView):
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
         payload = parse_task_mime(event.mimeData())
         self._set_drop_row(-1)
+        if payload is None and not self._state.read_only:
+            drop = external_drop(event.mimeData(), read=True)
+            if drop is not None:
+                _accept(event)
+                self.import_dropped.emit(drop)
+                return
         if payload is None or self._state.read_only:
             event.ignore()
             return
@@ -1269,6 +1280,11 @@ class _CardList(QListView):
 
     def _drag_over(self, event: QDragMoveEvent, *, entering: bool) -> None:
         payload = parse_task_mime(event.mimeData())
+        if payload is None and not self._state.read_only and external_drop(event.mimeData()):
+            if entering:
+                self.import_entered.emit()
+            _accept(event)
+            return
         if payload is None or self._state.read_only:
             event.ignore()
             return
@@ -1465,10 +1481,13 @@ class DropOverlay(QWidget):
     """
 
     dropped = Signal(str)
+    imported = Signal(object)
+    """Appointments dragged in from another calendar (``ExternalDrop``)."""
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
         self._has_drag = False
+        self.hint = DROP_HINT
         self.setAcceptDrops(True)
         self.hide()
 
@@ -1485,14 +1504,15 @@ class DropOverlay(QWidget):
             self.hide()
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
-        if parse_task_mime(event.mimeData()) is None:
+        mime = event.mimeData()
+        if parse_task_mime(mime) is None and external_drop(mime) is None:
             event.ignore()
             return
         self._has_drag = True
-        event.acceptProposedAction()
+        _accept(event)
 
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802
-        event.acceptProposedAction()
+        _accept(event)
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:  # noqa: N802
         self._has_drag = False
@@ -1504,7 +1524,12 @@ class DropOverlay(QWidget):
         self._has_drag = False
         self.hide()
         if payload is None:
-            event.ignore()
+            drop = external_drop(event.mimeData(), read=True)
+            if drop is None:
+                event.ignore()
+                return
+            _accept(event)
+            self.imported.emit(drop)
             return
         event.acceptProposedAction()
         self.dropped.emit(payload.task_id)
@@ -1532,9 +1557,18 @@ class DropOverlay(QWidget):
                 OVERLAY_TEXT_MARGIN, OVERLAY_TEXT_MARGIN, -OVERLAY_TEXT_MARGIN, -OVERLAY_TEXT_MARGIN
             ),
             int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap),
-            DROP_HINT,
+            self.hint,
         )
         painter.end()
+
+
+def _accept(event: QDragMoveEvent | QDropEvent) -> None:
+    """Accept a drag: a task moves, what comes from another application is copied."""
+    if external_drop(event.mimeData()) is not None:
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+    else:
+        event.acceptProposedAction()
 
 
 # ----------------------------------------------------------------- panel ----
@@ -1547,6 +1581,8 @@ class BacklogPanel(QWidget):
     card_action = Signal(str, str)
     reorder_requested = Signal(str, str, str)
     unschedule_requested = Signal(str)
+    import_requested = Signal(object)
+    """Appointments dragged in from another calendar (``ExternalDrop``), to add here."""
     new_entry_requested = Signal()
     filters_changed = Signal()
     count_changed = Signal(int)
@@ -1620,6 +1656,8 @@ class BacklogPanel(QWidget):
         self.list_view.reorder_dropped.connect(self.reorder_requested)
         self.list_view.foreign_entered.connect(self._on_foreign_drag)
         self.list_view.foreign_dropped.connect(self.drop_task)
+        self.list_view.import_entered.connect(self._on_import_drag)
+        self.list_view.import_dropped.connect(self.import_drop)
         self.list_view.drag_left.connect(self._on_drag_left)
 
         header = QVBoxLayout()
@@ -1652,6 +1690,7 @@ class BacklogPanel(QWidget):
 
         self.overlay = DropOverlay(self)
         self.overlay.dropped.connect(self.drop_task)
+        self.overlay.imported.connect(self.import_drop)
 
         self._flash_timer = QTimer(self)
         self._flash_timer.setInterval(FLASH_TICK_MS)
@@ -2007,6 +2046,10 @@ class BacklogPanel(QWidget):
         if not self._read_only:
             self.show_drop_overlay()
 
+    def _on_import_drag(self) -> None:
+        if not self._read_only:
+            self.show_drop_overlay(hint=IMPORT_HINT)
+
     def _on_drag_left(self) -> None:
         # The drag may be moving onto the overlay, or leaving or cancelled before that.
         self.overlay.release_later()
@@ -2018,7 +2061,14 @@ class BacklogPanel(QWidget):
             return
         self.unschedule_requested.emit(task_id)
 
-    def show_drop_overlay(self) -> None:
+    def import_drop(self, drop: object) -> None:
+        """Add to « À planifier » the appointments dragged in from another calendar."""
+        self.overlay.hide()
+        if not self._read_only:
+            self.import_requested.emit(drop)
+
+    def show_drop_overlay(self, *, hint: str = DROP_HINT) -> None:
+        self.overlay.hint = hint
         self.overlay.setGeometry(self.rect())
         self.overlay.show()
         self.overlay.raise_()
@@ -2049,6 +2099,10 @@ class BacklogPanel(QWidget):
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
         payload = parse_task_mime(event.mimeData())
+        if payload is None and not self._read_only and external_drop(event.mimeData()):
+            self.show_drop_overlay(hint=IMPORT_HINT)
+            _accept(event)
+            return
         if payload is None or not self.accepts_task(payload.task_id):
             event.ignore()
             return
@@ -2062,6 +2116,12 @@ class BacklogPanel(QWidget):
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
         payload = parse_task_mime(event.mimeData())
         self.overlay.hide()
+        if payload is None and not self._read_only:
+            drop = external_drop(event.mimeData(), read=True)
+            if drop is not None:
+                _accept(event)
+                self.import_drop(drop)
+                return
         if payload is None or not self.accepts_task(payload.task_id):
             event.ignore()
             return

@@ -29,6 +29,7 @@ from projectflow.core.numero import (
     parse_project_number,
     project_folder_name,
 )
+from projectflow.core.planning.calendar_import import ImportedEvent
 from projectflow.core.planning.copy import CopyReport, copy_planning
 from projectflow.core.planning.local_store import LocalPlanningStore
 from projectflow.core.planning.outlook_sync import CalendarGateway
@@ -46,6 +47,7 @@ from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
 from projectflow.graph.workbook_opening import excel_document_uri
 from projectflow.logging import get_logger, redact_sensitive_links
+from projectflow.outlook.selection import read_outlook_selection
 from projectflow.platform.filemanager import open_excel_uri, open_file_default_app, open_path
 from projectflow.platform.printing import print_workbook_a4
 from projectflow.platform.sync_paths import is_excel_recovery_copy
@@ -330,6 +332,9 @@ class ProjectFlowController:
             save_config=self._store_planning_config,
             open_outlook_calendar=(
                 self._open_outlook_calendar if self._outlook_calendar_factory else None
+            ),
+            read_outlook_selection=(
+                _read_outlook_selection if sys.platform.startswith("win") else None
             ),
         )
 
@@ -2476,3 +2481,8 @@ def _planner_client() -> GraphPlannerClient:
     return GraphPlannerClient(
         graph=GraphClient(token_provider=token_provider, request_timeout=60.0)
     )
+
+
+async def _read_outlook_selection() -> list[ImportedEvent]:
+    """Items selected in the classic Outlook of the poste, read in a thread of their own."""
+    return await asyncio.to_thread(read_outlook_selection)

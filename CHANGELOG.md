@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Planning : `Suppr` sur la derniere personne d'une tache la supprime (toast « Annuler ») au
+  lieu de la renvoyer dans « A planifier » ; pour l'y renvoyer, la glisser dans la colonne ou
+  clic droit > « Renvoyer a planifier ».
+
+- Planning : la duree d'une tache se regle a la demi-heure dans toutes les vues, vue Mois
+  comprise (bord etire a la souris ou `Maj+fleche`) ; un deplacement en vue Mois reste a la
+  demi-journee.
+
+- Planning : des rendez-vous se glissent depuis Outlook classique (rendez-vous, taches, mails),
+  depuis un fichier `.ics` ou depuis Calendrier Apple, sur la ligne d'une personne (le jour du
+  depot, a l'heure du rendez-vous) ou dans « A planifier ». Le numero de dossier est trouve dans
+  l'objet ; tout l'import s'annule d'un coup.
+
 - Connexion Microsoft sous Windows : le fichier qui la garde est maintenant chiffre pour le
   compte Windows (comme le Gestionnaire d'identifiants). La connexion existante est reprise
   sans nouvelle connexion, puis chiffree au premier rafraichissement.
