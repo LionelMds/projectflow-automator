@@ -18,6 +18,7 @@ import { graphDrive } from '@/lib/projects/drive';
 import { RACINE_LABEL, REFERENCE_LABEL } from '@/lib/projects/location';
 import { graphPlanner, plannerPlanIdFromText, type PlannerBucket, type PlannerMember } from '@/lib/projects/planner';
 import { resolveWorkbook } from '@/lib/repertoire/workbook';
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { useSettings, type Settings } from '@/lib/settings';
 import { planningTeams } from '@/lib/widgets/planningWidget';
 import { colors, fonts, touch } from '@/theme/tokens';
@@ -26,6 +27,8 @@ export default function ParametresScreen() {
   const { status, account, error, canSignIn, busy, signInPage, signIn, finishSignIn, cancelSignIn, signOut, getAccessToken } =
     useAuth();
   const { settings, loaded, save } = useSettings();
+  // « Accès limité »: only the account, the widget and the password stay here.
+  const { restricted } = useRestriction();
   // Untouched fields follow the stored settings (read asynchronously at start-up).
   const [edits, setEdits] = useState<Partial<Settings>>({});
   const draft: Settings = { ...settings, ...edits };
@@ -177,7 +180,8 @@ export default function ParametresScreen() {
                     compte connecté, ou collez le lien ci-dessous.
                   </Text>
                 ) : null}
-                <Button label="Se déconnecter" onPress={() => void signOut()} style={styles.start} />
+                {/* Limited, the phone keeps its account: it is reconnected only with the password lifted. */}
+                {restricted ? null : <Button label="Se déconnecter" onPress={() => void signOut()} style={styles.start} />}
               </>
             ) : (
               <>
@@ -199,154 +203,158 @@ export default function ParametresScreen() {
             {error ? <Text style={styles.error}>{error}</Text> : null}
           </Blueprint>
 
-          <Blueprint style={styles.section}>
-            <SectionHeading number="02">Répertoire chantier</SectionHeading>
-            <Field
-              label="Lien OneDrive / SharePoint du classeur"
-              value={draft.repertoire}
-              onChangeText={update('repertoire')}
-              placeholder="https://… ou Dossier/Répertoire chantier.xlsx"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <Muted>Le même lien que dans les paramètres du poste. Un chemin est lu depuis la racine du OneDrive connecté.</Muted>
-          </Blueprint>
+          {restricted ? null : (
+            <>
+              <Blueprint style={styles.section}>
+                <SectionHeading number="02">Répertoire chantier</SectionHeading>
+                <Field
+                  label="Lien OneDrive / SharePoint du classeur"
+                  value={draft.repertoire}
+                  onChangeText={update('repertoire')}
+                  placeholder="https://… ou Dossier/Répertoire chantier.xlsx"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Muted>Le même lien que dans les paramètres du poste. Un chemin est lu depuis la racine du OneDrive connecté.</Muted>
+              </Blueprint>
 
-          <Blueprint style={styles.section}>
-            <SectionHeading number="03">Planning</SectionHeading>
-            <Field
-              label="Dossier OneDrive"
-              value={draft.planningFolder}
-              onChangeText={update('planningFolder')}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </Blueprint>
+              <Blueprint style={styles.section}>
+                <SectionHeading number="03">Planning</SectionHeading>
+                <Field
+                  label="Dossier OneDrive"
+                  value={draft.planningFolder}
+                  onChangeText={update('planningFolder')}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </Blueprint>
 
-          <Blueprint style={styles.section}>
-            <View style={styles.switchRow}>
-              <View style={styles.flex}>
-                <SectionHeading number="04">Mode démo</SectionHeading>
-                <Muted>Données d’exemple en mémoire : rien n’est lu ni écrit chez Microsoft.</Muted>
-              </View>
-              <Switch
-                accessibilityLabel="Mode démo"
-                value={draft.demo}
-                onValueChange={(demo) => setEdits((previous) => ({ ...previous, demo }))}
-                trackColor={{ true: colors.accent700, false: colors.line }}
-              />
-            </View>
-          </Blueprint>
-
-          <Blueprint style={styles.section}>
-            <SectionHeading number="05">Utilisateur</SectionHeading>
-            <Field
-              label="Initiales utilisateur"
-              value={draft.initials}
-              onChangeText={update('initials')}
-              autoCapitalize="characters"
-              maxLength={6}
-            />
-          </Blueprint>
-
-          <Blueprint style={styles.section}>
-            <SectionHeading number="06">Dossiers projets</SectionHeading>
-            <Field
-              label="Racine projets"
-              value={draft.racine}
-              onChangeText={update('racine')}
-              placeholder="https://… ou Projets"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <Field
-              label="Dossier de référence"
-              value={draft.reference}
-              onChangeText={update('reference')}
-              placeholder="https://… ou Projets/00 - Dossier de référence"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <Muted>
-              Les mêmes dossiers que sur le poste : lien OneDrive / SharePoint (recommandé) ou chemin depuis la racine du
-              OneDrive connecté. Un projet est créé dans « racine / année / numéro » en copiant le dossier de référence.
-            </Muted>
-          </Blueprint>
-
-          <Blueprint style={styles.section}>
-            <View style={styles.switchRow}>
-              <View style={styles.flex}>
-                <SectionHeading number="07">Microsoft Planner</SectionHeading>
-                <Muted>Une tâche « numéro - désignation » par projet créé, comme sur le poste.</Muted>
-              </View>
-              <Switch
-                accessibilityLabel="Créer les tâches Planner"
-                value={draft.plannerEnabled}
-                onValueChange={(plannerEnabled) => setEdits((previous) => ({ ...previous, plannerEnabled }))}
-                trackColor={{ true: colors.accent700, false: colors.line }}
-              />
-            </View>
-            <Field
-              label="Plan Planner : lien ou identifiant"
-              value={planText ?? draft.plannerPlanId}
-              onChangeText={(value) => {
-                setPlanText(value);
-                setPlannerOptions(null);
-              }}
-              placeholder="https://planner.cloud.microsoft/…"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <Button label="Charger colonnes et membres" onPress={() => void loadPlanner()} busy={plannerLoading} style={styles.start} />
-            {plannerError ? <Text style={styles.error}>{plannerError}</Text> : null}
-            <View style={styles.group}>
-              <Caps>Colonne</Caps>
-              {buckets.length ? (
-                <View style={styles.chips}>
-                  {buckets.map((bucket) => (
-                    <Chip
-                      key={bucket.id}
-                      label={bucket.name}
-                      selected={bucket.id === draft.plannerBucketId}
-                      onPress={() => setEdits((previous) => ({ ...previous, plannerBucketId: bucket.id, plannerBucketName: bucket.name }))}
-                    />
-                  ))}
+              <Blueprint style={styles.section}>
+                <View style={styles.switchRow}>
+                  <View style={styles.flex}>
+                    <SectionHeading number="04">Mode démo</SectionHeading>
+                    <Muted>Données d’exemple en mémoire : rien n’est lu ni écrit chez Microsoft.</Muted>
+                  </View>
+                  <Switch
+                    accessibilityLabel="Mode démo"
+                    value={draft.demo}
+                    onValueChange={(demo) => setEdits((previous) => ({ ...previous, demo }))}
+                    trackColor={{ true: colors.accent700, false: colors.line }}
+                  />
                 </View>
-              ) : (
-                <Muted>Chargez le plan pour choisir la colonne.</Muted>
-              )}
-            </View>
-            <View style={styles.group}>
-              <Caps>Membres par défaut</Caps>
-              {members.length ? (
-                <View style={styles.chips}>
-                  {members.map((member) => (
-                    <Chip
-                      key={member.id}
-                      label={member.name || member.email || member.id}
-                      selected={draft.plannerAssigneeIds.includes(member.id)}
-                      onPress={() => toggleMember(member)}
-                    />
-                  ))}
+              </Blueprint>
+
+              <Blueprint style={styles.section}>
+                <SectionHeading number="05">Utilisateur</SectionHeading>
+                <Field
+                  label="Initiales utilisateur"
+                  value={draft.initials}
+                  onChangeText={update('initials')}
+                  autoCapitalize="characters"
+                  maxLength={6}
+                />
+              </Blueprint>
+
+              <Blueprint style={styles.section}>
+                <SectionHeading number="06">Dossiers projets</SectionHeading>
+                <Field
+                  label="Racine projets"
+                  value={draft.racine}
+                  onChangeText={update('racine')}
+                  placeholder="https://… ou Projets"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Field
+                  label="Dossier de référence"
+                  value={draft.reference}
+                  onChangeText={update('reference')}
+                  placeholder="https://… ou Projets/00 - Dossier de référence"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Muted>
+                  Les mêmes dossiers que sur le poste : lien OneDrive / SharePoint (recommandé) ou chemin depuis la racine du
+                  OneDrive connecté. Un projet est créé dans « racine / année / numéro » en copiant le dossier de référence.
+                </Muted>
+              </Blueprint>
+
+              <Blueprint style={styles.section}>
+                <View style={styles.switchRow}>
+                  <View style={styles.flex}>
+                    <SectionHeading number="07">Microsoft Planner</SectionHeading>
+                    <Muted>Une tâche « numéro - désignation » par projet créé, comme sur le poste.</Muted>
+                  </View>
+                  <Switch
+                    accessibilityLabel="Créer les tâches Planner"
+                    value={draft.plannerEnabled}
+                    onValueChange={(plannerEnabled) => setEdits((previous) => ({ ...previous, plannerEnabled }))}
+                    trackColor={{ true: colors.accent700, false: colors.line }}
+                  />
                 </View>
-              ) : (
-                <Muted>Aucun : la tâche va au compte connecté.</Muted>
-              )}
-            </View>
-            <View style={styles.due}>
-              <Field
-                label="Échéance (jours)"
-                value={dueText ?? String(draft.plannerDueDays)}
-                onChangeText={setDueText}
-                keyboardType="number-pad"
-                maxLength={3}
-              />
-            </View>
-            <Muted>
-              Planner demande les autorisations Tasks.ReadWrite, User.ReadBasic.All et GroupMember.Read.All : reconnectez le
-              compte Microsoft si Microsoft les refuse.
-            </Muted>
-          </Blueprint>
+                <Field
+                  label="Plan Planner : lien ou identifiant"
+                  value={planText ?? draft.plannerPlanId}
+                  onChangeText={(value) => {
+                    setPlanText(value);
+                    setPlannerOptions(null);
+                  }}
+                  placeholder="https://planner.cloud.microsoft/…"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Button label="Charger colonnes et membres" onPress={() => void loadPlanner()} busy={plannerLoading} style={styles.start} />
+                {plannerError ? <Text style={styles.error}>{plannerError}</Text> : null}
+                <View style={styles.group}>
+                  <Caps>Colonne</Caps>
+                  {buckets.length ? (
+                    <View style={styles.chips}>
+                      {buckets.map((bucket) => (
+                        <Chip
+                          key={bucket.id}
+                          label={bucket.name}
+                          selected={bucket.id === draft.plannerBucketId}
+                          onPress={() => setEdits((previous) => ({ ...previous, plannerBucketId: bucket.id, plannerBucketName: bucket.name }))}
+                        />
+                      ))}
+                    </View>
+                  ) : (
+                    <Muted>Chargez le plan pour choisir la colonne.</Muted>
+                  )}
+                </View>
+                <View style={styles.group}>
+                  <Caps>Membres par défaut</Caps>
+                  {members.length ? (
+                    <View style={styles.chips}>
+                      {members.map((member) => (
+                        <Chip
+                          key={member.id}
+                          label={member.name || member.email || member.id}
+                          selected={draft.plannerAssigneeIds.includes(member.id)}
+                          onPress={() => toggleMember(member)}
+                        />
+                      ))}
+                    </View>
+                  ) : (
+                    <Muted>Aucun : la tâche va au compte connecté.</Muted>
+                  )}
+                </View>
+                <View style={styles.due}>
+                  <Field
+                    label="Échéance (jours)"
+                    value={dueText ?? String(draft.plannerDueDays)}
+                    onChangeText={setDueText}
+                    keyboardType="number-pad"
+                    maxLength={3}
+                  />
+                </View>
+                <Muted>
+                  Planner demande les autorisations Tasks.ReadWrite, User.ReadBasic.All et GroupMember.Read.All : reconnectez le
+                  compte Microsoft si Microsoft les refuse.
+                </Muted>
+              </Blueprint>
+            </>
+          )}
 
           {Platform.OS !== 'android' ? (
             <Blueprint style={styles.section}>
@@ -377,11 +385,80 @@ export default function ParametresScreen() {
             </Blueprint>
           ) : null}
 
+          <AccessSection />
+
           {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
           <Button label="Enregistrer" variant="primary" busy={saving} onPress={() => void onSave()} />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * « Accès limité »: a password limits this phone to the Explorer (each dossier's Photos and
+ * Plans) and the Planning to look at; the same password gives the whole app back.
+ */
+function AccessSection() {
+  const { restricted, restrict, unrestrict } = useRestriction();
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [problem, setProblem] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const run = async (action: () => Promise<string>) => {
+    setBusy(true);
+    try {
+      const why = await action();
+      setProblem(why);
+      if (!why) {
+        setPassword('');
+        setConfirmation('');
+      }
+    } catch (exc) {
+      setProblem(errorMessage(exc));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const passwordField = { secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, autoComplete: 'off', textContentType: 'none' } as const;
+
+  return (
+    <Blueprint style={styles.section}>
+      <SectionHeading number="09">Accès limité</SectionHeading>
+      {restricted ? (
+        <>
+          <Body>Actif sur ce téléphone : Explorer, avec les dossiers Photos et Plans de chaque dossier, et Planning en consultation.</Body>
+          <Field label="Mot de passe" value={password} onChangeText={setPassword} {...passwordField} />
+          <Button
+            label="Retrouver l’accès complet"
+            variant="primary"
+            busy={busy}
+            disabled={!password}
+            onPress={() => void run(async () => ((await unrestrict(password)) ? '' : 'Mot de passe incorrect.'))}
+            style={styles.start}
+          />
+        </>
+      ) : (
+        <>
+          <Muted>
+            Pour un téléphone prêté : seulement l’Explorer, avec les dossiers Photos et Plans de chaque dossier, et le Planning en
+            consultation. Le même mot de passe rend ensuite l’accès complet.
+          </Muted>
+          <Field label="Mot de passe" value={password} onChangeText={setPassword} {...passwordField} />
+          <Field label="Confirmer le mot de passe" value={confirmation} onChangeText={setConfirmation} {...passwordField} />
+          <Button
+            label="Limiter l’accès"
+            busy={busy}
+            disabled={!password || !confirmation}
+            onPress={() => void run(() => restrict(password, confirmation))}
+            style={styles.start}
+          />
+        </>
+      )}
+      {problem ? <Text style={styles.error}>{problem}</Text> : null}
+    </Blueprint>
   );
 }
 

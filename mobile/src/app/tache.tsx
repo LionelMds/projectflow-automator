@@ -10,6 +10,8 @@ import { Notice } from '@/components/Notice';
 import { Segmented, Stepper } from '@/components/Segmented';
 import { Caps, Kicker, Muted } from '@/components/Text';
 import { useDossierActions } from '@/lib/dossierActions';
+import { allowedActions } from '@/lib/restriction/restriction';
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { selectionFeedback } from '@/lib/haptics';
 import { close } from '@/lib/navigation';
 import {
@@ -58,6 +60,7 @@ export default function TacheScreen() {
   const task = data?.tasks.find((candidate) => candidate.id === params.id && !candidate.deleted_at) ?? null;
   const ctx = useMemo<CommandContext | null>(() => (data ? contextFor(data, author) : null), [data, author]);
   const dossier = useDossierActions();
+  const { restricted } = useRestriction();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [edits, setEdits] = useState<Partial<Record<TextField, string>>>({});
@@ -299,20 +302,23 @@ export default function TacheScreen() {
                   ['repertoire', 'Répertoire', Table],
                   ['creation', 'Création', FilePlus],
                 ] as const
-              ).map(([key, caption, Icon]) => (
-                <Pressable
-                  key={key}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    { folder: 'Ouvrir le dossier', fiche: 'Ouvrir la fiche', repertoire: 'Voir dans Répertoire', creation: 'Charger dans Création' }[key]
-                  }
-                  onPress={() => void openDossier(key)}
-                  style={({ pressed }) => [styles.tool, pressed && styles.pressed]}
-                >
-                  {opening === key ? <ActivityIndicator color={colors.accent700} /> : <Icon size={20} color={colors.accent700} strokeWidth={iconStroke} />}
-                  <Text style={styles.toolText}>{caption}</Text>
-                </Pressable>
-              ))}
+              )
+                // « Accès limité »: the dossier's folder only.
+                .filter(([key]) => allowedActions([key], restricted).length > 0)
+                .map(([key, caption, Icon]) => (
+                  <Pressable
+                    key={key}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      { folder: 'Ouvrir le dossier', fiche: 'Ouvrir la fiche', repertoire: 'Voir dans Répertoire', creation: 'Charger dans Création' }[key]
+                    }
+                    onPress={() => void openDossier(key)}
+                    style={({ pressed }) => [styles.tool, pressed && styles.pressed]}
+                  >
+                    {opening === key ? <ActivityIndicator color={colors.accent700} /> : <Icon size={20} color={colors.accent700} strokeWidth={iconStroke} />}
+                    <Text style={styles.toolText}>{caption}</Text>
+                  </Pressable>
+                ))}
             </View>
           ) : null}
 

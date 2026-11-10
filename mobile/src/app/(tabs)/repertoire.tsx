@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 
 import { PenLine, Search } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
@@ -14,6 +14,7 @@ import { useDossierActions } from '@/lib/dossierActions';
 import { pressFeedback } from '@/lib/haptics';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
 import { filterRows, visibleRows, type RepertoireRow } from '@/lib/repertoire/rows';
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { useSettings } from '@/lib/settings';
 import { colors, fonts, iconStroke, touch } from '@/theme/tokens';
 
@@ -22,7 +23,13 @@ function clock(date: Date | null): string {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-export default function RepertoireScreen() {
+/** « Accès limité » has no Répertoire. */
+export default function RepertoireTab() {
+  const { restricted } = useRestriction();
+  return restricted ? <Redirect href="/explorer" /> : <RepertoireScreen />;
+}
+
+function RepertoireScreen() {
   const { status } = useAuth();
   const { settings, loaded } = useSettings();
   const { snapshot, loading, error, loadedAt, load } = useRepertoire();

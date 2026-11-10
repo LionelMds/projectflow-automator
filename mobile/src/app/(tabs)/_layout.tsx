@@ -1,10 +1,16 @@
 import { Tabs } from 'expo-router';
 import { CalendarRange, FilePlus, FolderOpen, Table } from 'lucide-react-native';
 
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { colors, fonts, iconStroke } from '@/theme/tokens';
 
-/** The desktop modules kept on the phone, in the desktop's order (Sortie dossier stays on the poste), and the dossiers' Explorer. */
+/**
+ * The desktop modules kept on the phone, in the desktop's order (Sortie dossier stays on the poste),
+ * and the dossiers' Explorer. « Accès limité » keeps only Explorer and Planning.
+ */
 export default function ModulesLayout() {
+  const { restricted } = useRestriction();
+  const hidden = restricted ? { href: null } : {};
   return (
     <Tabs
       screenOptions={{
@@ -26,6 +32,7 @@ export default function ModulesLayout() {
       <Tabs.Screen
         name="index"
         options={{
+          ...hidden,
           title: 'Création',
           tabBarIcon: ({ color, size }) => <FilePlus color={color} size={size} strokeWidth={iconStroke} />,
         }}
@@ -33,6 +40,7 @@ export default function ModulesLayout() {
       <Tabs.Screen
         name="repertoire"
         options={{
+          ...hidden,
           title: 'Répertoire',
           tabBarIcon: ({ color, size }) => <Table color={color} size={size} strokeWidth={iconStroke} />,
         }}

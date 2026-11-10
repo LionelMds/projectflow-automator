@@ -17,6 +17,8 @@ import {
   type StoredDocument,
 } from '@/lib/planning/store';
 import { writeChange } from '@/lib/planning/sync';
+import { RESTRICTED_PLANNING } from '@/lib/restriction/restriction';
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { useSettings } from '@/lib/settings';
 import { readItem, writeItem } from '@/lib/storage';
 
@@ -66,6 +68,7 @@ function demoSeed(): { kind: DocumentKind; id: string; data: Json }[] {
 export function PlanningProvider({ children }: { children: ReactNode }) {
   const { getAccessToken, status } = useAuth();
   const { settings } = useSettings();
+  const { restricted } = useRestriction();
   const [state, setState] = useState<State>({ loading: false, error: '', loadedAt: null });
   const [version, setVersion] = useState(0);
   const [notice, setNotice] = useState('');
@@ -139,11 +142,13 @@ export function PlanningProvider({ children }: { children: ReactNode }) {
     return run;
   }, [store, putDocument]);
 
-  const editBlocker = !settings.initials
-    ? INITIALS_REQUIRED
-    : !settings.demo && status !== 'signedIn'
-      ? 'Connectez-vous à Microsoft pour modifier le planning.'
-      : '';
+  const editBlocker = restricted
+    ? RESTRICTED_PLANNING
+    : !settings.initials
+      ? INITIALS_REQUIRED
+      : !settings.demo && status !== 'signedIn'
+        ? 'Connectez-vous à Microsoft pour modifier le planning.'
+        : '';
 
   const write = useCallback((change: Change) => writeChange(store, documents.current, change, author), [store, author]);
 

@@ -17,6 +17,7 @@ import { RACINE_LABEL } from '@/lib/projects/location';
 import { canonicalProjectNumber, isProjectNumber } from '@/lib/projects/numbers';
 import { useRecentDossiers } from '@/lib/recent/RecentContext';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { useSettings } from '@/lib/settings';
 import { colors, fonts, iconStroke, touch } from '@/theme/tokens';
 
@@ -44,6 +45,7 @@ export default function ExplorerScreen() {
   const { drive } = useProjectsBackend();
   const { projects, wantProjects } = useRepertoire();
   const dossier = useDossierActions();
+  const { restricted } = useRestriction();
   const thisYear = new Date().getFullYear();
   const years = [thisYear, thisYear - 1, thisYear - 2, thisYear - 3];
   const [year, setYear] = useState(thisYear);
@@ -279,7 +281,11 @@ export default function ExplorerScreen() {
         }
         ListFooterComponent={
           folders.length ? (
-            <Muted style={styles.hint}>Touchez un dossier pour l’ouvrir, restez appuyé pour le charger, voir le planning…</Muted>
+            <Muted style={styles.hint}>
+              {restricted
+                ? 'Touchez un dossier pour ses photos et ses plans, restez appuyé pour voir son planning.'
+                : 'Touchez un dossier pour l’ouvrir, restez appuyé pour le charger, voir le planning…'}
+            </Muted>
           ) : undefined
         }
         renderItem={({ item }) => {

@@ -59,6 +59,7 @@ import { parseDate, todayNumber } from '@/lib/planning/walltime';
 import { buildBoard, DAY_END, DAY_START, NOON, AFTERNOON, UNASSIGNED, type Board, type Column, type Segment, type WeekRow } from '@/lib/planning/week';
 import { withDossiers } from '@/lib/planning/dossiers';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { useSettings } from '@/lib/settings';
 import { colors, fonts, iconStroke, touch } from '@/theme/tokens';
 
@@ -97,6 +98,7 @@ export default function PlanningScreen() {
   const [actionError, setActionError] = useState('');
   const [menu, setMenu] = useState<Menu | null>(null);
   const dossier = useDossierActions();
+  const { restricted } = useRestriction();
   const ready = loaded && (settings.demo || status === 'signedIn');
 
   // « Voir dans le planning »: the week of the dossier's next task, its bars and cards outlined.
@@ -209,13 +211,14 @@ export default function PlanningScreen() {
     router.push({ pathname: '/saisie', params: query });
   };
 
+  // « Accès limité »: the planning is only looked at, an empty place does nothing.
   const onCell = (rowKey: string, unit: number) => {
-    const slot = slotAt(rowKey, unit);
+    const slot = restricted ? null : slotAt(rowKey, unit);
     if (slot) newTaskAt(rowKey, slot);
   };
 
   const onCellLongPress = (rowKey: string, unit: number) => {
-    const slot = slotAt(rowKey, unit);
+    const slot = restricted ? null : slotAt(rowKey, unit);
     if (!slot) return;
     pressFeedback();
     setMenu({ kind: 'cell', rowKey, ...slot });
@@ -262,11 +265,36 @@ export default function PlanningScreen() {
         .map((id) => data.resources.find((resource) => resource.id === id)?.initials || id)
         .join(' ');
       const when = start !== null && end !== null ? `${describeInstant(start)} → ${describeInstant(end)}` : 'À planifier';
-      return {
+      const dossierSection: SheetSection = {
+        title: number ? `Dossier ${number}` : undefined,
+        actions: number ? dossier.actions(number, ['folder', 'fiche', 'repertoire', 'creation']) : [],
+      };
+      const heading = {
         kicker: number || 'Sans dossier',
         title: (task.title ?? '').trim() || task.project_cache?.designation || label || 'Sans titre',
         subtitle: [when, people].filter(Boolean).join(' · '),
         accent: taskTypeOf(data.meta, task.task_type).color,
+      };
+      if (restricted) {
+        return {
+          ...heading,
+          sections: [
+            {
+              actions: [
+                {
+                  key: 'view',
+                  label: 'Voir la tâche',
+                  icon: (c) => <Eye size={20} color={c} strokeWidth={iconStroke} />,
+                  onPress: () => router.push({ pathname: '/tache', params: { id: task.id } }),
+                },
+              ],
+            },
+            dossierSection,
+          ],
+        };
+      }
+      return {
+        ...heading,
         sections: [
           {
             title: 'Statut',
@@ -311,7 +339,7 @@ export default function PlanningScreen() {
                   },
             ],
           },
-          { title: number ? `Dossier ${number}` : undefined, actions: number ? dossier.actions(number, ['folder', 'fiche', 'repertoire', 'creation']) : [] },
+          dossierSection,
           {
             actions: [
               {
@@ -342,15 +370,19 @@ export default function PlanningScreen() {
                 icon: (c) => <Eye size={20} color={c} strokeWidth={iconStroke} />,
                 onPress: () => router.push({ pathname: '/absence', params: { id: menu.absenceId } }),
               },
-              {
-                key: 'delete',
-                label: 'Supprimer l’absence',
-                detail: 'Annulable juste après',
-                destructive: true,
-                disabled: locked,
-                icon: (c) => <Trash2 size={20} color={c} strokeWidth={iconStroke} />,
-                onPress: change((c) => deleteAbsence(c, menu.absenceId), `Absence supprimée : ${menu.label}`),
-              },
+              ...(restricted
+                ? []
+                : [
+                    {
+                      key: 'delete',
+                      label: 'Supprimer l’absence',
+                      detail: 'Annulable juste après',
+                      destructive: true,
+                      disabled: locked,
+                      icon: (c: string) => <Trash2 size={20} color={c} strokeWidth={iconStroke} />,
+                      onPress: change((c) => deleteAbsence(c, menu.absenceId), `Absence supprimée : ${menu.label}`),
+                    },
+                  ]),
             ],
           },
         ],
@@ -533,7 +565,13 @@ export default function PlanningScreen() {
         {board && board.groups.length === 0 ? <Muted style={styles.none}>Personne dans le planning.</Muted> : null}
 
         {board ? <Backlog cards={board.backlog} data={data} focus={focus} onLongPress={onCardLongPress} /> : null}
-        {board ? <Muted style={styles.hint}>Touchez une tâche pour la modifier, restez appuyé pour ses actions.</Muted> : null}
+        {board ? (
+          <Muted style={styles.hint}>
+            {restricted
+              ? 'Planning en consultation (accès limité). Touchez une tâche pour la voir.'
+              : 'Touchez une tâche pour la modifier, restez appuyé pour ses actions.'}
+          </Muted>
+        ) : null}
       </ScrollView>
 
       <ActionSheet
@@ -546,17 +584,19 @@ export default function PlanningScreen() {
         sections={sheet?.sections ?? []}
       />
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Saisie rapide"
-        onPress={() => router.push('/saisie')}
-        style={styles.quick}
-      >
-        <Zap size={18} color={colors.accent700} strokeWidth={iconStroke} />
-        <Text style={styles.quickText} numberOfLines={1}>
-          Saisie rapide : <Text style={styles.quickHint}>5252 relevé lun LM</Text>
-        </Text>
-      </Pressable>
+      {restricted ? null : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Saisie rapide"
+          onPress={() => router.push('/saisie')}
+          style={styles.quick}
+        >
+          <Zap size={18} color={colors.accent700} strokeWidth={iconStroke} />
+          <Text style={styles.quickText} numberOfLines={1}>
+            Saisie rapide : <Text style={styles.quickHint}>5252 relevé lun LM</Text>
+          </Text>
+        </Pressable>
+      )}
     </Screen>
   );
 }

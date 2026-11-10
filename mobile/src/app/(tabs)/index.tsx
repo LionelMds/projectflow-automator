@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { ArrowRight } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -35,6 +35,7 @@ import type { PlannerBucket, PlannerMember } from '@/lib/projects/planner';
 import { useRecentDossiers } from '@/lib/recent/RecentContext';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
 import type { RepertoireRow } from '@/lib/repertoire/rows';
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { useSettings, type Settings } from '@/lib/settings';
 import { colors, fonts, iconStroke, touch } from '@/theme/tokens';
 
@@ -73,7 +74,13 @@ function headline(form: CreationForm): string {
   return `${number} · ${form.designation.trim() || 'Sans désignation'}`;
 }
 
-export default function CreationScreen() {
+/** « Accès limité » has no Création: the app then opens on the Explorer. */
+export default function CreationTab() {
+  const { restricted } = useRestriction();
+  return restricted ? <Redirect href="/explorer" /> : <CreationScreen />;
+}
+
+function CreationScreen() {
   const { status } = useAuth();
   const { settings: stored, loaded } = useSettings();
   // The demo mode has its own plan: Planner can be tried without configuring it.

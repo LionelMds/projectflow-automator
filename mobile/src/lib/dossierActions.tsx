@@ -15,6 +15,8 @@ import { findDossier } from '@/lib/projects/creation';
 import { parseProjectNumber } from '@/lib/projects/numbers';
 import { openWorkbook } from '@/lib/projects/openFile';
 import { useRecentDossiers } from '@/lib/recent/RecentContext';
+import { allowedActions } from '@/lib/restriction/restriction';
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { useSettings } from '@/lib/settings';
 import { iconStroke } from '@/theme/tokens';
 
@@ -24,6 +26,8 @@ export function useDossierActions() {
   const { settings } = useSettings();
   const { drive } = useProjectsBackend();
   const { remember } = useRecentDossiers();
+  // « Accès limité »: only the dossier's folder, its planning and its number.
+  const { restricted } = useRestriction();
 
   const locate = useCallback(
     async (number: string) => {
@@ -84,9 +88,9 @@ export function useDossierActions() {
         task: { key: 'task', label: 'Nouvelle tâche', detail: 'Saisie rapide', icon: (c) => <Zap size={20} color={c} strokeWidth={iconStroke} /> },
         copy: { key: 'copy', label: 'Copier le numéro', icon: (c) => <ClipboardCopy size={20} color={c} strokeWidth={iconStroke} /> },
       };
-      return keys.map((key) => ({ ...rows[key], onPress: () => run[key](number) }));
+      return allowedActions(keys, restricted).map((key) => ({ ...rows[key], onPress: () => run[key](number) }));
     },
-    [run],
+    [run, restricted],
   );
 
   return { actions, ...run };

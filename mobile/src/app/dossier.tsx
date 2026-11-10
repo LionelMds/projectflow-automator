@@ -30,6 +30,8 @@ import { parseProjectNumber } from '@/lib/projects/numbers';
 import { openDriveFile, openOnWeb, shareDriveFile } from '@/lib/projects/openFile';
 import { useRecentDossiers } from '@/lib/recent/RecentContext';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
+import { isOpenFolder } from '@/lib/restriction/restriction';
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { useSettings } from '@/lib/settings';
 import { colors, fonts, iconStroke, touch } from '@/theme/tokens';
 
@@ -68,6 +70,7 @@ export default function DossierScreen() {
   const { drive } = useProjectsBackend();
   const { projects, wantProjects } = useRepertoire();
   const { remember } = useRecentDossiers();
+  const { restricted } = useRestriction();
   const [path, setPath] = useState<DriveItem[]>([]);
   const [listing, setListing] = useState<{ folderId: string; items: DriveItem[] } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -142,7 +145,10 @@ export default function DossierScreen() {
     };
   }, [current, drive]);
 
-  const items = listing && current && listing.folderId === current.id ? listing.items : null;
+  const listed = listing && current && listing.folderId === current.id ? listing.items : null;
+  // « Accès limité »: at the dossier's root, only its Photos and Plans folders; all of theirs inside.
+  const atRoot = path.length === 1;
+  const items = listed && restricted && atRoot ? listed.filter(isOpenFolder) : listed;
   const project = projects.get(number);
   const subtitle = useMemo(() => [project?.designation, project?.client].filter(Boolean).join(' · '), [project]);
 
@@ -242,7 +248,9 @@ export default function DossierScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.accent700} />}
-          ListEmptyComponent={<Muted style={styles.empty}>Dossier vide.</Muted>}
+          ListEmptyComponent={
+            <Muted style={styles.empty}>{restricted && atRoot ? 'Pas de dossier Photos ni Plans ici.' : 'Dossier vide.'}</Muted>
+          }
           ListFooterComponent={
             items.length ? (
               <Muted style={styles.hint}>
@@ -292,13 +300,18 @@ export default function DossierScreen() {
                             onPress: () => shareDriveFile(drive, menu),
                           },
                         ]),
-                    {
-                      key: 'web',
-                      label: 'Ouvrir sur le web',
-                      detail: 'OneDrive',
-                      icon: (c) => <ExternalLink size={20} color={c} strokeWidth={iconStroke} />,
-                      onPress: () => openOnWeb(menu),
-                    },
+                    // OneDrive on the web leads to the folders around: not with « Accès limité ».
+                    ...(restricted
+                      ? []
+                      : [
+                          {
+                            key: 'web',
+                            label: 'Ouvrir sur le web',
+                            detail: 'OneDrive',
+                            icon: (c: string) => <ExternalLink size={20} color={c} strokeWidth={iconStroke} />,
+                            onPress: () => openOnWeb(menu),
+                          },
+                        ]),
                   ],
                 },
               ]

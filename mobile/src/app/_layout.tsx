@@ -9,6 +9,7 @@ import { AuthProvider } from '@/lib/auth';
 import { PlanningProvider } from '@/lib/planning/PlanningContext';
 import { RecentProvider } from '@/lib/recent/RecentContext';
 import { RepertoireProvider } from '@/lib/repertoire/RepertoireContext';
+import { RestrictionProvider } from '@/lib/restriction/RestrictionContext';
 import { SettingsProvider } from '@/lib/settings';
 import { WidgetSync } from '@/lib/widgets/WidgetSync';
 import { colors } from '@/theme/tokens';
@@ -29,25 +30,27 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <SettingsProvider>
-        <AuthProvider>
-          <RepertoireProvider>
-            <RecentProvider>
-              <PlanningProvider>
-                <WidgetSync />
-                <StatusBar style="dark" />
-                <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
-                  <Stack.Screen name="(tabs)" />
-                  <Stack.Screen name="parametres" options={{ presentation: 'modal' }} />
-                  <Stack.Screen name="ligne" options={{ presentation: 'modal' }} />
-                  <Stack.Screen name="tache" options={{ presentation: 'modal' }} />
-                  <Stack.Screen name="absence" options={{ presentation: 'modal' }} />
-                  <Stack.Screen name="saisie" options={{ presentation: 'modal' }} />
-                  <Stack.Screen name="dossier" options={{ presentation: 'modal' }} />
-                </Stack>
-              </PlanningProvider>
-            </RecentProvider>
-          </RepertoireProvider>
-        </AuthProvider>
+        <RestrictionProvider>
+          <AuthProvider>
+            <RepertoireProvider>
+              <RecentProvider>
+                <PlanningProvider>
+                  <WidgetSync />
+                  <StatusBar style="dark" />
+                  <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
+                    <Stack.Screen name="(tabs)" />
+                    <Stack.Screen name="parametres" options={{ presentation: 'modal' }} />
+                    <Stack.Screen name="ligne" options={{ presentation: 'modal' }} />
+                    <Stack.Screen name="tache" options={{ presentation: 'modal' }} />
+                    <Stack.Screen name="absence" options={{ presentation: 'modal' }} />
+                    <Stack.Screen name="saisie" options={{ presentation: 'modal' }} />
+                    <Stack.Screen name="dossier" options={{ presentation: 'modal' }} />
+                  </Stack>
+                </PlanningProvider>
+              </RecentProvider>
+            </RepertoireProvider>
+          </AuthProvider>
+        </RestrictionProvider>
       </SettingsProvider>
     </SafeAreaProvider>
   );

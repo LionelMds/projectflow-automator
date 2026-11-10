@@ -1,4 +1,4 @@
-import { useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,11 +9,18 @@ import { Field } from '@/components/Field';
 import { Notice } from '@/components/Notice';
 import { Caps, DossierNumber, Kicker, Muted, Title } from '@/components/Text';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
+import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { close } from '@/lib/navigation';
 import { changedFields, editFromRow, type RowEdit } from '@/lib/repertoire/rows';
 import { colors, fonts, touch } from '@/theme/tokens';
 
-export default function LigneScreen() {
+/** « Accès limité » has no Répertoire, so no line to edit either. */
+export default function LigneRoute() {
+  const { restricted } = useRestriction();
+  return restricted ? <Redirect href="/explorer" /> : <LigneScreen />;
+}
+
+function LigneScreen() {
   const params = useLocalSearchParams<{ row?: string }>();
   const { rowAt, save } = useRepertoire();
   const row = rowAt(Number(params.row));
