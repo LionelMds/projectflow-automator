@@ -211,6 +211,19 @@ L'app bundle est produit dans `dist/ProjectFlow Automator.app`. La signature Dev
 la notarisation Apple et la creation du DMG sont orchestrees par `.github/workflows/release.yml`
 au push d'un tag `v*.*.*`.
 
+La signature et la notarisation ne tournent que si ces six secrets GitHub Actions existent.
+Sans aucun d'eux, le DMG est publie non signe ; s'il en manque seulement certains, la release
+s'arrete en les nommant.
+
+| Secret | Contenu |
+| --- | --- |
+| `APPLE_CERT_P12_BASE64` | Certificat « Developer ID Application » et sa cle privee, exportes en `.p12` puis encodes en base64 |
+| `APPLE_CERT_PASSWORD` | Mot de passe choisi a l'export du `.p12` |
+| `APPLE_DEVELOPER_ID` | Nom du certificat : `Developer ID Application: Nom (TEAMID)` |
+| `APPLE_ID` | Adresse e-mail du compte Apple Developer |
+| `APPLE_TEAM_ID` | Identifiant d'equipe Apple, 10 caracteres |
+| `APPLE_APP_PWD` | Mot de passe d'application cree sur account.apple.com |
+
 Chaque release publie egalement un fichier `.sha256` pour l'installateur Windows, l'executable
 portable Windows et le DMG macOS.
 

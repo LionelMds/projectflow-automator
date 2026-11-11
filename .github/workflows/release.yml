@@ -114,11 +114,6 @@ jobs:
     name: Build macOS
     needs: [version, test]
     runs-on: macos-latest
-    env:
-      APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_APP_PWD: ${{ secrets.APPLE_APP_PWD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -157,23 +152,83 @@ jobs:
           )
       - name: Build app
         run: python -m projectflow.build --target macos
-      - name: Sign app
-        if: ${{ env.APPLE_DEVELOPER_ID != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PWD != '' }}
+      # Signing needs the six Apple secrets. None set: the build stays unsigned, as before.
+      # Only some set: stop, so a mistyped secret name never ships an unsigned release unnoticed.
+      # The secrets are handed to the signing steps only, never to pip or brew.
+      - name: Check signing secrets
+        id: signing
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PWD: ${{ secrets.APPLE_APP_PWD }}
         run: |
-          codesign --deep --force --options runtime \
+          missing=""
+          present=0
+          for name in APPLE_CERT_P12_BASE64 APPLE_CERT_PASSWORD APPLE_DEVELOPER_ID \
+            APPLE_ID APPLE_TEAM_ID APPLE_APP_PWD; do
+            if [ -n "${!name}" ]; then
+              present=$((present + 1))
+            else
+              missing="$missing $name"
+            fi
+          done
+          if [ "$present" -eq 0 ]; then
+            echo "::warning::Secrets Apple absents : l'application macOS n'est ni signee ni notarisee."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$missing" ]; then
+            echo "::error::Secrets Apple manquants :$missing"
+            exit 1
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      # codesign reads the Developer ID certificate and its private key from a keychain:
+      # a temporary one, created for this run on a runner that is thrown away afterwards.
+      - name: Import signing certificate
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          cert_path="$RUNNER_TEMP/developer-id.p12"
+          keychain_path="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -base64 24)"
+          echo -n "$APPLE_CERT_P12_BASE64" | base64 --decode -o "$cert_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$cert_path" -P "$APPLE_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$keychain_password" "$keychain_path" > /dev/null
+          security list-keychain -d user -s "$keychain_path"
+          rm -f "$cert_path"
+      - name: Sign app
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+        run: |
+          codesign --deep --force --timestamp --options runtime \
             --entitlements "installer/macos/entitlements.plist" \
             --sign "$APPLE_DEVELOPER_ID" \
             "dist/ProjectFlow Automator.app"
-      - name: Zip app for notarization
-        run: ditto -c -k --keepParent "dist/ProjectFlow Automator.app" "dist/ProjectFlow Automator.zip"
+          codesign --verify --deep --strict "dist/ProjectFlow Automator.app"
       - name: Notarize app
-        if: ${{ env.APPLE_DEVELOPER_ID != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PWD != '' }}
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PWD: ${{ secrets.APPLE_APP_PWD }}
         run: |
+          ditto -c -k --keepParent "dist/ProjectFlow Automator.app" "dist/ProjectFlow Automator.zip"
           xcrun notarytool submit "dist/ProjectFlow Automator.zip" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_PWD" \
             --wait
+          # A refused notarization leaves no ticket: stapling fails and stops the release.
           xcrun stapler staple "dist/ProjectFlow Automator.app"
       - name: Create DMG
         run: |
@@ -189,6 +244,22 @@ jobs:
             --app-drop-link 450 160 \
             "dist/ProjectFlow Automator.dmg" \
             "dist/dmg"
+      # The DMG is what users download: signed and notarized too, before its checksum is taken.
+      - name: Sign and notarize DMG
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PWD: ${{ secrets.APPLE_APP_PWD }}
+        run: |
+          codesign --force --timestamp --sign "$APPLE_DEVELOPER_ID" "dist/ProjectFlow Automator.dmg"
+          xcrun notarytool submit "dist/ProjectFlow Automator.dmg" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PWD" \
+            --wait
+          xcrun stapler staple "dist/ProjectFlow Automator.dmg"
       - name: Generate macOS checksum
         run: |
           shasum -a 256 "dist/ProjectFlow Automator.dmg" \
