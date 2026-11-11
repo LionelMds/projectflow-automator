@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.76
+
 - Repertoire chantier : clic droit sur une ligne. Sur un projet : charger, ouvrir le dossier ou
   la fiche, imprimer la fiche, preparer la sortie, creer un sous-projet, dupliquer, mettre a
   jour, supprimer. Sur un numero libre : creer un projet avec ce numero. Partout : modifier la
