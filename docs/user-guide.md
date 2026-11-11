@@ -300,6 +300,14 @@ et la personne responsable, puis réapplique la fiche, le répertoire et les int
 dans les paramètres. Outlook, Planner et l'épinglage restent idempotents : les éléments existants
 sont réutilisés ou ajustés, sans doublon. La copie du dossier de référence n'est pas relancée.
 
+Un clic droit sur une ligne la sélectionne et ouvre un menu :
+
+| Ligne | Actions |
+| --- | --- |
+| Projet | `Charger le projet`, `Ouvrir le dossier`, `Ouvrir la fiche`, `Imprimer la fiche…`, `Préparer la sortie`, `Créer sous-projet`, `Dupliquer`, `Mettre à jour le projet`, `Supprimer avec éléments liés…` |
+| Numéro libre | `Créer un projet avec ce numéro` : le formulaire s'ouvre sur ce numéro, y compris un numéro libéré plus haut dans la liste |
+| Toutes | `Modifier` la cellule cliquée, `Enregistrer la ligne` si elle est modifiée, `Copier le numéro`, la cellule ou `la ligne` entière (une valeur par cellule une fois collée dans Excel) |
+
 ## Sortie dossier
 
 L'onglet `Sortie dossier` prepare un dossier de documents a transmettre ou imprimer sans modifier

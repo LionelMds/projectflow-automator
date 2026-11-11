@@ -7,18 +7,21 @@ from PySide6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
     QPersistentModelIndex,
+    QPoint,
     QRectF,
     QRegularExpression,
     QSortFilterProxyModel,
     Qt,
     Signal,
+    SignalInstance,
 )
-from PySide6.QtGui import QColor, QFont, QPainter
+from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QPainter
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
     QLineEdit,
+    QMenu,
     QSizePolicy,
     QStyle,
     QStyledItemDelegate,
@@ -37,6 +40,7 @@ from projectflow.ui.theme import current_theme, icon, theme_notifier
 from projectflow.ui.widgets.industry import PrimaryButton, button, field, label
 
 HEADERS = ("No.", "Date", "Client", "Contact", "Désignation")
+COLUMN_NAMES = ("le numéro", "la date", "le client", "le contact", "la désignation")
 COLUMN_WIDTHS = (150, 112, 210, 190)
 NEXT_AVAILABLE_ROLE = Qt.ItemDataRole.UserRole + 1
 _EMPTY_INDEX = QModelIndex()
@@ -150,6 +154,9 @@ class RepertoireTableModel(QAbstractTableModel):
     def dirty_row_indexes(self) -> tuple[int, ...]:
         return tuple(sorted({row_index for row_index, _column in self._dirty_cells}))
 
+    def row_is_dirty(self, row_index: int) -> bool:
+        return any(dirty_row == row_index for dirty_row, _column in self._dirty_cells)
+
     def discard_changes(self) -> None:
         if not self._dirty_cells:
             return
@@ -207,6 +214,12 @@ class RepertoireDossierTab(QWidget):
     create_subproject_requested = Signal()
     duplicate_project_requested = Signal()
     delete_project_requested = Signal()
+    # Right-click only: they act on the selected row, like the footer buttons.
+    open_folder_requested = Signal()
+    open_fiche_requested = Signal()
+    print_fiche_requested = Signal()
+    prepare_sortie_requested = Signal()
+    new_project_with_number_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -289,6 +302,8 @@ class RepertoireDossierTab(QWidget):
         )
         self.table.verticalHeader().setDefaultSectionSize(34)
         self.table.doubleClicked.connect(lambda _index: self.open_project_requested.emit())
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_context_menu)
         self.table.selectionModel().selectionChanged.connect(
             lambda _selected, _deselected: self._update_action_states()
         )
@@ -442,6 +457,86 @@ class RepertoireDossierTab(QWidget):
     def next_available(self) -> NextAvailableProject | None:
         return self._model.next_available()
 
+    # -- right-click menu -------------------------------------------------------
+
+    def _on_context_menu(self, position: QPoint) -> None:
+        index = self.table.indexAt(position)
+        if not index.isValid():
+            return
+        # The actions read the selected row: the clicked one, whatever was selected before.
+        self.table.setCurrentIndex(index)
+        menu = self.build_menu(index)
+        if menu.isEmpty():
+            menu.deleteLater()
+            return
+        # Deleted once its action ran: Qt hides a menu before it triggers the action.
+        menu.aboutToHide.connect(menu.deleteLater)
+        menu.popup(self.table.viewport().mapToGlobal(position))
+
+    def build_menu(self, index: QModelIndex | QPersistentModelIndex) -> QMenu:
+        """Build the menu of a row: its dossier, the footer actions, the clipboard."""
+        menu = QMenu(self)
+        source_index = self._proxy.mapToSource(index)
+        row = self._model.row_at(source_index.row())
+        if row is None:
+            return menu
+        ready = not self._loading
+        occupied = any(_display_value(value).strip() for value in row.values[1:])
+
+        def add(text: str, signal: SignalInstance) -> QAction:
+            action = menu.addAction(text)
+            action.setEnabled(ready)
+            action.triggered.connect(lambda _checked=False: signal.emit())
+            return action
+
+        if occupied:
+            menu.setDefaultAction(add("Charger le projet", self.open_project_requested))
+            add("Ouvrir le dossier", self.open_folder_requested)
+            add("Ouvrir la fiche", self.open_fiche_requested)
+            add("Imprimer la fiche…", self.print_fiche_requested)
+            add("Préparer la sortie", self.prepare_sortie_requested)
+            menu.addSeparator()
+            add("Créer sous-projet", self.create_subproject_requested)
+            add("Dupliquer", self.duplicate_project_requested)
+            add("Mettre à jour le projet", self.sync_project_requested)
+        else:
+            menu.setDefaultAction(
+                add("Créer un projet avec ce numéro", self.new_project_with_number_requested)
+            )
+        menu.addSeparator()
+        column = source_index.column()
+        if column > 0:
+            edit = menu.addAction(f"Modifier {COLUMN_NAMES[column]}\tF2")
+            edit.triggered.connect(lambda _checked=False: self._edit_current_cell())
+        if self._model.row_is_dirty(row.row_index):
+            save = menu.addAction("Enregistrer la ligne")
+            save.setEnabled(ready)
+            save.triggered.connect(lambda _checked=False: self._save_selected())
+        menu.addSeparator()
+        number = _display_value(row.values[0])
+        menu.addAction("Copier le numéro").triggered.connect(
+            lambda _checked=False: _copy_text(number)
+        )
+        cell = _display_value(row.values[column])
+        if column > 0 and cell.strip():
+            menu.addAction(f"Copier {COLUMN_NAMES[column]}").triggered.connect(
+                lambda _checked=False: _copy_text(cell)
+            )
+        if occupied:
+            # Tab-separated: pasted in Excel, each value lands in its own cell.
+            line = "\t".join(_display_value(value) for value in row.values[: len(HEADERS)])
+            menu.addAction("Copier la ligne").triggered.connect(
+                lambda _checked=False: _copy_text(line)
+            )
+            menu.addSeparator()
+            add("Supprimer avec éléments liés…", self.delete_project_requested)
+        return menu
+
+    def _edit_current_cell(self) -> None:
+        index = self.table.currentIndex()
+        if index.isValid():
+            self.table.edit(index)
+
     def _filter_rows(self, text: str) -> None:
         self._proxy.setFilterRegularExpression(QRegularExpression.escape(text.strip()))
 
@@ -559,6 +654,10 @@ def _legend(role: str, text: str) -> QHBoxLayout:
     row.addWidget(swatch)
     row.addWidget(label(text, "muted"))
     return row
+
+
+def _copy_text(text: str) -> None:
+    QGuiApplication.clipboard().setText(text)
 
 
 def _display_value(value: object) -> str:

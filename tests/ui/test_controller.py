@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from openpyxl import Workbook
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from projectflow.config import AppConfig
 from projectflow.core.fiche_service import FicheService
@@ -337,6 +337,103 @@ async def test_controller_duplicates_selected_project_into_next_available_number
     assert data.societe == "Balz Metal SA"
     assert data.contact == "Lionel"
     assert data.designation == "Escalier type"
+
+
+def _menu_actions(window: MainWindow, row: int, column: int = 0) -> dict[str, Any]:
+    tab = window.repertoire_tab
+    index = tab.table.model().index(row, column)
+    tab.table.setCurrentIndex(index)
+    menu = tab.build_menu(index)
+    return {action.text(): action for action in menu.actions() if not action.isSeparator()}
+
+
+@pytest.mark.asyncio
+async def test_repertoire_right_click_on_a_project_row_offers_its_dossier(
+    qtbot: Any,
+    tmp_path: Path,
+    project_creation_post_actions: dict[str, list[Any]],
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    project_dir = config.paths.racine_projets / "2026" / "2026-4994"
+    project_dir.mkdir(parents=True)
+    window.repertoire_tab.set_snapshot(await services.repertoire_service.read_snapshot(year=2026))
+
+    actions = _menu_actions(window, 0, column=2)
+
+    assert list(actions) == [
+        "Charger le projet",
+        "Ouvrir le dossier",
+        "Ouvrir la fiche",
+        "Imprimer la fiche…",
+        "Préparer la sortie",
+        "Créer sous-projet",
+        "Dupliquer",
+        "Mettre à jour le projet",
+        "Modifier le client\tF2",
+        "Copier le numéro",
+        "Copier le client",
+        "Copier la ligne",
+        "Supprimer avec éléments liés…",
+    ]
+
+    actions["Ouvrir le dossier"].trigger()
+    assert project_creation_post_actions["opened"] == [project_dir]
+
+    actions["Copier la ligne"].trigger()
+    assert QApplication.clipboard().text() == "2026-4994\t\tBalz Metal SA\tLionel\tProjet"
+    actions["Copier le client"].trigger()
+    assert QApplication.clipboard().text() == "Balz Metal SA"
+
+    actions["Préparer la sortie"].trigger()
+    assert window.tabs.currentWidget() is window.sortie_tab
+    assert window.sortie_tab.project_identity() == ("2026", "2026-4994")
+    await asyncio.sleep(0)  # The sortie tab reads the dossier in a task.
+
+
+@pytest.mark.asyncio
+async def test_repertoire_right_click_saves_only_a_modified_row(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, _config, services = _window(qtbot, tmp_path)
+    tab = window.repertoire_tab
+    tab.set_snapshot(await services.repertoire_service.read_snapshot(year=2026))
+    model = tab.table.model()
+    model.setData(model.index(0, 4), "Escalier")
+
+    assert "Enregistrer la ligne" not in _menu_actions(window, 1)
+
+    _menu_actions(window, 0)["Enregistrer la ligne"].trigger()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert services.repertoire_service.updated_rows == [
+        (
+            0,
+            ("2026-4994", "", "Balz Metal SA", "Lionel", "Escalier"),
+            ("2026-4994", "", "Balz Metal SA", "Lionel", "Projet"),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_repertoire_right_click_on_a_free_row_prepares_a_project_on_its_number(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, _config, services = _window(qtbot, tmp_path)
+    window.repertoire_tab.set_snapshot(await services.repertoire_service.read_snapshot(year=2026))
+
+    actions = _menu_actions(window, 1)
+
+    assert list(actions) == ["Créer un projet avec ce numéro", "Copier le numéro"]
+
+    actions["Créer un projet avec ce numéro"].trigger()
+
+    data = window.creation_tab.data()
+    assert (data.year, data.project_id, data.subproject_id) == ("2026", "4995", "")
+    assert data.designation == ""
+    assert window.tabs.currentWidget() is window.creation_tab
 
 
 @pytest.mark.asyncio

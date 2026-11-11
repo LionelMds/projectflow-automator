@@ -277,6 +277,21 @@ class ProjectFlowController:
         self._window.repertoire_tab.delete_project_requested.connect(
             self.delete_project_from_repertoire,
         )
+        self._window.repertoire_tab.open_folder_requested.connect(
+            self.open_folder_from_repertoire,
+        )
+        self._window.repertoire_tab.open_fiche_requested.connect(
+            self.open_fiche_from_repertoire,
+        )
+        self._window.repertoire_tab.print_fiche_requested.connect(
+            self.print_fiche_from_repertoire,
+        )
+        self._window.repertoire_tab.prepare_sortie_requested.connect(
+            self.prepare_sortie_from_repertoire,
+        )
+        self._window.repertoire_tab.new_project_with_number_requested.connect(
+            self.new_project_with_repertoire_number,
+        )
         self._window.tabs.currentChanged.connect(self._on_tab_changed)
         tab.planner_options_requested.connect(
             lambda: self._schedule_task(self._load_planner_options(tab.planner_widget)),
@@ -1210,6 +1225,30 @@ class ProjectFlowController:
         )
         self._window.show_creation_tab()
 
+    def new_project_with_repertoire_number(self) -> None:
+        """Prepare the form on the free number of the selected row."""
+        payload = self._window.repertoire_tab.selected_row_payload()
+        if payload is None:
+            self._error("Sélectionnez une ligne de projet dans le répertoire.")
+            return
+        _row_index, values, _original = payload
+        try:
+            number = parse_project_number(_repertoire_cell_text(values[0]))
+        except (ProjectFlowError, ValueError) as exc:
+            self._error(str(exc))
+            return
+        if any(_repertoire_cell_text(value) for value in values[1:]):
+            self._error(f"Le numéro {number} est déjà utilisé par un projet.")
+            return
+        self._window.creation_tab.reset_form_fields()
+        self._window.creation_tab.set_project_identity(
+            year=str(number.year),
+            project_id=number.project_id,
+            subproject_id=number.subproject_id or "",
+        )
+        self._window.show_creation_tab()
+        self._log(f"+ Nouveau projet préparé sur le numéro {number}")
+
     def open_project_from_repertoire(self) -> None:
         selected = self._selected_repertoire_project()
         if selected is None:
@@ -1217,6 +1256,39 @@ class ProjectFlowController:
         _row_index, number, _values, _original = selected
         if self._load_project_number(number):
             self._window.show_creation_tab()
+
+    def open_folder_from_repertoire(self) -> None:
+        selected = self._selected_repertoire_project()
+        if selected is not None:
+            self._open_number_dir(selected[1])
+
+    def open_fiche_from_repertoire(self) -> None:
+        selected = self._selected_repertoire_project()
+        if selected is not None:
+            self.open_project_fiche(str(selected[1]))
+
+    def print_fiche_from_repertoire(self) -> None:
+        selected = self._selected_repertoire_project()
+        if selected is None:
+            return
+        if self._mutation_busy:
+            self._log("-> Patientez jusqu'a la fin de l'operation avant d'imprimer la fiche.")
+            return
+        number = selected[1]
+        try:
+            project_dir = self._project_dir(number)
+            fiche_path = standard_fiche_path(project_dir, number)
+            if not fiche_path.exists():
+                fiche_path = self._choose_fiche(project_dir, number)
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            self._error(str(exc))
+            return
+        self._schedule_task(self._print_fiche(fiche_path))
+
+    def prepare_sortie_from_repertoire(self) -> None:
+        selected = self._selected_repertoire_project()
+        if selected is not None:
+            self.prepare_sortie(str(selected[1]))
 
     def create_subproject_from_repertoire(self) -> None:
         selected = self._selected_repertoire_project()

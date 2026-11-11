@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Repertoire chantier : clic droit sur une ligne. Sur un projet : charger, ouvrir le dossier ou
+  la fiche, imprimer la fiche, preparer la sortie, creer un sous-projet, dupliquer, mettre a
+  jour, supprimer. Sur un numero libre : creer un projet avec ce numero. Partout : modifier la
+  cellule, enregistrer la ligne modifiee, copier le numero, la cellule ou la ligne entiere
+  (collable dans Excel).
+
 ## 0.1.75
 
 - Planning : `Suppr` sur la derniere personne d'une tache la supprime (toast « Annuler ») au
