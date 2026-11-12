@@ -85,10 +85,10 @@ Les mises a jour in-app utilisent les artefacts GitHub Releases :
 
 - Windows telecharge `ProjectFlowAutomatorSetup.exe`, verifie son SHA256, puis lance
   l'installateur sans fenetre ni question (voir ci-dessous).
-- macOS demande, telecharge le DMG, verifie son SHA256, puis ouvre l'image disque pour
-  installation.
+- macOS telecharge le DMG, verifie son SHA256, puis remplace l'application sans question
+  (voir ci-dessous).
 
-Sous Windows, la mise a jour est silencieuse :
+Sous Windows et macOS, la mise a jour est silencieuse :
 
 - recherche au demarrage puis toutes les 4 heures, tant que ProjectFlow tourne ;
 - telechargement en arriere-plan dans `%LOCALAPPDATA%\Balz Metal Sa\ProjectFlow\updates`
@@ -99,6 +99,15 @@ Sous Windows, la mise a jour est silencieuse :
 - l'installateur relance ProjectFlow dans le meme etat (`/RELAUNCH=window` ou
   `/RELAUNCH=background`), qui annonce la version installee ;
 - menu ou icone > `Rechercher une mise a jour` : installation immediate.
+
+Sous macOS, le DMG est telecharge dans `~/Library/Application Support/ProjectFlow/updates`.
+ProjectFlow se ferme puis un script (`install_projectflow_update.sh`, journal `install.log` dans
+ce meme dossier) monte l'image, verifie que la nouvelle application est notarisee par Apple et
+signee par l'equipe `ZR2V94PF8Y`, remplace l'application installee et la relance. En cas d'echec
+il remet l'ancienne en place et la relance. L'application doit etre modifiable par l'utilisateur
+(installee dans `/Applications` par un compte administrateur, ou dans `~/Applications`) ; sinon
+ProjectFlow propose la mise a jour avec l'ancienne question, qui ouvre le DMG. Une release macOS
+non signee n'est donc jamais installee seule : les secrets Apple du workflow sont obligatoires.
 
 Un installateur qui echoue deux fois de suite n'est plus lance seul : ProjectFlow propose
 alors la mise a jour avec une question et montre la progression de l'installation. Une mise a

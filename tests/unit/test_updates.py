@@ -362,10 +362,12 @@ def test_prepare_windows_install_plan_quiet_hides_the_installer(tmp_path: Path) 
     assert "/RESTARTAPPLICATIONS" not in plan.command
 
 
-def test_silent_updates_only_for_the_built_windows_app() -> None:
+def test_silent_updates_only_for_the_built_app() -> None:
     assert silent_updates_supported(system_name="Windows", frozen=True) is True
     assert silent_updates_supported(system_name="Windows", frozen=False) is False
-    assert silent_updates_supported(system_name="Darwin", frozen=True) is False
+    assert silent_updates_supported(system_name="Darwin", frozen=True) is True
+    assert silent_updates_supported(system_name="Darwin", frozen=False) is False
+    assert silent_updates_supported(system_name="Linux", frozen=True) is False
 
 
 def test_installs_unattended_only_the_windows_installer() -> None:
@@ -442,7 +444,9 @@ def test_begin_staged_install_counts_the_attempt_before_running(tmp_path: Path) 
     staged = _staged(tmp_path)
     save_staged_update(staged, directory=tmp_path)
 
-    plan = begin_staged_install(staged, relaunch="background", now=1000.0, directory=tmp_path)
+    plan = begin_staged_install(
+        staged, system_name="Windows", relaunch="background", now=1000.0, directory=tmp_path
+    )
 
     assert plan.command[0] == str(staged.installer)
     assert "/VERYSILENT" in plan.command
@@ -457,7 +461,9 @@ def test_begin_staged_install_counts_the_attempt_before_running(tmp_path: Path) 
 def test_staged_update_gives_up_after_repeated_failures(tmp_path: Path) -> None:
     staged = _staged(tmp_path)
     for attempt in range(MAX_INSTALL_ATTEMPTS):
-        begin_staged_install(staged, relaunch="window", now=float(attempt), directory=tmp_path)
+        begin_staged_install(
+            staged, system_name="Windows", relaunch="window", now=float(attempt), directory=tmp_path
+        )
         loaded = load_staged_update(current_version="0.1.0", directory=tmp_path)
         assert loaded is not None
         staged = loaded

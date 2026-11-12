@@ -30,6 +30,7 @@ def launched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[InstallPla
     monkeypatch.delenv("PROJECTFLOW_DEMO_MODE", raising=False)
     monkeypatch.setattr("projectflow.updates.updates_dir", lambda: tmp_path)
     monkeypatch.setattr("projectflow.app.silent_updates_supported", lambda: True)
+    monkeypatch.setattr("projectflow.updates.system", lambda: "Windows")
     monkeypatch.setattr("projectflow.app.launch_install_plan", plans.append)
     return plans
 

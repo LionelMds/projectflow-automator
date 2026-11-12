@@ -34,6 +34,7 @@ from projectflow.ui.tray import ProjectFlowTray
 from projectflow.updates import (
     AFTER_UPDATE_ARGUMENT,
     BACKGROUND_ARGUMENT,
+    UPDATE_FAILED_ARGUMENT,
     RelaunchMode,
     StagedUpdate,
     begin_staged_install,
@@ -45,7 +46,9 @@ from projectflow.updates import (
     verify_staged_installer,
 )
 
-_OWN_ARGUMENTS = frozenset({"--demo", AFTER_UPDATE_ARGUMENT, BACKGROUND_ARGUMENT})
+_OWN_ARGUMENTS = frozenset(
+    {"--demo", AFTER_UPDATE_ARGUMENT, BACKGROUND_ARGUMENT, UPDATE_FAILED_ARGUMENT},
+)
 # The balloon of a tray icon shown a moment ago is dropped by Windows: wait a little.
 _UPDATE_NOTICE_DELAY_MS = 1500
 
@@ -197,7 +200,9 @@ def _install_staged_update(argv: Sequence[str], logger: structlog.stdlib.BoundLo
         return False
     # Read even right after an update: this deletes the installer that has just run.
     staged = load_staged_update(current_version=__version__)
-    if staged is None or AFTER_UPDATE_ARGUMENT in argv:
+    # Started again by the macOS script that just failed (its log says why): the running
+    # app tries once more later, then asks.
+    if staged is None or AFTER_UPDATE_ARGUMENT in argv or UPDATE_FAILED_ARGUMENT in argv:
         return False
     if install_in_progress(staged):
         logger.info("app.update.already_installing", version=staged.version)

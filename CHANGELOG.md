@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Mises a jour macOS silencieuses, comme sous Windows : ProjectFlow telecharge le DMG en
+  arriere-plan (SHA256 verifie) et remplace l'application quand la fenetre est fermee et
+  qu'aucune operation n'est en cours, ou au demarrage suivant, puis redemarre dans le meme etat.
+  La nouvelle version n'est installee que si elle est notarisee par Apple et signee par l'equipe
+  Balz Metal (ZR2V94PF8Y) ; sinon l'ancienne est remise en place et relancee. Une application
+  que l'utilisateur ne peut pas remplacer (autre compte, lancee depuis le DMG) garde l'ancienne
+  question qui ouvre le DMG, tout comme une mise a jour qui echoue deux fois.
 - « Projet rapide » supprime : le bouton de la fenetre, l'entree « Nouveau projet rapide » du
   menu de l'icone et le mini-formulaire, qui ne servaient pas. Un clic simple sur l'icone de la
   zone de notification affiche maintenant la fenetre, comme le double-clic. La creation se fait

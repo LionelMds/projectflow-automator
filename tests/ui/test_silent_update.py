@@ -85,6 +85,7 @@ def release(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Release:
     monkeypatch.setattr("projectflow.ui.controller.GitHubReleaseChecker", Checker)
     monkeypatch.setattr("projectflow.ui.controller.UpdateDownloader", Downloader)
     monkeypatch.setattr("projectflow.ui.controller.silent_updates_supported", lambda: True)
+    monkeypatch.setattr("projectflow.updates.system", lambda: "Windows")
     monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.question", ask)
     monkeypatch.setattr(QApplication, "quit", staticmethod(quit_app))
     return state
