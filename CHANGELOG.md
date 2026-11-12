@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.78
+
+- Mises a jour Windows silencieuses : a partir de cette version, ProjectFlow se met a jour
+  seul, sans question ni fenetre d'installation, puis redemarre (detail en 0.1.77, publiee
+  seulement en pre-release). Meme contenu que la 0.1.77.
+
 ## 0.1.77
 
 - Mises a jour Windows silencieuses : plus de question ni de fenetre d'installation. ProjectFlow
