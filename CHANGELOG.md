@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.77
+
 - Mises a jour Windows silencieuses : plus de question ni de fenetre d'installation. ProjectFlow
   cherche une nouvelle version au demarrage puis toutes les 4 heures, la telecharge en
   arriere-plan, et l'installe quand la fenetre est fermee (icone de la zone de notification) et
