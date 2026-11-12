@@ -11,7 +11,7 @@
 - Saisir `Alice Martin` dans `Gere par` et `LM` dans les initiales utilisateur : creation,
   mise a jour et sous-projet inscrivent respectivement `Alice Martin` en C6 et `LM` en C9.
 - `Charger` relit le responsable depuis C6. Modifier les initiales dans les parametres ne
-  remplace pas le responsable saisi dans le formulaire principal ou la creation rapide.
+  remplace pas le responsable saisi dans le formulaire.
 - `Reinitialiser` vide `Gere par` et conserve les initiales utilisateur. La sortie dossier
   conserve les deux valeurs C6/C9 dans la source et dans la copie.
 - `Suivant disponible` ignore les lignes dont une cellule B, C, D ou E est deja remplie.
@@ -48,12 +48,10 @@
 - L'icone ProjectFlow apparait dans la zone de notification Windows ou la barre des menus macOS.
 - Fermer la fenetre principale masque l'application ; `Quitter ProjectFlow` dans le menu de
   l'icone ferme vraiment le processus.
-- Un clic simple sur l'icone ouvre le mini-formulaire rapide.
-- Un second clic sur l'icone ne cree pas un deuxieme mini-formulaire.
+- Un clic simple ou un double-clic sur l'icone affiche la fenetre principale ; son menu ne
+  propose plus de projet rapide.
 - Relancer ProjectFlow pendant qu'il tourne deja ramene la fenetre existante au premier plan et ne
   cree pas une deuxieme icone.
-- `Nouveau projet rapide` contient `Suivant disponible`, une fleche vers la fenetre complete, et
-  declenche la creation normale.
 - Outlook local peut etre active, teste, puis utiliser `Racine du compte` ou `Boite de reception`.
 - Sur macOS, Mail peut etre active, detecter les comptes Mail, puis creer l'arborescence projet.
 - Sur macOS signe, la premiere creation affiche la demande d'autorisation Apple Events pour Mail.

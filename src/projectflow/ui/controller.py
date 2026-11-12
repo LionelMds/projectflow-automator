@@ -8,7 +8,7 @@ from dataclasses import replace
 from datetime import date
 from functools import wraps
 from pathlib import Path
-from typing import Any, Concatenate, Literal, ParamSpec, Protocol, TypeVar
+from typing import Any, Concatenate, ParamSpec, Protocol, TypeVar
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QMessageBox, QWidget
@@ -60,8 +60,6 @@ from projectflow.ui.dialogs.print_fiche import (
     PrintFicheOptions,
     installed_printers,
 )
-from projectflow.ui.dialogs.quick_confirmation import QuickCreationConfirmationDialog
-from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow, MicrosoftState
 from projectflow.ui.modal import ask_outside_task, show_outside_task
@@ -75,7 +73,6 @@ from projectflow.ui.widgets.planner import (
     PlannerBucketOption,
     PlannerMemberOption,
     PlannerSelectionWidget,
-    default_assignees,
 )
 from projectflow.updates import (
     GitHubReleaseChecker,
@@ -99,7 +96,6 @@ from projectflow.updates import (
     verify_staged_installer,
 )
 
-QuickCreationAction = Literal["open_fiche", "open_repertoire", "edit", "next"]
 # The app stays in the notification area for days: a start-only check would miss releases.
 UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 # A downloaded release installs once the window stayed hidden for this many polls in a row.
@@ -221,7 +217,6 @@ class ProjectFlowController:
         self._planner_tasks: dict[tuple[int, str], asyncio.Task[PlannerOptions]] = {}
         self._planner_generation = 0
         self._planner_cache_plan = ""
-        self._quick_dialog: QuickCreateDialog | None = None
         self._planner_bucket_options: list[PlannerBucketOption] = []
         self._planner_member_options: list[PlannerMemberOption] = []
         self._client_directories: dict[int, ClientDirectory] = {}
@@ -337,7 +332,6 @@ class ProjectFlowController:
         )
         self._window.connection_check_requested.connect(self.request_connection_check)
         self._window.reset_requested.connect(self.request_reset)
-        self._window.quick_create_requested.connect(self.show_quick_create)
         self._window.update_check_requested.connect(
             self.request_update_check,
         )
@@ -776,8 +770,6 @@ class ProjectFlowController:
         self._client_directory_failed.clear()
         empty = ClientDirectory.from_repertoire_rows(())
         self._window.creation_tab.set_client_directory(empty)
-        if self._quick_dialog is not None:
-            self._quick_dialog.set_client_directory(empty)
 
     def _set_mutation_busy(self, *, busy: bool) -> None:
         self._mutation_busy = busy
@@ -792,81 +784,6 @@ class ProjectFlowController:
             tab.show_operation_progress("Opération en cours")
         else:
             tab.clear_operation_progress()
-
-    def show_quick_create(self, *, reset: bool = False) -> None:
-        if self._quick_dialog is not None:
-            if reset:
-                self._quick_dialog.set_data(self._empty_creation_data())
-            self._quick_dialog.show_and_raise()
-            return
-        dialog = QuickCreateDialog(parent=self._window)
-        self._quick_dialog = dialog
-        dialog.set_user_initials(self._config.user.initials)
-        dialog.apply_cad_config(self._config.cad)
-        dialog.apply_planner_config(
-            enabled=self._config.planner.enabled,
-            bucket_id=self._config.planner.bucket_id,
-            bucket_name=self._config.planner.bucket_name,
-            due_days=self._config.planner.due_days,
-            assignees=default_assignees(self._config.planner),
-        )
-        dialog.set_data(self._empty_creation_data() if reset else self._window.creation_tab.data())
-        self._apply_cached_client_directory(dialog)
-        dialog.classic_requested.connect(lambda: self._show_classic_from_quick(dialog))
-        dialog.next_available_requested.connect(
-            lambda: self._schedule_task(self._quick_next_available(dialog)),
-        )
-        dialog.planner_options_requested.connect(
-            lambda: self._schedule_task(self._load_planner_options(dialog.planner_widget)),
-        )
-        dialog.client_suggestions_requested.connect(
-            lambda: self._request_client_suggestions(dialog),
-        )
-        try:
-            result = dialog.exec()
-        finally:
-            if self._quick_dialog is dialog:
-                self._quick_dialog = None
-        if result != dialog.DialogCode.Accepted:
-            return
-        self._schedule_task(self._create_project_from_quick(dialog.data()))
-
-    def _show_classic_from_quick(self, dialog: QuickCreateDialog) -> None:
-        self._window.creation_tab.set_form_data(dialog.data())
-        dialog.reject()
-        self._window.show_and_raise()
-
-    async def _quick_next_available(self, dialog: QuickCreateDialog) -> None:
-        generation = self._repertoire_generation
-        requested_year = dialog.data().year
-        active_dialog = self._quick_dialog
-        try:
-            year = int(requested_year)
-            snapshot = await self._read_snapshot(year)
-        except (ProjectFlowError, ValueError) as exc:
-            self._error(str(exc))
-            return
-        if (
-            generation != self._repertoire_generation
-            or requested_year != dialog.data().year
-            or (active_dialog is dialog and self._quick_dialog is not dialog)
-        ):
-            return
-        self._remember_client_directory(snapshot.year, snapshot.rows)
-        result = snapshot.next_available
-        if result is None:
-            self._log("! Aucun numero disponible trouve")
-            return
-        dialog.set_project_identity(
-            year=str(result.number.year),
-            project_id=result.number.project_id,
-        )
-        self._window.creation_tab.set_project_identity(
-            year=str(result.number.year),
-            project_id=result.number.project_id,
-        )
-        self._save_config_if_available()
-        self._log(f"+ Numero disponible: {result.number}")
 
     async def _load_planner_options(self, target: PlannerSelectionWidget) -> None:
         plan_id = self._config.planner.target_plan_id
@@ -965,22 +882,6 @@ class ProjectFlowController:
         await self._print_saved_fiche(result, project.number)
         self._open_project_folder(result)
         self._show_creation_confirmation(result)
-
-    @_exclusive_action
-    async def _create_project_from_quick(self, data: CreationFormData) -> None:
-        try:
-            project = self._project_from_data(data)
-            created = await self._create_project_for_input(project)
-            if created is None:
-                return
-        except (ProjectFlowError, ValueError) as exc:
-            self._error(str(exc))
-            return
-        result, existing_update = created
-        self._save_config_if_available()
-        self._log_creation_result(result, existing_update=existing_update)
-        self._log_creation_integrations(result)
-        self._show_quick_creation_confirmation(result, data, project)
 
     async def _create_project_for_input(
         self,
@@ -1114,8 +1015,6 @@ class ProjectFlowController:
         self._client_directories[year] = directory
         self._client_directory_failed.discard(year)
         self._apply_cached_client_directory(self._window.creation_tab)
-        if self._quick_dialog is not None:
-            self._apply_cached_client_directory(self._quick_dialog)
 
     def _apply_cached_client_directory(self, target: ClientSuggestionsTarget) -> None:
         try:
@@ -1811,7 +1710,6 @@ class ProjectFlowController:
         if planner_changed:
             self._reset_planner_connection()
         self._window.apply_config_labels()
-        self._apply_quick_config(planner_changed=previous_planner != self._config.planner)
         self._save_config_if_available()
         self._log("+ Parametres enregistres")
         self._log_integration_settings()
@@ -2033,20 +1931,6 @@ class ProjectFlowController:
             self._log(f"+ Planner active: {plan} / {bucket}")
         else:
             self._log("-> Planner desactive")
-
-    def _apply_quick_config(self, *, planner_changed: bool) -> None:
-        if self._quick_dialog is None:
-            return
-        self._quick_dialog.set_user_initials(self._config.user.initials)
-        self._quick_dialog.apply_cad_config(self._config.cad)
-        if planner_changed:
-            self._quick_dialog.apply_planner_config(
-                enabled=self._config.planner.enabled,
-                bucket_id=self._config.planner.bucket_id,
-                bucket_name=self._config.planner.bucket_name,
-                due_days=self._config.planner.due_days,
-                assignees=default_assignees(self._config.planner),
-            )
 
     async def check_updates(self, *, show_no_update: bool = True) -> None:
         """Find a newer release and install it; ``show_no_update`` marks the user's own check.
@@ -2276,19 +2160,6 @@ class ProjectFlowController:
             add_autocad=data.add_autocad,
         )
 
-    def _empty_creation_data(self) -> CreationFormData:
-        current_year = self._window.creation_tab.data().year or str(date.today().year)
-        return CreationFormData(
-            year=current_year,
-            project_id="",
-            subproject_id="",
-            designation="",
-            societe="",
-            contact="",
-            localisation="",
-            gere_par="",
-        )
-
     def _number_from_form(self) -> str:
         data = self._window.creation_tab.data()
         return format_project_number(data.year, data.project_id, data.subproject_id)
@@ -2450,85 +2321,6 @@ class ProjectFlowController:
                 f"{message}{_cad_summary(result)}\n\nDossier:\n{result.project_dir}",
             ),
         )
-
-    def _show_quick_creation_confirmation(
-        self,
-        result: ProjectCreationResult,
-        data: CreationFormData,
-        project: ProjectInput,
-    ) -> None:
-        self._show_dialog(lambda: self._run_quick_creation_confirmation(result, data, project))
-
-    def _run_quick_creation_confirmation(
-        self,
-        result: ProjectCreationResult,
-        data: CreationFormData,
-        project: ProjectInput,
-    ) -> None:
-        title = "Projet cree" if result.project_dir_created else "Projet pret"
-        message = (
-            "Le projet a ete cree avec succes."
-            if result.project_dir_created
-            else "Le projet existant a ete reapplique avec succes."
-        )
-        dialog = QuickCreationConfirmationDialog(
-            title=title,
-            message=f"{message}{_cad_summary(result)}",
-            project_dir=result.project_dir,
-            parent=self._window if self._window.isVisible() else None,
-        )
-        dialog.open_fiche_requested.connect(
-            lambda: self._handle_quick_creation_action("open_fiche", result, data, project),
-        )
-        dialog.open_repertoire_requested.connect(
-            lambda: self._handle_quick_creation_action("open_repertoire", result, data, project),
-        )
-        dialog.exec()
-
-        selected_action = dialog.selected_action()
-        if selected_action == "edit":
-            self._handle_quick_creation_action("edit", result, data, project)
-        elif selected_action == "next":
-            self._handle_quick_creation_action("next", result, data, project)
-
-    def _handle_quick_creation_action(
-        self,
-        action: QuickCreationAction,
-        result: ProjectCreationResult,
-        data: CreationFormData,
-        project: ProjectInput,
-    ) -> None:
-        if action == "open_fiche":
-            self._open_fiche_from_result(result, project)
-            return
-        if action == "open_repertoire":
-            self.open_repertoire()
-            return
-        if action == "edit":
-            # The CAD files were created: editing must not offer to add them again.
-            self._window.creation_tab.set_form_data(
-                replace(data, add_solidworks=False, add_autocad=False),
-            )
-            self._window.show_and_raise()
-            return
-        if action == "next":
-            QTimer.singleShot(0, lambda: self.show_quick_create(reset=True))
-
-    def _open_fiche_from_result(
-        self,
-        result: ProjectCreationResult,
-        project: ProjectInput,
-    ) -> None:
-        try:
-            fiche_path = self._fiche_path_from_result(result, project.number)
-            opened = open_file_default_app(fiche_path)
-        except (ProjectFlowError, OSError) as exc:
-            self._error(str(exc))
-            return
-        if not opened:
-            self._error("Impossible d'ouvrir la fiche avec l'application par defaut.")
-            return
-        self._log(f"+ Fiche ouverte: {fiche_path.name}")
 
     def _fiche_path_from_result(
         self,

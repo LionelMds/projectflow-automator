@@ -21,12 +21,12 @@ from projectflow.graph.planner import PlannerBucket, PlannerMember
 from projectflow.platform.paths import native_path_text
 from projectflow.services import ServiceContainer
 from projectflow.ui.controller import ProjectFlowController
-from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.widgets.planner import (
     PlannerBucketOption,
     PlannerMemberOption,
+    PlannerSelectionWidget,
     PlannerTaskFormData,
 )
 
@@ -182,16 +182,17 @@ async def test_invalidated_read_cannot_replace_newer_client_suggestions(qtbot) -
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("empty", [False, True])
-async def test_main_and_quick_planner_share_request_client_and_cache_empty_results(
+async def test_two_planner_consumers_share_request_client_and_cache_empty_results(
     qtbot,
     monkeypatch,
     *,
     empty: bool,
 ) -> None:
     controller, window, _config, _services = _controller(qtbot)
-    quick = QuickCreateDialog(parent=window)
-    qtbot.addWidget(quick)
-    quick.apply_planner_config(enabled=True, bucket_id="", bucket_name="", due_days=7)
+    # A second widget asking for the same options while the first request is running.
+    other = PlannerSelectionWidget()
+    qtbot.addWidget(other)
+    other.set_config_defaults(enabled=True, bucket_id="", bucket_name="", due_days=7)
     entered: asyncio.Queue[str] = asyncio.Queue()
     release = asyncio.Event()
     requests: list[tuple[str, str]] = []
@@ -218,7 +219,7 @@ async def test_main_and_quick_planner_share_request_client_and_cache_empty_resul
             closed.append(self)
 
     monkeypatch.setattr("projectflow.ui.controller._planner_client", PlannerClient)
-    targets = [window.creation_tab.planner_widget, quick.planner_widget]
+    targets = [window.creation_tab.planner_widget, other]
     consumers = [
         asyncio.create_task(controller._load_planner_options(target))  # noqa: SLF001
         for target in targets
@@ -380,29 +381,8 @@ async def test_scheduled_unexpected_failure_is_reported_and_task_is_removed(
     assert not controller._background_tasks  # noqa: SLF001
 
 
-@pytest.mark.asyncio
-async def test_closed_quick_dialog_does_not_apply_delayed_number_to_main_form(qtbot) -> None:
-    controller, window, _config, services = _controller(qtbot)
-    quick = QuickCreateDialog(parent=window)
-    qtbot.addWidget(quick)
-    quick.set_data(window.creation_tab.data())
-    controller._quick_dialog = quick  # noqa: SLF001
-    backend = services.repertoire_service
-    pending = asyncio.create_task(controller._quick_next_available(quick))  # noqa: SLF001
-    assert await asyncio.wait_for(backend.entered.get(), timeout=2) == 0
-
-    quick.reject()
-    controller._quick_dialog = None  # noqa: SLF001
-    backend.releases[0].set()
-    await asyncio.wait_for(pending, timeout=2)
-
-    assert window.creation_tab.data().project_id == "4994"
-    assert quick.data().project_id == "4994"
-    assert _company_suggestions(window) == []
-
-
 @pytest.mark.parametrize("change", ["profile", "plan", "defaults"])
-def test_settings_preserve_unrelated_state_and_apply_changed_planner_to_both_forms(
+def test_settings_preserve_unrelated_state_and_apply_changed_planner_to_the_form(
     qtbot,
     monkeypatch,
     change: str,
@@ -421,19 +401,8 @@ def test_settings_preserve_unrelated_state_and_apply_changed_planner_to_both_for
     planner_service = object()
     services.planner_service = planner_service  # type: ignore[assignment]
     controller = ProjectFlowController(window=window, config=config, services=services)
-    quick = QuickCreateDialog(parent=window)
-    qtbot.addWidget(quick)
-    quick.apply_planner_config(
-        enabled=True,
-        bucket_id=config.planner.bucket_id,
-        bucket_name=config.planner.bucket_name,
-        due_days=config.planner.due_days,
-    )
-    quick.set_data(window.creation_tab.data())
-    controller._quick_dialog = quick  # noqa: SLF001
     buckets = [PlannerBucketOption(id="chosen-bucket", name="Choix formulaire")]
     window.creation_tab.gere_par_edit.setText("Alice Martin")
-    quick.gere_par_edit.setText("Bob Dupont")
     members = [PlannerMemberOption(id="chosen-member", label="Alice")]
     chosen = PlannerTaskFormData(
         enabled=True,
@@ -444,10 +413,9 @@ def test_settings_preserve_unrelated_state_and_apply_changed_planner_to_both_for
         due_enabled=True,
         due_days=19,
     )
-    targets = [window.creation_tab.planner_widget, quick.planner_widget]
-    for target in targets:
-        target.set_options(buckets=buckets, members=members)
-        target.set_data(chosen)
+    target = window.creation_tab.planner_widget
+    target.set_options(buckets=buckets, members=members)
+    target.set_data(chosen)
     controller._planner_cache_plan = "saved-plan"  # noqa: SLF001
     controller._planner_bucket_options = buckets  # noqa: SLF001
     controller._planner_member_options = members  # noqa: SLF001
@@ -484,19 +452,16 @@ def test_settings_preserve_unrelated_state_and_apply_changed_planner_to_both_for
         "C:/Synthetic/Repertoire.xlsx",
     )
     assert window.creation_tab.user_initials_edit.text() == "CD"
-    assert quick.user_initials_edit.text() == "CD"
     assert window.creation_tab.gere_par_edit.text() == "Alice Martin"
-    assert quick.gere_par_edit.text() == "Bob Dupont"
     assert services.repertoire_service is backend
     assert controller._client_directories[2026] is directory  # noqa: SLF001
     assert _company_suggestions(window) == ["Societe gardee"]
-    for target in targets:
-        if change == "profile":
-            assert target.data() == chosen
-        else:
-            assert target.data().bucket_id == "new-default"
-            assert target.data().due_days == 9
-            assert target.data().assignee_ids == ()
+    if change == "profile":
+        assert target.data() == chosen
+    else:
+        assert target.data().bucket_id == "new-default"
+        assert target.data().due_days == 9
+        assert target.data().assignee_ids == ()
     if change == "plan":
         assert services.planner_service is None
         assert controller._planner_generation == 1  # noqa: SLF001

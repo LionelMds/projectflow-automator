@@ -249,7 +249,6 @@ def _configure_tray(
     app.setQuitOnLastWindowClosed(False)
     window.set_background_mode_enabled(enabled=True)
     tray.show_requested.connect(controller.show_window)
-    tray.quick_create_requested.connect(controller.show_quick_create)
     tray.open_repertoire_requested.connect(controller.open_repertoire)
     tray.open_planning_requested.connect(controller.show_planning)
     tray.update_check_requested.connect(controller.request_update_check)

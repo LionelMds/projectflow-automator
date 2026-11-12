@@ -17,8 +17,6 @@ from projectflow.core.repertoire_service import (
 )
 from projectflow.core.sortie_service import OutputCandidate, OutputInventory
 from projectflow.ui.creation_tab import CreationFormData, CreationTab
-from projectflow.ui.dialogs.quick_confirmation import QuickCreationConfirmationDialog
-from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.onboarding.wizard import OnboardingWizard
 from projectflow.ui.repertoire_tab import RepertoireDossierTab
@@ -213,21 +211,6 @@ def test_creation_tab_normalizes_company_and_filters_contacts(qtbot) -> None:  #
     assert contact_model.index(0, 0).data() == "Élodie Martin"
 
 
-def test_quick_create_uses_same_client_directory(qtbot) -> None:  # type: ignore[no-untyped-def]
-    dialog = QuickCreateDialog()
-    qtbot.addWidget(dialog)
-    dialog.set_client_directory(
-        ClientDirectory.from_repertoire_rows(
-            [("2026-5000", "", "Balz Metal SA", "Lionel", "Projet")]
-        )
-    )
-
-    company_model = dialog.societe_edit.completer().model()
-
-    assert company_model.rowCount() == 1
-    assert company_model.index(0, 0).data() == "Balz Metal SA"
-
-
 def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # type: ignore[no-untyped-def]
     tab = CreationTab()
     qtbot.addWidget(tab)
@@ -257,7 +240,7 @@ def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # ty
     assert "+ Log conserve" in tab.logs.toPlainText()
 
 
-def test_creation_tab_can_apply_quick_form_data(qtbot) -> None:  # type: ignore[no-untyped-def]
+def test_creation_tab_can_apply_form_data(qtbot) -> None:  # type: ignore[no-untyped-def]
     tab = CreationTab()
     qtbot.addWidget(tab)
     tab.set_user_initials("AB")
@@ -323,177 +306,31 @@ def test_creation_tab_round_trips_planner_options(qtbot) -> None:  # type: ignor
     assert tab.data() == data
 
 
-def test_quick_create_dialog_round_trips_form_data(qtbot) -> None:  # type: ignore[no-untyped-def]
-    dialog = QuickCreateDialog()
-    qtbot.addWidget(dialog)
-    dialog.set_user_initials("LM")
-
-    dialog.set_data(
-        CreationFormData(
-            year="2028",
-            project_id="7001",
-            subproject_id="",
-            designation="Garde-corps",
-            societe="Client",
-            contact="Contact",
-            localisation="Lausanne",
-            gere_par="AB",
-        ),
-    )
-
-    assert dialog.data() == CreationFormData(
-        year="2028",
-        project_id="7001",
-        subproject_id="",
-        designation="Garde-corps",
-        societe="Client",
-        contact="Contact",
-        localisation="Lausanne",
-        gere_par="AB",
-    )
-    assert not dialog.gere_par_edit.isReadOnly()
-    assert dialog.user_initials_edit.isReadOnly()
-    assert dialog.user_initials_edit.text() == "LM"
-
-
-def test_responsible_round_trips_between_forms_independently_of_user_initials(qtbot) -> None:
-    tab = CreationTab()
-    dialog = QuickCreateDialog()
-    qtbot.addWidget(tab)
-    qtbot.addWidget(dialog)
-    tab.set_project_identity(year="2026", project_id="4995")
-    tab.gere_par_edit.setText("Responsable du chantier")
-    tab.set_user_initials("AB")
-    dialog.set_user_initials("AB")
-
-    dialog.set_data(tab.data())
-    dialog.gere_par_edit.setText("Autre responsable")
-    dialog.set_user_initials("CD")
-    tab.set_user_initials("CD")
-    tab.set_form_data(dialog.data())
-
-    assert tab.data().gere_par == "Autre responsable"
-    assert dialog.data().gere_par == "Autre responsable"
-    assert tab.user_initials_edit.text() == "CD"
-    assert dialog.user_initials_edit.text() == "CD"
-    tab.reset_form_fields()
-    dialog.set_data(tab.data())
-    assert tab.data().gere_par == ""
-    assert dialog.data().gere_par == ""
-    assert tab.user_initials_edit.text() == "CD"
-    assert dialog.user_initials_edit.text() == "CD"
-
-
-def test_quick_create_dialog_round_trips_planner_options(qtbot) -> None:  # type: ignore[no-untyped-def]
-    dialog = QuickCreateDialog()
-    qtbot.addWidget(dialog)
-    dialog.apply_planner_config(
-        enabled=True,
-        bucket_id="bucket-id",
-        bucket_name="A faire",
-        due_days=7,
-    )
-    data = CreationFormData(
-        year="2028",
-        project_id="7001",
-        subproject_id="",
-        designation="Garde-corps",
-        societe="Client",
-        contact="Contact",
-        localisation="Lausanne",
-        gere_par="AB",
-        planner=PlannerTaskFormData(
-            enabled=True,
-            bucket_id="bucket-id",
-            bucket_name="A faire",
-            assignee_ids=("user-id",),
-            assignee_labels=("Lionel",),
-            due_enabled=True,
-            due_days=12,
-        ),
-    )
-
-    dialog.set_data(data)
-
-    assert dialog.data() == data
-
-
-def test_quick_create_dialog_updates_project_identity(qtbot) -> None:  # type: ignore[no-untyped-def]
-    dialog = QuickCreateDialog()
-    qtbot.addWidget(dialog)
-
-    dialog.set_project_identity(year="2029", project_id="8001")
-
-    assert dialog.year_combo.currentText() == "2029"
-    assert dialog.project_id_edit.text() == "8001"
-    assert dialog.subproject_edit.text() == ""
-
-
-def test_quick_create_dialog_emits_navigation_signals(qtbot) -> None:  # type: ignore[no-untyped-def]
-    dialog = QuickCreateDialog()
-    qtbot.addWidget(dialog)
-    emitted: list[str] = []
-    dialog.classic_requested.connect(lambda: emitted.append("classic"))
-    dialog.next_available_requested.connect(lambda: emitted.append("next"))
-
-    dialog.classic_button.click()
-    dialog.next_available_button.click()
-
-    assert emitted == ["classic", "next"]
-
-
-def test_quick_confirmation_keeps_dialog_open_for_file_actions(qtbot) -> None:  # type: ignore[no-untyped-def]
-    dialog = QuickCreationConfirmationDialog(
-        title="Projet cree",
-        message="Le projet a ete cree avec succes.",
-        project_dir="C:/tmp/2026-4995",
-    )
-    qtbot.addWidget(dialog)
-    emitted: list[str] = []
-    dialog.open_fiche_requested.connect(lambda: emitted.append("fiche"))
-    dialog.open_repertoire_requested.connect(lambda: emitted.append("repertoire"))
-    dialog.show()
-
-    dialog.open_fiche_button.click()
-    dialog.open_repertoire_button.click()
-
-    assert dialog.isVisible()
-    assert emitted == ["fiche", "repertoire"]
-    assert dialog.selected_action() is None
-
-
-def test_quick_confirmation_closes_for_next_or_edit(qtbot) -> None:  # type: ignore[no-untyped-def]
-    dialog = QuickCreationConfirmationDialog(
-        title="Projet cree",
-        message="Le projet a ete cree avec succes.",
-        project_dir="C:/tmp/2026-4995",
-    )
-    qtbot.addWidget(dialog)
-    dialog.show()
-
-    dialog.next_button.click()
-
-    assert dialog.selected_action() == "next"
-    assert not dialog.isVisible()
-
-
-def test_tray_single_click_opens_quick_create() -> None:
+def test_tray_single_and_double_click_show_the_window() -> None:
     tray = ProjectFlowTray(icon=QIcon())
     emitted: list[str] = []
-    tray.quick_create_requested.connect(lambda: emitted.append("quick"))
     tray.show_requested.connect(lambda: emitted.append("show"))
 
     tray._on_activated(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001
-    tray._on_activated(QSystemTrayIcon.ActivationReason.DoubleClick)  # noqa: SLF001
+    assert emitted == ["show"]
 
-    assert emitted == ["quick", "show"]
+    tray._on_activated(QSystemTrayIcon.ActivationReason.DoubleClick)  # noqa: SLF001
+    assert emitted == ["show", "show"]
+
+
+def test_tray_menu_no_longer_offers_a_quick_project() -> None:
+    tray = ProjectFlowTray(icon=QIcon())
+
+    texts = [action.text() for action in tray._menu.actions() if action.text()]  # noqa: SLF001
+
+    assert texts[0] == "Afficher ProjectFlow"
+    assert not any("rapide" in text.lower() for text in texts)
 
 
 def test_tray_context_click_only_opens_menu(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     tray = ProjectFlowTray(icon=QIcon())
     emitted: list[str] = []
     menus: list[bool] = []
-    tray.quick_create_requested.connect(lambda: emitted.append("quick"))
     tray.show_requested.connect(lambda: emitted.append("show"))
     monkeypatch.setattr(tray, "_show_context_menu", lambda: menus.append(True))
 

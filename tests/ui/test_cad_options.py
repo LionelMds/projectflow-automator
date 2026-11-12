@@ -11,8 +11,6 @@ from projectflow.config import AppConfig, CadConfig
 from projectflow.core.fiche_service import FicheService
 from projectflow.core.models import CadFileResult, ProjectCreationResult, ProjectInput
 from projectflow.ui.controller import ProjectFlowController
-from projectflow.ui.creation_tab import CreationFormData
-from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.dialogs.settings import SettingsDialog
 from projectflow.ui.main_window import MainWindow
 
@@ -124,20 +122,6 @@ def test_cad_options_are_never_saved_in_settings(qtbot: Any, tmp_path: Path) -> 
     assert "add_solidworks" not in dumped
 
 
-def test_quick_dialog_cad_options(qtbot: Any, tmp_path: Path) -> None:
-    dialog = QuickCreateDialog()
-    qtbot.addWidget(dialog)
-    assert not dialog.cad_options.autocad_checkbox.isEnabled()
-
-    dialog.apply_cad_config(_cad_config(tmp_path))
-    dialog.cad_options.autocad_checkbox.setChecked(True)
-
-    assert dialog.data().add_autocad is True
-    assert dialog.data().add_solidworks is False
-    dialog.set_data(CreationFormData("2026", "", "", "", "", "", "", ""))
-    assert dialog.data().add_autocad is False
-
-
 @pytest.fixture
 def no_message_boxes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     messages: list[str] = []
@@ -220,33 +204,6 @@ async def test_controller_update_passes_cad_options(
     assert updated.add_autocad is True
     assert updated.add_solidworks is False
     assert tab.data().add_autocad is False
-
-
-def test_quick_confirmation_edit_does_not_recheck_cad_options(
-    qtbot: Any,
-    tmp_path: Path,
-) -> None:
-    window = _window(qtbot, tmp_path, cad=_cad_config(tmp_path))
-    controller = ProjectFlowController(
-        window=window,
-        config=window._config,  # noqa: SLF001
-        services=FakeServices(),  # type: ignore[arg-type]
-    )
-    data = CreationFormData(
-        "2026", "4995", "", "Escalier", "", "", "", "", add_solidworks=True, add_autocad=True
-    )
-    result = ProjectCreationResult(project_dir_created=True, project_dir="p", fiche_path=None)
-
-    controller._handle_quick_creation_action(  # noqa: SLF001
-        "edit",
-        result,
-        data,
-        controller._project_from_data(data),  # noqa: SLF001
-    )
-
-    assert window.creation_tab.data().designation == "Escalier"
-    assert window.creation_tab.data().add_solidworks is False
-    assert window.creation_tab.data().add_autocad is False
 
 
 def test_settings_dialog_applies_cad_settings_and_stores_key(

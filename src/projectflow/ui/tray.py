@@ -7,7 +7,6 @@ from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 class ProjectFlowTray(QObject):
     show_requested = Signal()
-    quick_create_requested = Signal()
     open_repertoire_requested = Signal()
     open_planning_requested = Signal()
     update_check_requested = Signal()
@@ -36,7 +35,6 @@ class ProjectFlowTray(QObject):
     def _build_menu(self) -> QMenu:
         menu = QMenu()
         show_action = QAction("Afficher ProjectFlow", self)
-        quick_create_action = QAction("Nouveau projet rapide", self)
         open_repertoire_action = QAction("Ouvrir repertoire", self)
         open_planning_action = QAction("Ouvrir le planning", self)
         update_action = QAction("Rechercher une mise a jour", self)
@@ -45,7 +43,6 @@ class ProjectFlowTray(QObject):
         quit_action = QAction("Quitter ProjectFlow", self)
 
         show_action.triggered.connect(self.show_requested.emit)
-        quick_create_action.triggered.connect(self.quick_create_requested.emit)
         open_repertoire_action.triggered.connect(self.open_repertoire_requested.emit)
         open_planning_action.triggered.connect(self.open_planning_requested.emit)
         update_action.triggered.connect(self.update_check_requested.emit)
@@ -53,7 +50,6 @@ class ProjectFlowTray(QObject):
         quit_action.triggered.connect(self.quit_requested.emit)
 
         menu.addAction(show_action)
-        menu.addAction(quick_create_action)
         menu.addSeparator()
         menu.addAction(open_repertoire_action)
         menu.addAction(open_planning_action)
@@ -64,10 +60,11 @@ class ProjectFlowTray(QObject):
         return menu
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            self.quick_create_requested.emit()
-            return
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            # A single click and a double click both bring the window back.
             self.show_requested.emit()
             return
         if reason == QSystemTrayIcon.ActivationReason.Context:

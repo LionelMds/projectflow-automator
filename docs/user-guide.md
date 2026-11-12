@@ -40,7 +40,6 @@ macOS quand le systeme le permet.
 Depuis cette icone, le menu permet de :
 
 - afficher la fenetre principale,
-- ouvrir le mini-formulaire `Nouveau projet rapide`,
 - ouvrir le repertoire chantier,
 - rechercher une mise a jour,
 - quitter ProjectFlow.
@@ -51,13 +50,7 @@ completement, utiliser `Quitter ProjectFlow` dans le menu de l'icone.
 Si ProjectFlow est deja lance, cliquer de nouveau sur l'application n'ouvre pas une deuxieme
 instance : la fenetre existante revient au premier plan.
 
-Un clic simple sur l'icone ouvre directement le mini-formulaire rapide. La petite fleche dans ce
-formulaire recopie les champs saisis vers la fenetre principale et ouvre le mode complet.
-
-Le mini-formulaire rapide contient les champs essentiels du projet. Au clic sur `Creer`,
-ProjectFlow recopie ces informations dans la fenetre principale et lance la creation normale, avec
-les memes controles, confirmations et integrations que le formulaire complet. Le bouton
-`Suivant disponible` y pre-remplit le prochain numero libre comme dans le formulaire principal.
+Un clic simple ou un double-clic sur l'icone affiche la fenetre principale.
 
 ## Configurer Outlook local
 
@@ -117,8 +110,8 @@ ferme d'elle-meme une fois la connexion terminee.
 
 ## Fichiers CAO (SolidWorks et AutoCAD)
 
-Deux cases, sous le cadre Planner de la fenetre principale et au-dessus du bouton `Creer` du
-formulaire rapide, ajoutent les fichiers CAO au projet :
+Deux cases, sous le cadre Planner de la fenetre principale, ajoutent les fichiers CAO au
+projet :
 
 - `Ajouter arborescence SolidWorks` copie les fichiers SolidWorks modeles, les renomme avec le
   numero du projet, relie l'assemblage aux pieces du projet et renseigne les proprietes ;

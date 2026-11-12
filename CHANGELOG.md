@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- « Projet rapide » supprime : le bouton de la fenetre, l'entree « Nouveau projet rapide » du
+  menu de l'icone et le mini-formulaire, qui ne servaient pas. Un clic simple sur l'icone de la
+  zone de notification affiche maintenant la fenetre, comme le double-clic. La creation se fait
+  dans l'onglet Creation.
 - Mise a jour Windows silencieuse : l'installateur telecharge est supprime des le redemarrage
   qui suit l'installation, et non plus au demarrage d'apres.
 

@@ -162,8 +162,6 @@ def test_header_shortens_its_texts_at_the_minimum_width(qtbot: Any) -> None:
     assert "Répertoire chantier" not in _nav_texts(window)
     assert window.microsoft_button.text() == "Microsoft"
     assert "prenom.nom-tres-long@balzmetal.ch" in window.microsoft_button.toolTip()
-    assert window.quick_button.text() == ""
-    assert window.quick_button.toolTip() == "Projet rapide"
     header = window.centralWidget().layout().itemAt(0).widget()
     assert header.minimumSizeHint().width() <= window.width()
 
@@ -173,7 +171,6 @@ def test_header_shortens_its_texts_at_the_minimum_width(qtbot: Any) -> None:
     assert not window.compact_header
     assert "Répertoire chantier" in _nav_texts(window)
     assert window.microsoft_button.text() == "Microsoft · prenom.nom-tres-long@balzmetal.ch"
-    assert window.quick_button.text() == "Projet rapide"
     assert header.minimumSizeHint().width() <= window.width()
 
 

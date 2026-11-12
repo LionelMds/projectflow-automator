@@ -70,10 +70,9 @@ La premiere ouverture affiche un assistant simple pour choisir :
 
 Quand la zone de notification Windows ou la barre des menus macOS est disponible, ProjectFlow y
 place une icone permanente. Fermer la fenetre masque l'application, mais elle reste disponible en
-arriere-plan depuis cette icone. Un clic simple sur l'icone ouvre le mini-formulaire
-`Nouveau projet rapide`; sa fleche permet de basculer vers la fenetre complete. Le menu de l'icone
-permet aussi d'afficher ProjectFlow, d'ouvrir le repertoire, de chercher une mise a jour ou de
-quitter vraiment l'application.
+arriere-plan depuis cette icone. Un clic sur l'icone affiche la fenetre. Le menu de l'icone
+permet aussi d'ouvrir le repertoire ou le planning, de chercher une mise a jour ou de quitter
+vraiment l'application.
 
 ProjectFlow fonctionne en instance unique : relancer l'application quand elle est deja ouverte
 ramene simplement la fenetre existante au premier plan.
@@ -255,7 +254,7 @@ Le MVP couvre :
 - onglet `Sortie dossier` pour selectionner la fiche, la prise de cote, les photos et les plans,
   avec selection manuelle des photos/plans, apercu photo simple et creation d'un dossier de sortie,
 - relance de `Creer` sur projet existant pour reappliquer Outlook/epingle sans ecraser,
-- icone de zone de notification Windows / barre des menus macOS avec mini-formulaire de creation,
+- icone de zone de notification Windows / barre des menus macOS,
 - Outlook local Windows via le profil Outlook classique, desactive par defaut,
 - Mail macOS via l'application native Mail, desactive par defaut,
 - Planner configurable par plan/bucket, desactive par defaut dans chaque nouveau formulaire,

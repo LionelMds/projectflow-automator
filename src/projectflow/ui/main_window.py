@@ -34,9 +34,8 @@ _OUTLOOK_BASE_FOLDERS = {"root": "Racine du compte", "inbox": "Boîte de récept
 MicrosoftState = Literal["hidden", "checking", "connected", "warning", "disconnected"]
 MICROSOFT_SIGN_IN_LABEL = "Se connecter à Microsoft"
 PLANNING_TAB_TEXT: Final = "Planning"
-QUICK_CREATE_LABEL: Final = "Projet rapide"
 # Below this window width the header shortens its texts to stay on one line down to the
-# minimum width (1000 px): nav « Répertoire », icon-only « Projet rapide », no account.
+# minimum width (1000 px): nav « Répertoire », no account.
 NAV_COMPACT_WIDTH: Final = 1100
 NAV_COMPACT_LABELS: Final = {"Répertoire chantier": "Répertoire"}
 HEADER_SPACING: Final = 28
@@ -54,7 +53,6 @@ class MainWindow(QMainWindow):
     update_confirmed = Signal()
     update_check_requested = Signal()
     settings_requested = Signal()
-    quick_create_requested = Signal()
     hidden_to_background = Signal()
     microsoft_sign_in_requested = Signal()
     connection_check_requested = Signal()
@@ -167,9 +165,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.repertoire_tag, 0, Qt.AlignmentFlag.AlignVCenter)
         actions = QHBoxLayout()
         actions.setSpacing(10)
-        self.quick_button = button(QUICK_CREATE_LABEL, icon="zap")
-        self.quick_button.clicked.connect(self.quick_create_requested.emit)
-        actions.addWidget(self.quick_button)
         # One icon for the settings, the update check and the about box: the
         # redesigned window has no menu bar.
         self.settings_button = QToolButton()
@@ -317,8 +312,6 @@ class MainWindow(QMainWindow):
         self._compact_header = compact
         if self._header_layout is not None:
             self._header_layout.setSpacing(HEADER_COMPACT_SPACING if compact else HEADER_SPACING)
-        self.quick_button.setText("" if compact else QUICK_CREATE_LABEL)
-        self.quick_button.setToolTip(QUICK_CREATE_LABEL if compact else "")
         self._apply_nav_labels()
         self._refresh_microsoft_text()
         self._refresh_repertoire_tag()

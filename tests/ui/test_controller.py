@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +18,6 @@ from projectflow.core.repertoire_service import (
     RepertoireSnapshot,
 )
 from projectflow.ui.controller import ProjectFlowController, _update_prompt_text
-from projectflow.ui.creation_tab import CreationFormData
-from projectflow.ui.dialogs.quick_create import QuickCreateDialog
 from projectflow.ui.main_window import MainWindow
 from projectflow.ui.widgets.planner import PlannerTaskFormData
 
@@ -524,174 +521,6 @@ async def test_controller_repertoire_sync_updates_full_project(
     assert project.planner.enabled is False
 
 
-@pytest.mark.asyncio
-async def test_controller_quick_next_available_prefills_dialog(
-    qtbot: Any,
-    tmp_path: Path,
-) -> None:
-    window, config, services = _window(qtbot, tmp_path)
-    controller = ProjectFlowController(
-        window=window,
-        config=config,
-        services=services,  # type: ignore[arg-type]
-    )
-    dialog = QuickCreateDialog(parent=window)
-    qtbot.addWidget(dialog)
-    dialog.set_project_identity(year="2026", project_id="", subproject_id="2")
-
-    await controller._quick_next_available(dialog)  # noqa: SLF001
-
-    assert dialog.project_id_edit.text() == "4995"
-    assert dialog.subproject_edit.text() == ""
-    assert window.creation_tab.project_id_edit.text() == "4995"
-
-
-@pytest.mark.asyncio
-async def test_controller_quick_create_stays_in_quick_flow(
-    qtbot: Any,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    project_creation_post_actions: dict[str, list[Any]],
-) -> None:
-    window, config, services = _window(qtbot, tmp_path)
-    controller = ProjectFlowController(
-        window=window,
-        config=config,
-        services=services,  # type: ignore[arg-type]
-    )
-    confirmations: list[tuple[ProjectCreationResult, CreationFormData, ProjectInput]] = []
-    data = CreationFormData(
-        year="2026",
-        project_id="4995",
-        subproject_id="",
-        designation="Escalier rapide",
-        societe="Balz",
-        contact="Lionel",
-        localisation="Geneve",
-        gere_par="LM",
-    )
-
-    def record_confirmation(
-        result: ProjectCreationResult,
-        confirmed_data: CreationFormData,
-        project: ProjectInput,
-    ) -> None:
-        confirmations.append((result, confirmed_data, project))
-
-    monkeypatch.setattr(controller, "_show_quick_creation_confirmation", record_confirmation)
-
-    await controller._create_project_from_quick(data)  # noqa: SLF001
-
-    assert str(services.project_service.created[0][0].number) == "2026-4995"
-    assert services.project_service.created[0][0].designation == "Escalier rapide"
-    assert confirmations[0][1] == data
-    assert str(confirmations[0][2].number) == "2026-4995"
-    assert project_creation_post_actions["opened"] == []
-    assert project_creation_post_actions["infos"] == []
-    assert not window.isVisible()
-
-
-def test_controller_quick_confirmation_modifier_opens_loaded_main_window(
-    qtbot: Any,
-    tmp_path: Path,
-) -> None:
-    window, config, services = _window(qtbot, tmp_path)
-    config.user.initials = "LM"
-    window.apply_config_labels()
-    controller = ProjectFlowController(
-        window=window,
-        config=config,
-        services=services,  # type: ignore[arg-type]
-    )
-    data = CreationFormData(
-        year="2026",
-        project_id="4995",
-        subproject_id="",
-        designation="Escalier rapide",
-        societe="Balz",
-        contact="Lionel",
-        localisation="Geneve",
-        gere_par="LM",
-    )
-    project = ProjectInput(number=parse_project_number("2026-4995"))
-
-    controller._handle_quick_creation_action(  # noqa: SLF001
-        "edit",
-        services.project_service.creation_result,
-        data,
-        project,
-    )
-
-    assert window.isVisible()
-    assert window.creation_tab.data() == data
-
-
-def test_controller_quick_confirmation_next_reopens_reset_quick_form(
-    qtbot: Any,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    window, config, services = _window(qtbot, tmp_path)
-    controller = ProjectFlowController(
-        window=window,
-        config=config,
-        services=services,  # type: ignore[arg-type]
-    )
-    calls: list[bool] = []
-
-    def record_quick_create(*, reset: bool = False) -> None:
-        calls.append(reset)
-
-    monkeypatch.setattr(controller, "show_quick_create", record_quick_create)
-
-    controller._handle_quick_creation_action(  # noqa: SLF001
-        "next",
-        services.project_service.creation_result,
-        CreationFormData(
-            year="2026",
-            project_id="4995",
-            subproject_id="",
-            designation="Escalier rapide",
-            societe="Balz",
-            contact="Lionel",
-            localisation="Geneve",
-            gere_par="LM",
-        ),
-        ProjectInput(number=parse_project_number("2026-4995")),
-    )
-
-    qtbot.waitUntil(lambda: calls == [True])
-
-
-def test_controller_reuses_existing_quick_dialog(
-    qtbot: Any,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    window, config, services = _window(qtbot, tmp_path)
-    controller = ProjectFlowController(
-        window=window,
-        config=config,
-        services=services,  # type: ignore[arg-type]
-    )
-    dialog = QuickCreateDialog(parent=window)
-    qtbot.addWidget(dialog)
-    dialog.show()
-    controller._quick_dialog = dialog  # noqa: SLF001
-    created: list[bool] = []
-
-    def fail_if_created(*_args: object, **_kwargs: object) -> QuickCreateDialog:
-        created.append(True)
-        return QuickCreateDialog(parent=window)
-
-    monkeypatch.setattr("projectflow.ui.controller.QuickCreateDialog", fail_if_created)
-
-    controller.show_quick_create()
-
-    assert created == []
-    assert controller._quick_dialog is dialog  # noqa: SLF001
-
-
 def test_controller_load_project_reads_existing_fiche(qtbot: Any, tmp_path: Path) -> None:
     window, config, services = _window(qtbot, tmp_path)
     config.user.initials = "AB"
@@ -1072,7 +901,7 @@ async def test_open_repertoire_reports_missing_excel_handler(
     assert "Impossible de lancer Excel" in window.creation_tab.logs.toPlainText()
 
 
-def test_configured_initials_survive_form_reset_and_quick_dialog(
+def test_configured_initials_survive_form_reset(
     qtbot: Any,
     tmp_path: Path,
 ) -> None:
@@ -1086,15 +915,6 @@ def test_configured_initials_survive_form_reset_and_quick_dialog(
     assert tab.data().gere_par == ""
     assert tab.user_initials_edit.isReadOnly()
     assert tab.user_initials_edit.text() == "AB"
-    dialog = QuickCreateDialog(parent=window)
-    qtbot.addWidget(dialog)
-    dialog.set_user_initials(config.user.initials)
-    data = replace(tab.data(), gere_par="OTHER")
-    dialog.set_data(data)
-    assert dialog.data().gere_par == "OTHER"
-    assert not dialog.gere_par_edit.isReadOnly()
-    assert dialog.user_initials_edit.isReadOnly()
-    assert dialog.user_initials_edit.text() == "AB"
 
 
 def test_controller_open_repertoire_reports_missing_path(
