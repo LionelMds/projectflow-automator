@@ -19,6 +19,7 @@ from projectflow.auth.browser_sign_in import set_sign_in_prompt
 from projectflow.config import AppConfig
 from projectflow.core.planning.poste_config import PlanningPosteConfig
 from projectflow.demo import build_demo_environment
+from projectflow.exceptions import ProjectFlowError
 from projectflow.logging import configure_logging, get_logger
 from projectflow.platform.single_instance import SingleInstanceGuard
 from projectflow.reset import reset_local_data
@@ -30,13 +31,30 @@ from projectflow.ui.onboarding.wizard import OnboardingWizard
 from projectflow.ui.planning_controller import PlanningStoreFactory
 from projectflow.ui.theme import apply_theme
 from projectflow.ui.tray import ProjectFlowTray
+from projectflow.updates import (
+    AFTER_UPDATE_ARGUMENT,
+    BACKGROUND_ARGUMENT,
+    RelaunchMode,
+    StagedUpdate,
+    begin_staged_install,
+    discard_staged_update,
+    install_in_progress,
+    launch_install_plan,
+    load_staged_update,
+    silent_updates_supported,
+    verify_staged_installer,
+)
+
+_OWN_ARGUMENTS = frozenset({"--demo", AFTER_UPDATE_ARGUMENT, BACKGROUND_ARGUMENT})
+# The balloon of a tray icon shown a moment ago is dropped by Windows: wait a little.
+_UPDATE_NOTICE_DELAY_MS = 1500
 
 
 def run(argv: Sequence[str]) -> int:
     configure_logging()
     logger = get_logger("projectflow.app")
 
-    qt_argv = [arg for arg in argv if arg != "--demo"]
+    qt_argv = [arg for arg in argv if arg not in _OWN_ARGUMENTS]
     app = QApplication(qt_argv)
     app.setApplicationName("ProjectFlow Automator")
     app.setOrganizationName("Balz Metal Sa")
@@ -47,6 +65,11 @@ def run(argv: Sequence[str]) -> int:
     single_instance = SingleInstanceGuard(parent=app)
     if not single_instance.listen():
         logger.info("app.single_instance.forwarded")
+        return 0
+
+    if _install_staged_update(argv, logger):
+        # The installer starts the new version: nothing of this one is shown.
+        single_instance.release()
         return 0
 
     event_loop = QEventLoop(app)
@@ -110,17 +133,14 @@ def run(argv: Sequence[str]) -> int:
     if tray is not None:
         logger.info("app.tray.enabled")
     single_instance.activation_requested.connect(lambda _command: controller.show_window())
-    window.show()
+    _show_at_start(window, controller, argv, has_tray=tray is not None)
     logger.info("app.started", version=__version__)
     # After the first paint: the planning reads its cache and its store in the background.
     QTimer.singleShot(0, controller.start_planning)
     if not demo_mode:
         # Know at once whether Microsoft works, without opening any browser.
         QTimer.singleShot(0, controller.request_connection_check)
-        QTimer.singleShot(
-            0,
-            lambda: controller.request_update_check(show_no_update=False),
-        )
+        QTimer.singleShot(0, controller.start_update_checks)
     _schedule_smoke_exit(app, logger, smoke_delay_ms)
 
     with event_loop:
@@ -131,12 +151,76 @@ def run(argv: Sequence[str]) -> int:
                 event_loop.run_until_complete(controller.aclose())
             finally:
                 single_instance.release()
+    _after_exit(controller, logger)
+    return result if isinstance(result, int) else 0
+
+
+def _show_at_start(
+    window: MainWindow,
+    controller: ProjectFlowController,
+    argv: Sequence[str],
+    *,
+    has_tray: bool,
+) -> None:
+    # An update installed while the window was hidden comes back hidden too.
+    if BACKGROUND_ARGUMENT not in argv or not has_tray:
+        window.show()
+    if AFTER_UPDATE_ARGUMENT in argv:
+        QTimer.singleShot(_UPDATE_NOTICE_DELAY_MS, controller.announce_update_installed)
+
+
+def _after_exit(controller: ProjectFlowController, logger: structlog.stdlib.BoundLogger) -> None:
+    """Do what must wait until everything is saved and closed: the reset, or the update."""
     if controller.reset_requested:
         # Erased only now: nothing running can write the settings or tokens back.
         failures = reset_local_data()
         logger.info("app.reset.finished", failures=failures)
         _restart_application()
-    return result if isinstance(result, int) else 0
+        return
+    install_plan = controller.install_plan
+    if install_plan is None:
+        return
+    try:
+        launch_install_plan(install_plan)
+    except OSError:
+        logger.exception("app.update.launch_failed")
+    else:
+        logger.info("app.update.installing")
+
+
+def _install_staged_update(argv: Sequence[str], logger: structlog.stdlib.BoundLogger) -> bool:
+    """Install the release downloaded by an earlier session; True when the app must exit.
+
+    The installer runs without a window and starts the new version itself.
+    """
+    if _demo_mode_enabled(argv) or AFTER_UPDATE_ARGUMENT in argv or not silent_updates_supported():
+        return False
+    staged = load_staged_update(current_version=__version__)
+    if staged is None:
+        return False
+    if install_in_progress(staged):
+        logger.info("app.update.already_installing", version=staged.version)
+        return True
+    # Failed twice without a window: the app starts and offers it with a question.
+    if staged.exhausted or not _staged_installer_intact(staged, logger):
+        return False
+    relaunch: RelaunchMode = "background" if BACKGROUND_ARGUMENT in argv else "window"
+    try:
+        launch_install_plan(begin_staged_install(staged, relaunch=relaunch))
+    except (ProjectFlowError, OSError):
+        logger.exception("app.update.launch_failed", version=staged.version)
+        return False
+    logger.info("app.update.installing", version=staged.version)
+    return True
+
+
+def _staged_installer_intact(staged: StagedUpdate, logger: structlog.stdlib.BoundLogger) -> bool:
+    if verify_staged_installer(staged):
+        return True
+    # Downloaded again by the next check.
+    logger.warning("app.update.staged_invalid", version=staged.version)
+    discard_staged_update()
+    return False
 
 
 def _restart_application() -> None:

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 from platform import system
+from typing import Literal
 from urllib.parse import unquote, urlparse
 
 import httpx
@@ -16,6 +21,19 @@ from projectflow.exceptions import ProjectFlowError
 from projectflow.platform.paths import updates_dir
 
 GITHUB_API_ROOT = "https://api.github.com"
+# Passed by the installer when it starts the new version after an in-app update.
+AFTER_UPDATE_ARGUMENT = "--after-update"
+# Start in the notification area, without showing the window.
+BACKGROUND_ARGUMENT = "--background"
+STAGED_UPDATE_FILE = "staged.json"
+# A release whose installer fails twice is offered with the old question instead.
+MAX_INSTALL_ATTEMPTS = 2
+# A second start during an installation must not run a second installer.
+INSTALL_IN_PROGRESS_SECONDS = 60.0
+_DOWNLOAD_CHUNK_BYTES = 256 * 1024
+
+RelaunchMode = Literal["window", "background"]
+"""How the installer starts the new version: window shown, or notification area only."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +56,21 @@ class UpdateInfo:
 class InstallPlan:
     command: tuple[str, ...]
     should_quit_app: bool
+
+
+@dataclass(frozen=True, slots=True)
+class StagedUpdate:
+    """An installer downloaded and verified, waiting for a moment nobody is using the app."""
+
+    version: str
+    installer: Path
+    sha256: str
+    attempts: int = 0
+    attempted_at: float = 0.0
+
+    @property
+    def exhausted(self) -> bool:
+        return self.attempts >= MAX_INSTALL_ATTEMPTS
 
 
 class GitHubReleaseChecker:
@@ -94,32 +127,156 @@ class UpdateDownloader:
         if not asset.download_url:
             raise ProjectFlowError("Aucun lien de telechargement disponible.")
 
+        target_dir = destination_dir or updates_dir() / version
+        filename = _safe_filename(asset.name or _filename_from_url(asset.download_url))
+        target_path = target_dir / filename
+        # Written beside its final name: an interrupted download never looks complete.
+        partial_path = target_dir / f"{filename}.part"
+        digest = sha256()
+        size = 0
+        complete = False
         close_client = self._client is None
         client = self._client or httpx.AsyncClient(timeout=60, follow_redirects=True)
         try:
-            response = await client.get(asset.download_url)
-            response.raise_for_status()
+            # The checksum first: without it the installer is not downloaded at all.
             checksum_text = await _download_checksum_text(
                 client,
                 checksum_asset,
                 require_checksum=require_checksum,
             )
+            target_dir.mkdir(parents=True, exist_ok=True)
+            async with client.stream("GET", asset.download_url) as response:
+                response.raise_for_status()
+                with partial_path.open("wb") as output:
+                    async for chunk in response.aiter_bytes(_DOWNLOAD_CHUNK_BYTES):
+                        output.write(chunk)
+                        digest.update(chunk)
+                        size += len(chunk)
+            if asset.size > 0 and size != asset.size:
+                raise ProjectFlowError("Telechargement de la mise a jour incomplet.")
+            _verify_sha256(digest.hexdigest(), asset.name, checksum_text)
+            partial_path.replace(target_path)
+            complete = True
         except httpx.HTTPError as exc:
             raise ProjectFlowError("Telechargement de la mise a jour impossible.") from exc
         finally:
+            if not complete:
+                partial_path.unlink(missing_ok=True)
             if close_client:
                 await client.aclose()
-
-        if asset.size > 0 and len(response.content) != asset.size:
-            raise ProjectFlowError("Telechargement de la mise a jour incomplet.")
-        _verify_sha256(response.content, asset.name, checksum_text)
-
-        target_dir = destination_dir or updates_dir() / version
-        target_dir.mkdir(parents=True, exist_ok=True)
-        filename = _safe_filename(asset.name or _filename_from_url(asset.download_url))
-        target_path = target_dir / filename
-        target_path.write_bytes(response.content)
         return target_path
+
+
+def silent_updates_supported(
+    *,
+    system_name: str | None = None,
+    frozen: bool | None = None,
+) -> bool:
+    """Only the built Windows app installs releases by itself, never a source checkout."""
+    is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    return is_frozen and (system_name or system()).lower() == "windows"
+
+
+def installs_unattended(asset: ReleaseAsset) -> bool:
+    """Tell whether ``asset`` is the Windows installer, which runs without any window."""
+    return _looks_like_windows_installer_name(asset.name)
+
+
+def load_staged_update(
+    *,
+    current_version: str,
+    directory: Path | None = None,
+) -> StagedUpdate | None:
+    """Return the downloaded release waiting on this poste; forget what is installed."""
+    root = directory or updates_dir()
+    staged = _read_staged_update(root)
+    if staged is not None and _version_key(staged.version) > _version_key(current_version):
+        return staged
+    discard_staged_update(directory=root)
+    return None
+
+
+def save_staged_update(staged: StagedUpdate, *, directory: Path | None = None) -> None:
+    root = directory or updates_dir()
+    try:
+        installer = staged.installer.relative_to(root)
+    except ValueError as exc:
+        raise ProjectFlowError("Mise a jour hors du dossier des telechargements.") from exc
+    root.mkdir(parents=True, exist_ok=True)
+    (root / STAGED_UPDATE_FILE).write_text(
+        json.dumps(
+            {
+                "version": staged.version,
+                "installer": installer.as_posix(),
+                "sha256": staged.sha256,
+                "attempts": staged.attempts,
+                "attempted_at": staged.attempted_at,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _remove_downloads(root, keep=staged.installer.parent)
+
+
+def discard_staged_update(*, directory: Path | None = None) -> None:
+    """Forget the waiting release and delete every downloaded installer."""
+    root = directory or updates_dir()
+    if not root.is_dir():
+        return
+    (root / STAGED_UPDATE_FILE).unlink(missing_ok=True)
+    _remove_downloads(root, keep=None)
+
+
+def file_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_staged_installer(staged: StagedUpdate) -> bool:
+    """Check that the installer is still the file whose checksum was verified."""
+    try:
+        return file_sha256(staged.installer).lower() == staged.sha256.lower()
+    except OSError:
+        return False
+
+
+def install_in_progress(staged: StagedUpdate, *, now: float | None = None) -> bool:
+    """Tell whether an installer was started a moment ago: a second start waits for it."""
+    elapsed = (time.time() if now is None else now) - staged.attempted_at
+    return staged.attempts > 0 and 0 <= elapsed < INSTALL_IN_PROGRESS_SECONDS
+
+
+def begin_staged_install(
+    staged: StagedUpdate,
+    *,
+    relaunch: RelaunchMode,
+    now: float | None = None,
+    directory: Path | None = None,
+) -> InstallPlan:
+    """Count this attempt, then return the command that installs without any window.
+
+    The count is saved first: an installer that keeps failing is tried
+    ``MAX_INSTALL_ATTEMPTS`` times, never at every start.
+    """
+    plan = prepare_install_plan(
+        staged.installer,
+        quiet=True,
+        relaunch=relaunch,
+        system_name="Windows",
+    )
+    save_staged_update(
+        replace(
+            staged,
+            attempts=staged.attempts + 1,
+            attempted_at=time.time() if now is None else now,
+        ),
+        directory=directory,
+    )
+    return plan
 
 
 def select_platform_asset(
@@ -150,7 +307,10 @@ def prepare_install_plan(
     process_id: int | None = None,
     script_dir: Path | None = None,
     system_name: str | None = None,
+    quiet: bool = False,
+    relaunch: RelaunchMode = "window",
 ) -> InstallPlan:
+    """Command that installs ``asset_path``; ``quiet`` hides the installer's progress window."""
     normalized_system = (system_name or system()).lower()
     executable = current_executable or Path(sys.executable)
     if normalized_system == "windows":
@@ -160,11 +320,16 @@ def prepare_install_plan(
             return InstallPlan(
                 command=(
                     str(asset_path),
-                    "/SILENT",
+                    "/VERYSILENT" if quiet else "/SILENT",
                     "/SUPPRESSMSGBOXES",
                     "/NORESTART",
                     "/CLOSEAPPLICATIONS",
-                    "/RESTARTAPPLICATIONS",
+                    # The installer starts the new version itself (/RELAUNCH), once.
+                    "/NORESTARTAPPLICATIONS",
+                    # A silent run reuses the tasks of the last manual install: never
+                    # « tout reinitialiser » again without the user ticking it.
+                    "/MERGETASKS=!cleaninstall",
+                    f"/RELAUNCH={relaunch}",
                 ),
                 should_quit_app=True,
             )
@@ -195,10 +360,14 @@ def prepare_install_plan(
 
 def launch_install_plan(plan: InstallPlan) -> None:
     if system().lower() == "windows":
+        # The installer starts the new version: a one-file build must unpack itself
+        # again instead of reusing the files of this process, deleted when it exits.
         subprocess.Popen(
             plan.command,
             start_new_session=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+            close_fds=True,
         )
         return
     subprocess.Popen(plan.command, start_new_session=True)
@@ -283,13 +452,59 @@ async def _download_checksum_text(
     return response.text
 
 
-def _verify_sha256(content: bytes, asset_name: str, checksum_text: str | None) -> None:
+def _verify_sha256(actual: str, asset_name: str, checksum_text: str | None) -> None:
     if checksum_text is None:
         return
     expected = _expected_sha256(checksum_text, asset_name)
-    actual = sha256(content).hexdigest()
     if actual.lower() != expected.lower():
         raise ProjectFlowError("Verification SHA256 de la mise a jour echouee.")
+
+
+def _read_staged_update(root: Path) -> StagedUpdate | None:
+    try:
+        payload = json.loads((root / STAGED_UPDATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    version = payload.get("version")
+    installer = payload.get("installer")
+    digest = payload.get("sha256")
+    attempts = payload.get("attempts", 0)
+    attempted_at = payload.get("attempted_at", 0.0)
+    if not (
+        isinstance(version, str)
+        and isinstance(installer, str)
+        and isinstance(digest, str)
+        and isinstance(attempts, int)
+        and isinstance(attempted_at, int | float)
+    ):
+        return None
+    relative = Path(installer)
+    # Only an installer of the downloads folder: the file never names another program.
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        return None
+    return StagedUpdate(
+        version=version,
+        installer=root / relative,
+        sha256=digest,
+        attempts=max(0, attempts),
+        attempted_at=float(attempted_at),
+    )
+
+
+def _remove_downloads(root: Path, *, keep: Path | None) -> None:
+    """Delete the per-version download folders, except ``keep``."""
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return
+    for child in children:
+        if child == keep or not child.is_dir():
+            continue
+        if re.match(r"^v?\d+\.\d+\.\d+", child.name) is None:
+            continue
+        shutil.rmtree(child, ignore_errors=True)
 
 
 def _expected_sha256(checksum_text: str, asset_name: str) -> str:

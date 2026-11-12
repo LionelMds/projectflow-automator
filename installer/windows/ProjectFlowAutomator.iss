@@ -52,8 +52,17 @@ Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; Same reset as the in-app "Tout reinitialiser", run before the first start.
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--reset-all"; StatusMsg: "Reinitialisation de ProjectFlow..."; Tasks: cleaninstall; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "Lancer {#MyAppName}"; Flags: nowait postinstall skipifsilent
+; In-app update (silent): the app asks to be started again with /RELAUNCH=window or
+; /RELAUNCH=background (notification area only). Without it a silent install starts nothing.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--after-update"; Flags: nowait; Check: RelaunchIs('window')
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--after-update --background"; Flags: nowait; Check: RelaunchIs('background')
 
 [Code]
+function RelaunchIs(Mode: String): Boolean;
+begin
+  Result := CompareText(ExpandConstant('{param:RELAUNCH|}'), Mode) = 0;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;

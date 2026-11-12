@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Mises a jour Windows silencieuses : plus de question ni de fenetre d'installation. ProjectFlow
+  cherche une nouvelle version au demarrage puis toutes les 4 heures, la telecharge en
+  arriere-plan, et l'installe quand la fenetre est fermee (icone de la zone de notification) et
+  qu'aucune operation n'est en cours, ou au demarrage suivant. Il redemarre seul dans le meme
+  etat et annonce la version installee. « Rechercher une mise a jour » installe tout de suite.
+  Un installateur qui echoue deux fois est propose avec l'ancienne question. macOS ne change pas.
+- Mise a jour Windows : ProjectFlow redemarre apres l'installation, qui ne commence qu'une fois
+  l'application completement fermee (dernieres modifications du planning envoyees).
+- Mise a jour Windows : une mise a jour ne relance plus « Nouvelle installation : tout
+  reinitialiser » si cette case avait ete cochee lors d'une installation precedente.
+- Une recherche de mise a jour automatique qui echoue (hors ligne) n'affiche plus d'erreur.
+
 ## 0.1.76
 
 - Repertoire chantier : clic droit sur une ligne. Sur un projet : charger, ouvrir le dossier ou

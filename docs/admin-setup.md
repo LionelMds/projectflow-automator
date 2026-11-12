@@ -84,8 +84,25 @@ jour telechargees. Les dossiers projets, le repertoire chantier et le journal
 Les mises a jour in-app utilisent les artefacts GitHub Releases :
 
 - Windows telecharge `ProjectFlowAutomatorSetup.exe`, verifie son SHA256, puis lance
-  l'installateur.
-- macOS telecharge le DMG, verifie son SHA256, puis ouvre l'image disque pour installation.
+  l'installateur sans fenetre ni question (voir ci-dessous).
+- macOS demande, telecharge le DMG, verifie son SHA256, puis ouvre l'image disque pour
+  installation.
+
+Sous Windows, la mise a jour est silencieuse :
+
+- recherche au demarrage puis toutes les 4 heures, tant que ProjectFlow tourne ;
+- telechargement en arriere-plan dans `%LOCALAPPDATA%\Balz Metal Sa\ProjectFlow\updates`
+  (`staged.json` decrit l'installateur en attente) ;
+- installation quand la fenetre est fermee depuis une a deux minutes (icone de la zone de
+  notification), sans dialogue ouvert ni operation en cours ; sinon au demarrage suivant, avant
+  l'affichage de la fenetre ;
+- l'installateur relance ProjectFlow dans le meme etat (`/RELAUNCH=window` ou
+  `/RELAUNCH=background`), qui annonce la version installee ;
+- menu ou icone > `Rechercher une mise a jour` : installation immediate.
+
+Un installateur qui echoue deux fois de suite n'est plus lance seul : ProjectFlow propose
+alors la mise a jour avec une question et montre la progression de l'installation. Une mise a
+jour silencieuse atteint tous les postes sans validation : tester d'abord en pre-release.
 
 Pour publier une mise a jour, creer un tag `vX.Y.Z`. Le workflow produit les installateurs,
 leurs checksums et la release GitHub.

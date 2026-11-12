@@ -79,14 +79,32 @@ from projectflow.ui.widgets.planner import (
 )
 from projectflow.updates import (
     GitHubReleaseChecker,
+    InstallPlan,
+    RelaunchMode,
+    ReleaseAsset,
+    StagedUpdate,
     UpdateDownloader,
+    UpdateInfo,
+    begin_staged_install,
+    discard_staged_update,
+    file_sha256,
+    installs_unattended,
     launch_install_plan,
+    load_staged_update,
     prepare_install_plan,
+    save_staged_update,
     select_checksum_asset,
     select_platform_asset,
+    silent_updates_supported,
+    verify_staged_installer,
 )
 
 QuickCreationAction = Literal["open_fiche", "open_repertoire", "edit", "next"]
+# The app stays in the notification area for days: a start-only check would miss releases.
+UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
+# A downloaded release installs once the window stayed hidden for this many polls in a row.
+UPDATE_IDLE_POLL_MS = 60 * 1000
+UPDATE_IDLE_POLLS = 2
 # The startup check must answer fast: a silent token comes from the cache or one request.
 CONNECTION_CHECK_TIMEOUT_SECONDS = 10
 # Closing waits this long for the planning: 5 s to send its last changes, then its cache.
@@ -216,6 +234,20 @@ class ProjectFlowController:
         self._repertoire_loading_generation: int | None = None
         self._reset_requested = False
         self._connection_check_generation = 0
+        self._staged_update: StagedUpdate | None = None
+        self._install_plan: InstallPlan | None = None
+        self._update_check_running = False
+        self._install_update_now = False
+        self._declined_update = ""
+        self._update_idle_polls = 0
+        self._update_check_timer = QTimer(window)
+        self._update_check_timer.setInterval(UPDATE_CHECK_INTERVAL_MS)
+        self._update_check_timer.timeout.connect(
+            lambda: self.request_update_check(show_no_update=False),
+        )
+        self._update_install_timer = QTimer(window)
+        self._update_install_timer.setInterval(UPDATE_IDLE_POLL_MS)
+        self._update_install_timer.timeout.connect(self._install_staged_update_when_idle)
         self._connect()
         if planning_config is not None and planning_store_factory is not None:
             self._planning = PlanningController(
@@ -694,8 +726,24 @@ class ProjectFlowController:
                 return "warning", "Planner à autoriser"
         return "connected", username or "connecté"
 
+    @property
+    def install_plan(self) -> InstallPlan | None:
+        """The installer to start once the app has closed everything, or None."""
+        return self._install_plan
+
+    def start_update_checks(self) -> None:
+        """Look for a release now, then every few hours while the app keeps running."""
+        self.request_update_check(show_no_update=False)
+        self._update_check_timer.start()
+
     def request_update_check(self, *, show_no_update: bool = True) -> None:
         self._schedule_task(self.check_updates(show_no_update=show_no_update))
+
+    def announce_update_installed(self) -> None:
+        """Say once, after the installer restarted the app, which version now runs."""
+        self._log(f"+ ProjectFlow mis à jour : version {__version__}")
+        if self._notify is not None:
+            self._notify("ProjectFlow mis à jour", f"Version {__version__} installée.")
 
     async def _read_snapshot(self, year: int) -> RepertoireSnapshot:
         key = (self._repertoire_generation, year)
@@ -2001,22 +2049,175 @@ class ProjectFlowController:
             )
 
     async def check_updates(self, *, show_no_update: bool = True) -> None:
+        """Find a newer release and install it; ``show_no_update`` marks the user's own check.
+
+        The installed Windows app downloads it in the background and installs it without a
+        question: at once when the user asked, otherwise when the window is hidden. Elsewhere
+        (macOS, a release without installer) the user is asked first, as before.
+        """
+        if self._update_check_running:
+            if show_no_update:
+                # The download already running installs as soon as it ends.
+                self._install_update_now = True
+                self._log("-> Recherche de mise à jour déjà en cours.")
+            return
+        self._update_check_running = True
+        try:
+            await self._check_updates(requested=show_no_update)
+        finally:
+            self._update_check_running = False
+            self._install_update_now = False
+
+    async def _check_updates(self, *, requested: bool) -> None:
         try:
             update = await GitHubReleaseChecker(ApplicationSettings.load()).check(
                 current_version=__version__,
             )
         except (ProjectFlowError, OSError) as exc:
-            self._error(str(exc))
+            self._update_failed(str(exc), requested=requested)
             return
         if update is None:
-            if show_no_update:
+            if requested:
                 self._log("+ ProjectFlow est a jour")
             return
         asset = select_platform_asset(update)
         if asset is None:
+            if requested or self._declined_update != update.latest_version:
+                self._log(
+                    f"! Mise a jour disponible sans artefact compatible: {update.release_url}",
+                )
+            self._declined_update = update.latest_version
+            return
+        if silent_updates_supported() and installs_unattended(asset):
+            await self._update_unattended(update, asset, requested=requested)
+        else:
+            await self._offer_update(update, asset, requested=requested)
+
+    async def _update_unattended(
+        self,
+        update: UpdateInfo,
+        asset: ReleaseAsset,
+        *,
+        requested: bool,
+    ) -> None:
+        try:
+            staged = await self._stage_update(update, asset)
+        except (ProjectFlowError, OSError) as exc:
+            self._update_failed(str(exc), requested=requested)
+            return
+        if staged.exhausted:
+            # The installer failed without a window: show it and let the user decide.
+            await self._offer_update(update, asset, requested=requested)
+            return
+        self._staged_update = staged
+        if requested or self._install_update_now:
+            await self._install_staged_update(relaunch="window", unattended=False)
+        elif not self._update_install_timer.isActive():
+            self._update_idle_polls = 0
+            self._update_install_timer.start()
+
+    def _update_failed(self, message: str, *, requested: bool) -> None:
+        if requested:
+            self._error(message)
+            return
+        # A background check never interrupts: offline, it simply tries again later.
+        get_logger(__name__).warning("update.check.failed", error=message)
+
+    async def _stage_update(self, update: UpdateInfo, asset: ReleaseAsset) -> StagedUpdate:
+        """Download the installer once; later checks find it already on this poste."""
+        known = load_staged_update(current_version=__version__)
+        attempts = 0
+        if known is not None and known.version == update.latest_version:
+            if known.exhausted or await asyncio.to_thread(verify_staged_installer, known):
+                return known
+            attempts = known.attempts
+        installer = await UpdateDownloader().download(
+            asset,
+            version=update.latest_version,
+            checksum_asset=select_checksum_asset(update, asset),
+        )
+        staged = StagedUpdate(
+            version=update.latest_version,
+            installer=installer,
+            sha256=await asyncio.to_thread(file_sha256, installer),
+            attempts=attempts,
+        )
+        save_staged_update(staged)
+        self._log(f"+ Mise à jour {staged.version} téléchargée")
+        return staged
+
+    def _install_staged_update_when_idle(self) -> None:
+        if self._staged_update is None or self._install_plan is not None:
+            self._update_install_timer.stop()
+            return
+        if not self._unattended_install_allowed():
+            self._update_idle_polls = 0
+            return
+        self._update_idle_polls += 1
+        if self._update_idle_polls < UPDATE_IDLE_POLLS:
+            return
+        self._update_idle_polls = 0
+        self._schedule_task(self._install_staged_update(relaunch="background", unattended=True))
+
+    def _unattended_install_allowed(self) -> bool:
+        """Tell whether a restart would go unnoticed: window hidden, no dialog, no work."""
+        if self._closing or self._mutation_busy or self._mutation_tasks:
+            return False
+        if self._update_check_running or self._window.isVisible():
+            return False
+        return not any(
+            isinstance(widget, QDialog) and widget.isVisible()
+            for widget in QApplication.topLevelWidgets()
+        )
+
+    async def _install_staged_update(self, *, relaunch: RelaunchMode, unattended: bool) -> None:
+        staged = self._staged_update
+        if staged is None or self._closing or self._install_plan is not None:
+            return
+        if not unattended and self._mutation_busy:
             self._log(
-                f"! Mise a jour disponible sans artefact compatible: {update.release_url}",
+                f"-> Mise à jour {staged.version} prête : elle s'installera après "
+                "l'opération en cours, dès que la fenêtre sera fermée.",
             )
+            self._update_install_timer.start()
+            return
+        if not await asyncio.to_thread(verify_staged_installer, staged):
+            self._drop_staged_update(staged, "installateur téléchargé introuvable ou modifié.")
+            return
+        if unattended and not self._unattended_install_allowed():
+            return  # The window came back meanwhile: the next quiet moment will do.
+        try:
+            plan = begin_staged_install(staged, relaunch=relaunch)
+        except (ProjectFlowError, OSError) as exc:
+            self._drop_staged_update(staged, str(exc))
+            return
+        self._log(f"+ Mise à jour {staged.version} : installation, ProjectFlow redémarre")
+        self._quit_to_install(plan)
+
+    def _drop_staged_update(self, staged: StagedUpdate, reason: str) -> None:
+        """Forget an installer that cannot run: the next check downloads it again."""
+        self._staged_update = None
+        discard_staged_update()
+        get_logger(__name__).warning("update.install.failed", error=reason)
+        self._log(f"! Mise à jour {staged.version} : {reason}")
+
+    def _quit_to_install(self, plan: InstallPlan) -> None:
+        # Started by the app once everything is closed: the planning sends its last
+        # changes first, and the installer never finds the old version still running.
+        self._install_plan = plan
+        self._update_check_timer.stop()
+        self._update_install_timer.stop()
+        QApplication.quit()
+
+    async def _offer_update(
+        self,
+        update: UpdateInfo,
+        asset: ReleaseAsset,
+        *,
+        requested: bool,
+    ) -> None:
+        """Ask before downloading; a release refused once is not offered again by itself."""
+        if not requested and self._declined_update == update.latest_version:
             return
         answer = await self._ask(
             lambda: QMessageBox.question(
@@ -2026,6 +2227,7 @@ class ProjectFlowController:
             ),
         )
         if answer != QMessageBox.StandardButton.Yes:
+            self._declined_update = update.latest_version
             self._log(f"! Mise a jour disponible: {update.latest_version} - {update.release_url}")
             return
 
@@ -2040,13 +2242,14 @@ class ProjectFlowController:
                 current_executable=Path(sys.executable),
                 process_id=os.getpid(),
             )
-            launch_install_plan(plan)
+            if not plan.should_quit_app:
+                launch_install_plan(plan)
         except (ProjectFlowError, OSError) as exc:
             self._error(str(exc))
             return
         self._log(f"+ Mise a jour telechargee: {downloaded_path.name}")
         if plan.should_quit_app:
-            QApplication.quit()
+            self._quit_to_install(plan)
 
     def _project_from_form(self) -> ProjectInput:
         data = self._window.creation_tab.data()
