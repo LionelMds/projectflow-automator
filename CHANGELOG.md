@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.79
+
+- macOS : premiere version signee Developer ID et notarisee par Apple, qui s'ouvre sans
+  avertissement de securite. Depuis la 0.1.78 et avant, la mise a jour vers cette version pose
+  encore la question et ouvre le DMG ; les suivantes s'installent seules.
 - Mises a jour macOS silencieuses, comme sous Windows : ProjectFlow telecharge le DMG en
   arriere-plan (SHA256 verifie) et remplace l'application quand la fenetre est fermee et
   qu'aucune operation n'est en cours, ou au demarrage suivant, puis redemarre dans le meme etat.
