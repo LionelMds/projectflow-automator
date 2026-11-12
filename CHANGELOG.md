@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Mise a jour Windows silencieuse : l'installateur telecharge est supprime des le redemarrage
+  qui suit l'installation, et non plus au demarrage d'apres.
+
 ## 0.1.78
 
 - Mises a jour Windows silencieuses : a partir de cette version, ProjectFlow se met a jour

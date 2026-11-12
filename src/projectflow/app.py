@@ -193,10 +193,11 @@ def _install_staged_update(argv: Sequence[str], logger: structlog.stdlib.BoundLo
 
     The installer runs without a window and starts the new version itself.
     """
-    if _demo_mode_enabled(argv) or AFTER_UPDATE_ARGUMENT in argv or not silent_updates_supported():
+    if _demo_mode_enabled(argv) or not silent_updates_supported():
         return False
+    # Read even right after an update: this deletes the installer that has just run.
     staged = load_staged_update(current_version=__version__)
-    if staged is None:
+    if staged is None or AFTER_UPDATE_ARGUMENT in argv:
         return False
     if install_in_progress(staged):
         logger.info("app.update.already_installing", version=staged.version)
