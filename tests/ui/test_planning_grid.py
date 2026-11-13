@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,7 @@ from projectflow.ui.planning.grid import (
 )
 from projectflow.ui.planning.grid_items import (
     CUT_FADE,
+    STACK_PAD,
     BarState,
     bar_rect,
     build_bar_style,
@@ -1021,6 +1023,71 @@ def test_a_printed_cut_bar_has_no_fade(grid: PlanningGrid) -> None:
     assert in_mark == fill
     faded, fill = pixels(BarState())
     assert faded.lightness() > fill.lightness()
+
+
+def test_a_bar_carries_the_designation_of_a_named_task_and_its_notes(grid: PlanningGrid) -> None:
+    cache = ProjectCache(client="Müller SA", designation="Villa Rochat").model_dump()
+    named = task(
+        "named",
+        at(MONDAY, 6, 30),
+        at(MONDAY, 12),
+        ["mr"],
+        project_cache=cache,
+        notes="Nacelle\n  2 x",
+    )
+    plain = task("plain", at(MONDAY, 13), at(MONDAY, 16), ["jd"], project_cache=cache, title="")
+    model = make_model(grid, snapshot=with_tasks(snapshot(), named, plain))
+    bar = model.bar("named", "mr")
+    assert bar is not None
+    assert (bar.title, bar.designation, bar.notes) == ("Tâche named", "Villa Rochat", "Nacelle 2 x")
+    bar = model.bar("plain", "jd")
+    assert bar is not None
+    assert (bar.title, bar.designation, bar.notes) == ("Villa Rochat", "", "")
+
+
+def test_taller_bars_stack_more_lines_instead_of_cutting_the_title(grid: PlanningGrid) -> None:
+    load_fonts()
+    base = make_model(grid).bar("pair", "lb")
+    assert base is not None
+    bar = replace(
+        base,
+        title="Pose du garde-corps de la terrasse côté lac avec les ancrages",
+        designation="Villa Rochat",
+        notes="Prendre la nacelle et les chevilles chimiques",
+        people=("LB", "NF"),
+    )
+    style = build_bar_style(paper_theme(), compact=False, growth=2)
+    width = 230.0
+    number, head, sub = (
+        style.number_metrics.height(),
+        style.head_metrics.height(),
+        style.sub_metrics.height(),
+    )
+    stacks_from = 2 * STACK_PAD + number + head + sub
+
+    low = layout_bar_text(bar, width, stacks_from - 1, style, BarState())
+    assert (low.title_lines, low.details) == ((), ())  # two centred lines, as before
+    assert low.sub == "Müller SA"
+    assert low.head.endswith("…")
+
+    three = layout_bar_text(bar, width, stacks_from, style, BarState())
+    assert [text for text, _ in three.title_lines] != []  # the title goes on first
+    assert three.details == ()
+
+    tall = layout_bar_text(bar, width, stacks_from + 3 * sub + 4, style, BarState())
+    title = " ".join([tall.head, *(text for text, _ in tall.title_lines)])
+    assert title.startswith("- Pose du garde-corps de la terrasse")
+    assert [text for text, _ in tall.details][:2] == ["Villa Rochat", "06:30\u201312:00"]
+    baselines = [
+        tall.line1_y,
+        *(y for _, y in tall.title_lines),
+        tall.line2_y,
+        *(y for _, y in tall.details),
+    ]
+    assert baselines == sorted(baselines)
+    assert baselines[-1] <= stacks_from + 3 * sub + 4 - STACK_PAD
+    for text, _ in tall.details:
+        assert style.sub_metrics.horizontalAdvance(text) <= width
 
 
 def test_the_pdf_paints_the_bars_for_paper(

@@ -381,7 +381,10 @@ consultation seule et se synchronise de nouveau dès le retour du réseau.
   (bord de la barre étiré à la souris, ou `Maj+←/→`).
 - Hauteur des lignes : la densité (`Compacte`, `Normale`, `Large`, menu `≡` de la barre)
   s'applique aux trois vues ; les boutons `Lignes − / +` (ou `Ctrl` + molette sur les noms)
-  ajustent ensuite la vue affichée seule. Le texte des barres grossit avec les lignes.
+  ajustent ensuite la vue affichée seule. Le texte des barres grossit avec les lignes
+  jusqu'à `Large` ; au-delà, une barre plus haute montre plus de lignes : le titre passe à
+  la ligne au lieu d'être coupé, puis viennent la désignation du projet, les horaires,
+  l'équipe et les notes, selon la place.
 - `Couleur : Type | Dossier`, la densité et le filtre (dossier, client, initiales) sont gardés
   par poste. `F1` affiche tous les raccourcis.
 

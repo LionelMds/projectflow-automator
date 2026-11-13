@@ -174,6 +174,10 @@ class BarData:
     """Initials (or names) of every assignee, in order."""
     findings: tuple[str, ...] = ()
     """Messages of every finding of the bar."""
+    designation: str = ""
+    """The dossier's designation when the task has a name of its own, else empty."""
+    notes: str = ""
+    """The task's notes on one line."""
     urgent: bool = False
     cut_left: bool = False
     cut_right: bool = False
@@ -730,6 +734,12 @@ class _BarContext:
     year: int
 
 
+def _own_designation(title: str, designation: str) -> str:
+    """Give the dossier's designation for a task named otherwise, empty when it names it."""
+    title, designation = title.strip(), designation.strip()
+    return designation if title and designation and designation != title else ""
+
+
 def _bar_data(task: PlanningTask, row_id: str, lane: int, context: _BarContext) -> BarData:
     start = task.start if task.start is not None else context.scale.start
     end = task.end if task.end is not None else start
@@ -763,6 +773,8 @@ def _bar_data(task: PlanningTask, row_id: str, lane: int, context: _BarContext) 
         ),
         people=people,
         findings=tuple(finding.message for finding in findings),
+        designation=_own_designation(task.title, cache.designation),
+        notes=" ".join(task.notes.split()),
         urgent=task.urgent,
         cut_left=display[0] < context.scale.start,
         cut_right=display[1] > context.scale.end,

@@ -71,8 +71,8 @@ def test_the_text_of_the_bars_grows_with_the_rows() -> None:
         0,
         1,
         2,
-        4,
-        4,
+        2,  # Past « Large », taller rows show more lines, not larger text.
+        2,
     ]
 
 

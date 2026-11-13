@@ -75,7 +75,13 @@ TEXT_GROWTH_FROM = 38
 """Lane height (« Normale ») up to which the text of the bars keeps its designed size."""
 TEXT_GROWTH_STEP = 8
 """One pixel more of text for each step of lane height past ``TEXT_GROWTH_FROM``."""
-MAX_TEXT_GROWTH = 4
+MAX_TEXT_GROWTH = 2
+"""Reached at « Large »: taller rows then show more lines (``STACK_PAD``), not larger text."""
+STACK_PAD = 2.0
+"""Above the first line of a bar tall enough to stack its texts, and under the last."""
+MAX_TITLE_LINES = 3
+"""A title wraps onto this many lines at most, the last one elided."""
+MAX_NOTE_LINES = 2
 WIDE_BAR = 150.0
 MEDIUM_BAR = 70.0
 NARROW_BAR = 30.0
@@ -747,6 +753,10 @@ class BarText:
     line2_y: float = 0.0
     badges: tuple[tuple[Badge, QRectF], ...] = ()
     check: QRectF | None = None
+    title_lines: tuple[tuple[str, float], ...] = ()
+    """The title past the first line, in the title's font: text and baseline, from ``sub_x``."""
+    details: tuple[tuple[str, float], ...] = ()
+    """Under the second line, in its font: designation, hours, team, notes."""
 
 
 def _fit(metrics: QFontMetricsF, text: str, room: float, *, elide: bool = True) -> str:
@@ -758,6 +768,34 @@ def _fit(metrics: QFontMetricsF, text: str, room: float, *, elide: bool = True) 
         return ""
     elided = metrics.elidedText(text, Qt.TextElideMode.ElideRight, room)
     return "" if len(elided) < MIN_ELIDED_CHARS else elided
+
+
+def _wrap(metrics: QFontMetricsF, text: str, rooms: Sequence[float]) -> list[str]:
+    """``text`` word by word over lines as wide as ``rooms``, the last one elided.
+
+    A word wider than its line is elided there, or waits for the next line when too little
+    of it would show. Fewer lines when the text ends sooner.
+    """
+    words = text.split()
+    lines: list[str] = []
+    for index, room in enumerate(rooms):
+        if not words:
+            break
+        if index == len(rooms) - 1:
+            lines.append(_fit(metrics, " ".join(words), room))
+            break
+        if metrics.horizontalAdvance(words[0]) > room:
+            # Elided here when that says something, else the word waits for the next line.
+            cut = _fit(metrics, words[0], room)
+            if cut:
+                words.pop(0)
+            lines.append(cut)
+            continue
+        line = words.pop(0)
+        while words and metrics.horizontalAdvance(f"{line} {words[0]}") <= room:
+            line = f"{line} {words.pop(0)}"
+        lines.append(line)
+    return lines
 
 
 def _badge_width(style: BarStyle, badge: Badge) -> float:
@@ -823,6 +861,143 @@ def _second_line(
     return sub, extra, extra_x
 
 
+@dataclass(frozen=True, slots=True)
+class _FirstLine:
+    """The first line of a bar: its number and title, and where its lines run."""
+
+    number: str
+    title: str
+    left: float
+    title_x: float
+    right: float
+    """Where the first line ends, before the badges."""
+    width: float
+    inset: float
+    """Kept free at the right end of the other lines (the end mark of a cut bar)."""
+
+
+def _moved(
+    badges: tuple[tuple[Badge, QRectF], ...], check: QRectF | None, top: float
+) -> tuple[tuple[tuple[Badge, QRectF], ...], QRectF | None]:
+    """Badges and done check placed at 0, moved down to ``top``."""
+    moved = tuple((badge, rect.translated(0, top)) for badge, rect in badges)
+    return moved, (None if check is None else check.translated(0, top))
+
+
+def _next_baseline(metrics: QFontMetricsF, above: float) -> float:
+    """Baseline of a line of ``metrics`` set right under ``above``."""
+    return _baseline(metrics, above + metrics.height() / 2)
+
+
+def _stacks(style: BarStyle, height: float) -> bool:
+    """Whether a bar ``height`` high has room for a third line: the title's second one."""
+    lines = style.number_metrics.height() + style.sub_metrics.height() + style.head_metrics.height()
+    return height - 2 * STACK_PAD >= lines
+
+
+def _details(bar: BarData, extra: str, metrics: QFontMetricsF, room: float) -> list[str]:
+    """Designation, hours (unless the second line says them) and team, each on one line."""
+    hours = bar.time_range if bar.time_range != extra else ""
+    team = ", ".join(bar.people) if len(bar.people) > 1 else ""
+    fitted = (_fit(metrics, text, room) for text in (bar.designation, hours, team) if text)
+    return [text for text in fitted if text]
+
+
+def _allot(
+    room: float, heights: dict[str, float], needs: dict[str, int], order: Sequence[str]
+) -> dict[str, int]:
+    """Lines given to each text, in ``order`` while ``room`` is left: one at each turn."""
+    counts = dict.fromkeys(needs, 0)
+    for key in order:
+        if counts[key] < needs[key] and room >= heights[key]:
+            counts[key] += 1
+            room -= heights[key]
+    return counts
+
+
+def _title_lines(metrics: QFontMetricsF, first: _FirstLine, count: int) -> list[str]:
+    """Wrap the title over ``count`` lines, the first one beside the number."""
+    full = first.width - first.inset - first.left
+    rooms = [first.right - first.title_x] + [full] * (count - 1)
+    lines = _wrap(metrics, first.title, rooms)
+    if len(rooms) > 1 and lines and lines[0] in {"", "-"}:
+        # No room beside the number: the title starts on the next line, without its dash.
+        lines = ["", *_wrap(metrics, first.title.removeprefix("- "), rooms[1:])]
+    return lines
+
+
+def _stacked(
+    bar: BarData,
+    first: _FirstLine,
+    height: float,
+    style: BarStyle,
+    state: BarState,
+    *,
+    badges: tuple[tuple[Badge, QRectF], ...],
+    check: QRectF | None,
+) -> BarText:
+    """Texts of a bar tall enough for three lines, stacked from its top.
+
+    As long as there is room, in turn: the second line (client, duration); the title's
+    second line when it needs one; the designation; the title's third line; the hours;
+    the team; the notes on two lines. A low bar thus says a little of everything before
+    all of its title, as the events of a calendar do when they grow.
+    """
+    full = first.width - first.inset - first.left
+    sub, extra, extra_x = _second_line(
+        bar, first.width, first.left, style, state, number=bool(first.number), inset=first.inset
+    )
+    details = _details(bar, extra, style.sub_metrics, full)
+    notes = _wrap(style.sub_metrics, bar.notes, [full] * MAX_NOTE_LINES) if bar.notes else []
+    keys = [f"detail{index}" for index in range(len(details))]
+    first_metrics = style.number_metrics if first.number else style.head_metrics
+    head_step = style.head_metrics.height()
+    sub_step = style.sub_metrics.height()
+    counts = _allot(
+        height - 2 * STACK_PAD - first_metrics.height(),
+        {"title": head_step, "sub": sub_step, "notes": sub_step} | dict.fromkeys(keys, sub_step),
+        {
+            "title": len(_title_lines(style.head_metrics, first, MAX_TITLE_LINES)) - 1,
+            "sub": int(bool(sub or extra)),
+            "notes": len(notes),
+        }
+        | dict.fromkeys(keys, 1),
+        ["sub", "title", *keys[:1], "title", *keys[1:], *["notes"] * MAX_NOTE_LINES],
+    )
+    title = _title_lines(style.head_metrics, first, 1 + counts["title"])
+    line1_center = STACK_PAD + first_metrics.height() / 2
+    # Each line right under the one above; ``y`` is where the last one ends.
+    y = STACK_PAD + first_metrics.height()
+    title_lines: list[tuple[str, float]] = []
+    for text in title[1:]:
+        title_lines.append((text, _next_baseline(style.head_metrics, y)))
+        y += head_step
+    line2_y = _next_baseline(style.sub_metrics, y)
+    y += sub_step * counts["sub"]
+    shown = [text for key, text in zip(keys, details, strict=True) if counts[key]]
+    under: list[tuple[str, float]] = []
+    for text in [*shown, *_wrap(style.sub_metrics, bar.notes, [full] * counts["notes"])]:
+        under.append((text, _next_baseline(style.sub_metrics, y)))
+        y += sub_step
+    badges, check = _moved(badges, check, round(line1_center - BADGE_HEIGHT / 2))
+    return BarText(
+        number=first.number,
+        head=title[0] if title else "",
+        sub=sub if counts["sub"] else "",
+        extra=extra if counts["sub"] else "",
+        number_x=first.left,
+        head_x=first.title_x,
+        sub_x=first.left,
+        extra_x=extra_x,
+        line1_y=_baseline(first_metrics, line1_center),
+        line2_y=line2_y,
+        badges=badges,
+        check=check,
+        title_lines=tuple(title_lines),
+        details=tuple(under),
+    )
+
+
 def layout_bar_text(
     bar: BarData, width: float, height: float, style: BarStyle, state: BarState
 ) -> BarText:
@@ -830,16 +1005,16 @@ def layout_bar_text(
 
     150 px and more: number and client, then the title; 70 to 150 px: both elided; 30 to
     70 px: the number only; below 30 px nothing (the hover card takes over). Nothing is
-    placed under the end mark of a bar that runs past the shown range.
+    placed under the end mark of a bar that runs past the shown range. A bar tall enough
+    for three lines stacks its texts from its top (``_stacked``).
     """
     if width < NARROW_BAR:
         return BarText()
     inset = CUT_FADE if has_cut_mark(bar, width) else TEXT_RIGHT
     two_lines = height >= TWO_LINE_HEIGHT and not style.compact
     left = STRIPE + TEXT_LEFT + min(max(state.shift, 0.0), max(width - MEDIUM_BAR, 0.0))
-    line1_center = height / 2 - (style.sub_metrics.height() / 2 if two_lines else 0)
-    badge_top = round(line1_center - BADGE_HEIGHT / 2)
-    badges, check, right = _place_badges(bar, style, width, badge_top, room_left=left, inset=inset)
+    # Badges are placed along the first line, moved to its height once that is known.
+    badges, check, right = _place_badges(bar, style, width, 0.0, room_left=left, inset=inset)
     room = right - TEXT_GAP - left
     # « 2026-5271 - Désignation »: the whole number when it fits, else « 5271 ».
     number = _fit(style.number_metrics, bar.project_number, room, elide=False) or _fit(
@@ -850,6 +1025,11 @@ def layout_bar_text(
         head_text = bar.title or bar.type_label
     else:
         head_text = f"- {bar.title}" if bar.title else bar.client
+    if two_lines and width >= MEDIUM_BAR and _stacks(style, height):
+        first = _FirstLine(number, head_text, left, head_x, right - TEXT_GAP, width, inset)
+        return _stacked(bar, first, height, style, state, badges=badges, check=check)
+    line1_center = height / 2 - (style.sub_metrics.height() / 2 if two_lines else 0)
+    badges, check = _moved(badges, check, round(line1_center - BADGE_HEIGHT / 2))
     head = ""
     if width >= MEDIUM_BAR or not number:
         head = _fit(style.head_metrics, head_text, right - TEXT_GAP - head_x)
@@ -952,16 +1132,20 @@ def _paint_text(painter: QPainter, bar: BarData, text: BarText, style: BarStyle)
         painter.setFont(style.number_font)
         painter.setPen(ink)
         painter.drawText(QPointF(text.number_x, text.line1_y), text.number)
+    painter.setFont(style.head_font)
+    painter.setPen(ink)
     if text.head:
-        painter.setFont(style.head_font)
-        painter.setPen(ink)
         painter.drawText(QPointF(text.head_x, text.line1_y), text.head)
+    for line, y in text.title_lines:
+        painter.drawText(QPointF(text.sub_x, y), line)
     painter.setFont(style.sub_font)
     painter.setPen(style.night_muted if bar.night else style.muted)
     if text.sub:
         painter.drawText(QPointF(text.sub_x, text.line2_y), text.sub)
     if text.extra:
         painter.drawText(QPointF(text.extra_x, text.line2_y), text.extra)
+    for line, y in text.details:
+        painter.drawText(QPointF(text.sub_x, y), line)
     if bar.done and text.check is not None:
         _paint_check(painter, text.check, style.ok)
 

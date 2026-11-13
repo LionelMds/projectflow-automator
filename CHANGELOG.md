@@ -24,6 +24,10 @@
   reste maintenant dans le titre). Les taches existantes ne changent pas.
 - Planning : choisir un dossier dans la liste du numero de projet n'ecrit plus que le numero
   dans le champ, et non « numero · client · designation ».
+- Planning : une barre plus haute montre plus d'informations, comme sur l'application
+  mobile. Au-dela de « Large », le texte ne grossit plus : le titre passe a la ligne au lieu
+  d'etre coupe, puis viennent la designation du projet, les horaires, l'equipe et les
+  notes, selon la place (3 lignes vers 62 px, 5 lignes a 96 px).
 
 ## 0.1.79
 
