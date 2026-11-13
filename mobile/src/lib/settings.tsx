@@ -32,6 +32,8 @@ export type Settings = {
   plannerAssigneeNames: string[];
   /** « Ma sélection » of the iPhone's « Planning » widget: planning people, by id. */
   widgetPeople: string[];
+  /** People left out of the planning board on this phone, by id; the others are shown. */
+  planningHidden: string[];
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -49,6 +51,7 @@ export const DEFAULT_SETTINGS: Settings = {
   plannerAssigneeIds: [],
   plannerAssigneeNames: [],
   widgetPeople: [],
+  planningHidden: [],
 };
 const STORAGE_KEY = 'projectflow.settings';
 
@@ -98,6 +101,7 @@ export function parseSettings(raw: string | null): Settings {
       plannerAssigneeIds: strings(data.plannerAssigneeIds),
       plannerAssigneeNames: strings(data.plannerAssigneeNames),
       widgetPeople: strings(data.widgetPeople),
+      planningHidden: strings(data.planningHidden),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -128,6 +132,7 @@ export function cleanSettings(next: Settings): Settings {
     plannerAssigneeIds: ids,
     plannerAssigneeNames: names,
     widgetPeople: [...new Set(next.widgetPeople)],
+    planningHidden: [...new Set(next.planningHidden)],
   };
 }
 

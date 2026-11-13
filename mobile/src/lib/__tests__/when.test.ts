@@ -19,7 +19,6 @@ const entry: ParsedEntry = {
   start: null,
   end: null,
   estimateMinutes: 0,
-  requiredPeople: 1,
   provisional: false,
   urgent: false,
   deadline: null,

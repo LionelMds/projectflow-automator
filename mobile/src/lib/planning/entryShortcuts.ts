@@ -6,13 +6,15 @@
 
 import { foldText, type ProjectInfo } from '@/lib/planning/quickEntry';
 
-export type ShortcutKind = 'person' | 'day' | 'duration' | 'flag';
+export type ShortcutKind = 'person' | 'day' | 'duration' | 'flag' | 'type';
 
 export const SHORTCUT_DAYS = ['lun', 'mar', 'mer', 'jeu', 'ven'] as const;
 export const SHORTCUT_DURATIONS = ['½j', '1j', '2j', '3j', '5j'] as const;
 
 const DAY_RE = /^(lun|mar|mer|jeu|ven|sam|dim)(-(lun|mar|mer|jeu|ven|sam|dim))?$/i;
 const DURATION_RE = /^(\d+(?:[.,]\d+)?|½|1\/2)j$/i;
+/** « /montage »: a task type by its command, as the grammar reads it. */
+const COMMAND_RE = /^\/\S+$/;
 
 function words(text: string): string[] {
   return text.split(/\s+/).filter(Boolean);
@@ -29,7 +31,8 @@ export function hasToken(text: string, token: string): boolean {
 
 /**
  * The entry with `token` added at the end, or removed when it is there. A day replaces
- * the day typed before, a duration the duration: one of each is what the grammar reads.
+ * the day typed before, a duration the duration, a type the type: one of each is what the
+ * grammar reads.
  */
 export function toggleToken(text: string, token: string, kind: ShortcutKind): string {
   const current = words(text);
@@ -40,6 +43,7 @@ export function toggleToken(text: string, token: string, kind: ShortcutKind): st
   const kept = current.filter((word) => {
     if (kind === 'day') return !DAY_RE.test(word);
     if (kind === 'duration') return !DURATION_RE.test(word);
+    if (kind === 'type') return !COMMAND_RE.test(word);
     return true;
   });
   return `${[...kept, token].join(' ')} `;

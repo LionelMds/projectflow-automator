@@ -61,7 +61,6 @@ export type TokenKind =
   | 'part'
   | 'time'
   | 'duration'
-  | 'people'
   | 'provisional'
   | 'urgent'
   | 'deadline'
@@ -184,7 +183,6 @@ export type ParsedEntry = {
   start: Instant | null;
   end: Instant | null;
   estimateMinutes: number;
-  requiredPeople: number;
   provisional: boolean;
   urgent: boolean;
   deadline: number | null;
@@ -446,7 +444,6 @@ const START_TIME_RE = sticky(
   String.raw`(?:a\s+partir\s+de|a|des|vers)\s+(?<h>\d{1,2})\s?[h:](?<m>\d{2})?${END}`,
 );
 const CLOCK_RE = sticky(String.raw`(?<h>\d{1,2}):(?<m>\d{2})${END}`);
-const PEOPLE_RE = sticky(String.raw`(?<n>\d{1,2})\s?(?:personnes?|pers\.?|p)${END}`);
 // "1j½", "1 j ½" (as formatDays writes it), "1 ½ j", "1 1/2 j", "1 jour et demi".
 const DAYS_RE = sticky(
   String.raw`(?:(?<n>\d+(?:[.,]\d+)?)(?<h1>\s?½|\s1/2)?|(?<h0>½|1/2|demi-?))` +
@@ -954,7 +951,6 @@ class Parser {
   // Typed durations: worked minutes of the hours, and working days as half days.
   private readonly durations: number[] = [];
   private halfDays = 0;
-  private required: number | null = null;
   private provisional = false;
   private urgent = false;
   private deadline: number | null = null;
@@ -1007,7 +1003,6 @@ class Parser {
       start,
       end,
       estimateMinutes: estimate,
-      requiredPeople: this.required ?? Math.max(1, people.length),
       provisional: this.provisional,
       urgent: this.urgent,
       deadline: this.deadline,
@@ -1104,7 +1099,6 @@ class Parser {
       (at) => this.scanDate(at),
       (at) => this.scanTimeRange(at),
       (at) => this.scanStartTime(at),
-      (at) => this.scanPeopleCount(at),
       (at) => this.scanDuration(at),
       (at) => this.scanBareHour(at),
       (at) => this.scanPart(at),
@@ -1392,18 +1386,6 @@ class Parser {
       this.endMinute = last;
     }
     return this.add('time', match.start, match.end, value, { message });
-  }
-
-  private scanPeopleCount(position: number): number | null {
-    const match = matchAt(PEOPLE_RE, this.folded, position);
-    if (match === null) return null;
-    const count = Number(match.groups.n);
-    if (count < 1) {
-      const message = `Nombre de personnes invalide : ${this.source(match.start, match.end)}`;
-      return this.add('people', match.start, match.end, '', { ambiguous: true, message });
-    }
-    this.required = this.required ?? count;
-    return this.add('people', match.start, match.end, String(count));
   }
 
   private scanDuration(position: number): number | null {
@@ -2019,7 +2001,6 @@ class Parser {
       const typed = this.typedDuration();
       if (typed) parts.push(typed);
     }
-    if (entry.requiredPeople > Math.max(1, entry.resourceIds.length)) parts.push(`${entry.requiredPeople} pers.`);
     if (entry.deadline !== null) parts.push(`avant le ${this.dayLabel(entry.deadline)}`);
     if (entry.provisional) parts.push('provisoire');
     if (entry.urgent) parts.push('urgent');
@@ -2055,7 +2036,6 @@ function unreadableEntry(text: string): ParsedEntry {
     start: null,
     end: null,
     estimateMinutes: 0,
-    requiredPeople: 1,
     provisional: false,
     urgent: false,
     deadline: null,

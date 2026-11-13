@@ -42,7 +42,7 @@ export type Segment = {
   color: string;
   provisional: boolean;
   done: boolean;
-  /** « ×2 » when several people share the task, « 1/2 » when someone is missing. */
+  /** « ×2 » when several people share the task. */
   badge: string;
   task?: PlanningTask;
   absenceId?: string;
@@ -175,9 +175,15 @@ function withLanes(segments: Placed[]): { segments: Segment[]; lanes: number } {
  * (« 4998 Montage »), then the task title; the full label is in the detail.
  */
 export function barLabel(task: PlanningTask): string {
+  const { number, title } = barParts(task);
+  return [number, title].filter(Boolean).join(' ') || taskLabel(task);
+}
+
+/** The two halves of a bar's text: « 4998 » and « Montage », for a bar that stacks them. */
+export function barParts(task: PlanningTask): { number: string; title: string } {
   const number = (task.project_number ?? '').trim().replace(/^\d{4}-/, '');
   const title = (task.title ?? '').trim() || (task.project_cache?.designation ?? '').trim();
-  return [number, title].filter(Boolean).join(' ') || taskLabel(task);
+  return { number, title };
 }
 
 /** « 4998 », the compact label of the month view. */
@@ -186,13 +192,10 @@ export function shortBarLabel(task: PlanningTask): string {
   return number || barLabel(task);
 }
 
+/** « ×2 » on a task several people share. As on the desktop, nothing counts people « required » any more. */
 function badgeOf(task: PlanningTask): string {
   const people = assigneeIds(task).length;
-  const required = Math.max(1, task.required_people ?? 1);
-  // With nobody at all, the « Non affecté » row already says it.
-  if (people > 0 && people < required) return `${people}/${required}`;
-  if (people > 1) return `×${people}`;
-  return '';
+  return people > 1 ? `×${people}` : '';
 }
 
 function resourceLabel(resource: Resource): string {

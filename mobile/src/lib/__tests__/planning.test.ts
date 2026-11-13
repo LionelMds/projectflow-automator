@@ -88,7 +88,7 @@ describe('week board', () => {
     expect(kdu.label).toBe('KDU');
     expect(kdu.segments[0]).toMatchObject({ startSlot: 0, span: 4, badge: '×2', color: '#b7684c' });
     const mro = week.groups[1].rows[0];
-    expect(mro.segments[0]).toMatchObject({ startSlot: 7, span: 2, badge: '1/2', provisional: true });
+    expect(mro.segments[0]).toMatchObject({ startSlot: 7, span: 2, badge: '', provisional: true });
     expect(week.groups[0].rows.map((row) => row.label)).not.toContain('ANC');
   });
 

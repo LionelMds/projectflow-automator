@@ -118,14 +118,14 @@ describe('destination', () => {
     ['2026-121 montage marquise jeu-ven LBI YCH', 'grid'],
     ['124 débit portail 1,5j KDU lun', 'grid'],
     ['livraison 112 ven matin', 'unassigned'],
-    ['129 relevé de cotes 2p', 'backlog'],
+    ['129 relevé de cotes', 'backlog'],
     ['thermolaquage RAL 7016 THL lun-mer', 'grid'],
     ['/vac LBI 26.10-30.10', 'absence'],
     ['5231 pose garde-corps +montage S45 ?', 'grid'],
     ['jeu 7h30-11h métré 118 SBE', 'grid'],
     ['rangement stock TFA lun', 'grid'],
     ['sav portail 109 demain à 10h 1h30 !', 'unassigned'],
-    ['<06.11 129 fabrication 2j 2p', 'backlog'],
+    ['<06.11 129 fabrication 2j', 'backlog'],
     ['', 'invalid'],
     ['   ', 'invalid'],
     ['?', 'invalid'],
@@ -255,7 +255,6 @@ describe('people', () => {
     ['25h LBI lun', 'time', '', 'Heure invalide : 25h'],
     ['0j 121', 'duration', '', 'Durée nulle : 0j'],
     ['<31.02 121', 'deadline', '', 'Date invalide : <31.02'],
-    ['0p 121', 'people', '', 'Nombre de personnes invalide : 0p'],
     ['OTI pose lun', 'person', 'oti', '« OTI » : personne inactive (OTI Olivier Tissot)'],
     ['+oti pose', 'person', 'oti', '« +oti » : personne inactive (OTI Olivier Tissot)'],
     ['lun 3000j LBI', 'duration', '', 'Durée trop longue : 3000j'],
@@ -432,10 +431,10 @@ describe('cells', () => {
     expect(instants(entry)).toEqual([start, end]);
   });
 
-  it('needs everyone on a range over several rows', () => {
+  it('takes everyone on a range over several rows', () => {
     const entry = parse('121 pose', RANGE_CELL);
 
-    expect(entry.requiredPeople).toBe(2);
+    expect(entry.resourceIds).toEqual(['lbi', 'ych']);
     expect(entry.estimateMinutes).toBe(1620);
   });
 
@@ -700,17 +699,17 @@ describe('flags and notes', () => {
     expect(parse(text).deadline).toBe(deadline);
   });
 
-  it.each([
-    ['129 2p', 2],
-    ['129 2 pers', 2],
-    ['129 3 personnes', 3],
-    ['129 2 pers.', 2],
-    ['129 LBI YCH', 2],
-    ['129', 1],
-    ['129 +montage', 4],
-    ['129 LBI 3p', 3],
-  ])('%j needs %i people', (text, required) => {
-    expect(parse(text).requiredPeople).toBe(required);
+  // No « Requis » any more: « 2p » is part of the title, the days around it still read.
+  it.each<[string, string, string | null]>([
+    ['129 2p', '2p', null],
+    ['129 3 personnes', '3 personnes', null],
+    ['LBI pose 121 3p jeu 2j', 'pose 3p', '2026-10-22T06:30'],
+  ])('%j keeps a number of people as plain title text', (text, title, start) => {
+    const entry = parse(text);
+
+    expect(entry.title).toBe(title);
+    expect(instants(entry)[0]).toBe(start);
+    expect(entry.warnings).toEqual([]);
   });
 
   it.each([
@@ -831,10 +830,10 @@ describe('interpretation', () => {
       '2026-121 montage marquise jeu-ven LBI YCH',
       '2026-121 Commune de Marsens · Montage marquise · LBI, YCH · jeu 22.10 06:30 → ven 23.10 12:00 · 2 j',
     ],
-    ['129 relevé de cotes 2p', '2026-129 PPE Les Cèdres · Relevé de cotes · À planifier · 2 pers.'],
+    ['129 relevé de cotes', '2026-129 PPE Les Cèdres · Relevé de cotes · À planifier'],
     [
-      '<06.11 129 fabrication 2j 2p',
-      '2026-129 PPE Les Cèdres · Fabrication · À planifier · 2 j · 2 pers. · avant le ven 06.11',
+      '<06.11 129 fabrication 2j',
+      '2026-129 PPE Les Cèdres · Fabrication · À planifier · 2 j · avant le ven 06.11',
     ],
     [
       'livraison 112 ven matin',
@@ -857,8 +856,8 @@ describe('interpretation', () => {
     ['?', 'Saisie incomplète'],
     ['255 portail LBI', '2026-255 · Portail · LBI · À planifier'],
     [
-      'LBI pose 121 3p jeu',
-      '2026-121 Commune de Marsens · Pose · LBI · jeu 22.10 06:30 → jeu 22.10 16:30 · 1 j · 3 pers.',
+      'LBI pose 121 jeu',
+      '2026-121 Commune de Marsens · Pose · LBI · jeu 22.10 06:30 → jeu 22.10 16:30 · 1 j',
     ],
     [
       'jeu 2j 121 LBI',

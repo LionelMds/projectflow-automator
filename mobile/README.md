@@ -48,8 +48,13 @@ du poste sont reprises en TypeScript avec leurs propres tests unitaires (portés
     fermetures de l'entreprise grisés avec leur nom, vendredi après-midi non travaillé ;
   - **saisie rapide** avec la grammaire du poste (`2026-121 montage marquise jeu-ven LBI YCH`,
     `/vac LBI lun 5j`…), aperçu en direct, avertissement si une personne est absente ; toucher une
-    case vide ouvre la saisie sur cette ligne et cette demi-journée. Raccourcis à toucher (personnes,
-    jours, durées, provisoire, urgent) et dossiers du répertoire proposés pendant la frappe ;
+    case vide ouvre la saisie sur cette ligne et cette demi-journée. Sous le champ, ce qui est
+    compris se lit dans l'ordre du panneau `Détail` du poste : n° de projet et client,
+    sous-désignation, type (une bascule par type), Début / Fin sur des rouleaux, Urgent, Qui (toute
+    l'équipe en initiales, par équipe ; une personne absente sur la période est en pointillé),
+    statut Confirmé / Provisoire. Chaque touche écrit le mot que la grammaire lit (`LBI`, `!`,
+    `/montage`) ; dossiers du répertoire proposés pendant la frappe. Comme sur le poste, il n'y a
+    plus de « personnes requises » (`2p`) ni de badge `1/2` ;
   - **appui long** (menus du poste) : sur une tâche ou une carte, statut, Modifier, Renvoyer à
     planifier / Placer, Ouvrir le dossier, Ouvrir la fiche, Voir dans Répertoire, Charger dans
     Création, Supprimer ; sur une case vide, Nouvelle tâche ici et l'absence du jour ; sur une
@@ -61,7 +66,7 @@ du poste sont reprises en TypeScript avec leurs propres tests unitaires (portés
     `2026-4998` quand il est unique, et changer le dossier d'une tâche recopie ses données. Une
     tâche sans copie affiche celles du répertoire ;
   - **fiche d'une tâche** : titre, dossier et statut en tête avec les accès au dossier, puis Quand
-    (jour, demi-journée, durée), Qui (personnes, choix par équipe ; personnes requises), Détails
+    (jour, demi-journée, durée), Qui (personnes, choix par équipe), Détails
     (type, dossier, notes, urgent). Chaque modification est écrite aussitôt avec « Annuler » ; les
     textes à la sortie du champ. « Renvoyer à planifier », « Placer sur le planning » pour une
     carte, suppression ; absences supprimables ;

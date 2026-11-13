@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ActionSheet, type SheetSection } from '@/components/ActionSheet';
 import { Button } from '@/components/Button';
 import { Notice } from '@/components/Notice';
-import { Segmented, Stepper } from '@/components/Segmented';
+import { Segmented } from '@/components/Segmented';
 import { Caps, Kicker, Muted } from '@/components/Text';
 import { WhenPicker } from '@/components/WhenPicker';
 import { useDossierActions } from '@/lib/dossierActions';
@@ -405,20 +405,6 @@ export default function TacheScreen() {
                 <Text style={styles.addText}>{assignedIds.length ? 'Modifier' : 'Ajouter'}</Text>
               </Pressable>
             </View>
-            <View style={styles.line}>
-              <Caps style={styles.lineLabel}>Requises</Caps>
-              <View style={styles.flex}>
-                <Stepper
-                  value={`${task.required_people ?? 1} pers.`}
-                  lessLabel="Une personne de moins"
-                  moreLabel="Une personne de plus"
-                  lessDisabled={locked || busy || (task.required_people ?? 1) <= 1}
-                  moreDisabled={locked || busy}
-                  onLess={() => void run(() => updateTask(ctx, task.id, { required_people: (task.required_people ?? 1) - 1 }), `Personnes requises : ${label}`)}
-                  onMore={() => void run(() => updateTask(ctx, task.id, { required_people: (task.required_people ?? 1) + 1 }), `Personnes requises : ${label}`)}
-                />
-              </View>
-            </View>
           </Card>
 
           {/* Details */}
@@ -619,8 +605,6 @@ const styles = StyleSheet.create({
   strong: { fontFamily: fonts.bodySemiBold, fontSize: 16, color: colors.text },
   small: { fontSize: 13 },
   center: { textAlign: 'center' },
-  line: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  lineLabel: { width: 70 },
   people: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   person: {
     flexDirection: 'row',
