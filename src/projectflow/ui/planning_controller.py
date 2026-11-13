@@ -41,7 +41,7 @@ from projectflow.core.planning.commands import (
     calendar_resolver,
     task_days,
 )
-from projectflow.core.planning.conflicts import Finding, findings_by_bar, resource_load
+from projectflow.core.planning.conflicts import resource_load
 from projectflow.core.planning.layout import (
     UNASSIGNED_ROW_ID,
     row_kind,
@@ -207,7 +207,6 @@ FIELD_LABELS: Final[Mapping[str, str]] = {
     "title": "le titre",
     "project_number": "le dossier",
     "task_type": "le type",
-    "required_people": "les personnes requises",
     "urgent": "l'urgence",
     "deadline": "l'échéance",
     "notes": "les notes",
@@ -215,7 +214,6 @@ FIELD_LABELS: Final[Mapping[str, str]] = {
     "estimate_minutes": "l'estimation",
 }
 STATUSES: Final[tuple[TaskStatus, ...]] = ("provisional", "confirmed", "done")
-NAVIGATION_ACTIONS: Final = frozenset({"folder", "fiche", "repertoire", "creation", "sortie"})
 DENSITIES: Final[Mapping[str, PlanningDensity]] = {
     "compact": "compact",
     "normal": "normal",
@@ -1117,7 +1115,6 @@ class PlanningController:
         detail.people_changed.connect(self._on_people_changed)
         detail.dates_changed.connect(self._on_dates_changed)
         detail.status_changed.connect(self._on_status_changed)
-        detail.shift_requested.connect(self._on_detail_shift)
         detail.action_requested.connect(self._on_detail_action)
 
         side = tab.side
@@ -1511,7 +1508,7 @@ class PlanningController:
             if task is None or task.deleted:
                 detail.clear()
             else:
-                self._show_task(task, None)
+                self._show_task(task)
         elif detail.mode() == "multi":
             self._show_selection_detail()
 
@@ -1869,9 +1866,8 @@ class PlanningController:
         self._log(f"Planning : {count} {noun} {origin}.")
         return [task.id for task in created]
 
-    def _on_detail_requested(self, task_id: str, row_id: str) -> None:
-        focus = row_id if row_id and row_kind(row_id) == "resource" else None
-        self._open_detail(task_id, focus)
+    def _on_detail_requested(self, task_id: str, _row_id: str) -> None:
+        self._open_detail(task_id)
 
     def _on_bar_clicked(self, task_id: str, row_id: str, _modifiers: object) -> None:
         side = self._tab.side
@@ -2047,7 +2043,6 @@ class PlanningController:
                 resource_ids=entry.resource_ids,
                 estimate_minutes=entry.estimate_minutes,
                 estimate_days=entry.estimate_days,
-                required_people=entry.required_people,
                 status="provisional" if entry.provisional else "confirmed",
                 deadline=entry.deadline,
                 urgent=entry.urgent,
@@ -2134,14 +2129,14 @@ class PlanningController:
     # -- « À planifier » ------------------------------------------------------
 
     def _on_card_activated(self, task_id: str) -> None:
-        self._open_detail(task_id, None)
+        self._open_detail(task_id)
 
     def _on_card_action(self, task_id: str, action: str) -> None:
         task = self._task(task_id)
         if task is None:
             return
         if action == "detail":
-            self._open_detail(task_id, None)
+            self._open_detail(task_id)
         elif action == "duplicate":
             self._execute(f"Dupliquer {task_name(task)}", step(commands.duplicate_task, task_id))
         elif action == "folder" and task.project_number:
@@ -2182,32 +2177,25 @@ class PlanningController:
 
     # -- detail ---------------------------------------------------------------
 
-    def _open_detail(self, task_id: str, focus: str | None) -> None:
+    def _open_detail(self, task_id: str) -> None:
         task = self._task(task_id)
         if task is None:
             return
-        self._show_task(task, focus)
+        self._show_task(task)
         self._tab.side.show_detail()
 
-    def _show_task(self, task: PlanningTask, focus: str | None) -> None:
+    def _show_task(self, task: PlanningTask) -> None:
         session = self._session
         if session is None:
             return
         snapshot = session.service.snapshot
         calendar = calendar_resolver(snapshot)(next(iter(task.assignments), None))
-        release = dossier_release(snapshot, task)
-        if release != task.project_cache.atelier_release:
-            # Shown only: « Sorti atelier » of the dossier, kept on its « Fabrication » card.
-            cache = task.project_cache.model_copy(update={"atelier_release": release})
-            task = task.model_copy(update={"project_cache": cache})
         self._tab.detail.set_task(
             task,
             snapshot,
             calendar=calendar,
             project=self._project_info(task),
-            findings=self._task_findings(task, snapshot),
             read_only=self.read_only,
-            focus_resource_id=focus,
         )
 
     def _show_selection_detail(self) -> None:
@@ -2218,11 +2206,7 @@ class PlanningController:
         ids = self._selected_ids()
         tasks = [task for task_id in ids if (task := self._task(task_id)) is not None]
         if len(tasks) == 1:
-            bar = next(
-                (key for key in self._tab.grid.selected_bars() if key[0] == tasks[0].id), None
-            )
-            focus = bar[1] if bar is not None and row_kind(bar[1]) == "resource" else None
-            self._show_task(tasks[0], focus)
+            self._show_task(tasks[0])
             return
         if not tasks:
             return
@@ -2316,35 +2300,16 @@ class PlanningController:
         if changes is None:
             self._refresh_from_service()
 
-    def _on_detail_shift(self, task_id: str, days: int) -> None:
-        targets = [
-            target
-            for target in self._targets(task_id)
-            if (task := self._task(target)) is not None and task.scheduled
-        ]
-        if not targets or not days:
-            return
-        self._execute(
-            f"Décaler {self._names(targets)} de {days:+d} j",
-            step(commands.shift_tasks, targets, days=days),
-        )
-
     def _on_detail_action(self, task_id: str, action: str) -> None:
         targets = self._targets(task_id)
         first = self._task(targets[0]) if targets else None
         if first is None:
             return
-        if action in NAVIGATION_ACTIONS:
-            self._navigate(action, first.project_number)
-        elif action == "duplicate":
+        if action == "duplicate":
             self._execute(
                 f"Dupliquer {self._names(targets)}",
                 chain(step(commands.duplicate_task, target) for target in targets),
             )
-        elif action == "detach":
-            resource_id = self._tab.detail.focus_resource_id()
-            if resource_id:
-                self._detach(first, resource_id)
         elif action in {"unschedule", "delete"}:
             self._remove_tasks(targets, permanent=action == "delete")
 
@@ -2411,23 +2376,6 @@ class PlanningController:
             designation=cache.designation,
             managed_by=cache.managed_by,
         )
-
-    def _task_findings(self, task: PlanningTask, snapshot: PlanningSnapshot) -> list[Finding]:
-        if task.start is None or task.end is None:
-            return []
-        found = findings_by_bar(
-            snapshot,
-            wall_date(task.start),
-            wall_date(task.end - 1),
-            calendar_resolver(snapshot),
-            self._project_exists,
-        )
-        return [
-            finding
-            for (task_id, _row), items in found.items()
-            if task_id == task.id
-            for finding in items
-        ]
 
     # -- side panel -----------------------------------------------------------
 
@@ -2611,7 +2559,7 @@ class PlanningController:
             )
         menu.addSeparator()
         menu.addAction("Détail\tEntrée").triggered.connect(
-            lambda: self._open_detail(task_id, row_id if row_kind(row_id) == "resource" else None)
+            lambda: self._open_detail(task_id)
         )
         duplicate = menu.addAction("Dupliquer")
         duplicate.setEnabled(editable)
@@ -3561,7 +3509,6 @@ def _span_entry(task: PlanningTask) -> ParsedEntry | None:
         start=task.start,
         end=task.end,
         estimate_minutes=0,
-        required_people=1,
         provisional=False,
         urgent=False,
         deadline=None,

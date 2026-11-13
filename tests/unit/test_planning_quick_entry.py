@@ -114,14 +114,14 @@ def instants(entry: ParsedEntry) -> tuple[str | None, str | None]:
         ("2026-121 montage marquise jeu-ven LBI YCH", "grid"),
         ("124 débit portail 1,5j KDU lun", "grid"),
         ("livraison 112 ven matin", "unassigned"),
-        ("129 relevé de cotes 2p", "backlog"),
+        ("129 relevé de cotes", "backlog"),
         ("thermolaquage RAL 7016 THL lun-mer", "grid"),
         ("/vac LBI 26.10-30.10", "absence"),
         ("5231 pose garde-corps +montage S45 ?", "grid"),
         ("jeu 7h30-11h métré 118 SBE", "grid"),
         ("rangement stock TFA lun", "grid"),
         ("sav portail 109 demain à 10h 1h30 !", "unassigned"),
-        ("<06.11 129 fabrication 2j 2p", "backlog"),
+        ("<06.11 129 fabrication 2j", "backlog"),
         ("", "invalid"),
         ("   ", "invalid"),
         ("?", "invalid"),
@@ -271,7 +271,6 @@ def test_people(text: str, people: tuple[str, ...]) -> None:
         ("25h LBI lun", "time", "", "Heure invalide : 25h"),
         ("0j 121", "duration", "", "Durée nulle : 0j"),
         ("<31.02 121", "deadline", "", "Date invalide : <31.02"),
-        ("0p 121", "people", "", "Nombre de personnes invalide : 0p"),
         ("OTI pose lun", "person", "oti", "« OTI » : personne inactive (OTI Olivier Tissot)"),
         ("+oti pose", "person", "oti", "« +oti » : personne inactive (OTI Olivier Tissot)"),
         ("lun 3000j LBI", "duration", "", "Durée trop longue : 3000j"),
@@ -485,10 +484,10 @@ def test_cell_context(
     assert instants(entry) == (start, end)
 
 
-def test_range_over_several_rows_needs_everyone() -> None:
+def test_range_over_several_rows_takes_everyone() -> None:
     entry = parse("121 pose", **RANGE_CELL)
 
-    assert entry.required_people == 2
+    assert entry.resource_ids == ("lbi", "ych")
     assert entry.estimate_minutes == 1620
 
 
@@ -802,20 +801,20 @@ def test_deadline(text: str, deadline: date | None) -> None:
 
 
 @pytest.mark.parametrize(
-    ("text", "required"),
+    ("text", "title", "start"),
     [
-        ("129 2p", 2),
-        ("129 2 pers", 2),
-        ("129 3 personnes", 3),
-        ("129 2 pers.", 2),
-        ("129 LBI YCH", 2),
-        ("129", 1),
-        ("129 +montage", 4),
-        ("129 LBI 3p", 3),
+        ("129 2p", "2p", None),
+        ("129 3 personnes", "3 personnes", None),
+        ("LBI pose 121 3p jeu 2j", "pose 3p", "2026-10-22T06:30"),
     ],
 )
-def test_required_people(text: str, required: int) -> None:
-    assert parse(text).required_people == required
+def test_a_number_of_people_is_plain_title_text(text: str, title: str, start: str | None) -> None:
+    # No « Requis » any more: « 2p » is part of the title, the days around it still read.
+    entry = parse(text)
+
+    assert entry.title == title
+    assert instants(entry)[0] == start
+    assert not entry.warnings
 
 
 @pytest.mark.parametrize(
@@ -1007,15 +1006,12 @@ def test_consistent_entries_have_no_warning(text: str) -> None:
             ),
         ),
         (
-            "129 relevé de cotes 2p",
-            "2026-129 PPE Les Cèdres · Relevé de cotes · À planifier · 2 pers.",
+            "129 relevé de cotes",
+            "2026-129 PPE Les Cèdres · Relevé de cotes · À planifier",
         ),
         (
-            "<06.11 129 fabrication 2j 2p",
-            (
-                "2026-129 PPE Les Cèdres · Fabrication · À planifier · 2 j · 2 pers. · "
-                "avant le ven 06.11"
-            ),
+            "<06.11 129 fabrication 2j",
+            "2026-129 PPE Les Cèdres · Fabrication · À planifier · 2 j · avant le ven 06.11",
         ),
         (
             "livraison 112 ven matin",
@@ -1049,10 +1045,10 @@ def test_consistent_entries_have_no_warning(text: str) -> None:
         ("?", "Saisie incomplète"),
         ("255 portail LBI", "2026-255 · Portail · LBI · À planifier"),
         (
-            "LBI pose 121 3p jeu",
+            "LBI pose 121 jeu",
             (
                 "2026-121 Commune de Marsens · Pose · LBI · "
-                "jeu 22.10 06:30 → jeu 22.10 16:30 · 1 j · 3 pers."
+                "jeu 22.10 06:30 → jeu 22.10 16:30 · 1 j"
             ),
         ),
         (

@@ -1,4 +1,4 @@
-"""No stray little window at start (« + ajouter » of the detail once opened on its own)."""
+"""No stray little window at start (a widget of the detail once opened on its own)."""
 
 from __future__ import annotations
 
@@ -29,12 +29,13 @@ def _stray_windows(*allowed: QWidget) -> list[str]:
     ]
 
 
-def test_the_add_person_chip_never_opens_as_a_window(qtbot: Any) -> None:
+def test_the_detail_opens_no_window_of_its_own(qtbot: Any) -> None:
     panel = DetailPanel()
     qtbot.addWidget(panel)
     panel.show()
-    panel._stop_adding_person()  # noqa: SLF001 - what showed the chip before any task
-    assert panel.add_person_button.parent() is panel.people_box
+    panel.clear()  # what is shown before any task
+    for widget in (panel.clear_deadline_button, panel.start_picker, panel.deadline_picker):
+        assert not widget.isWindow()
     assert _stray_windows(panel) == []
 
 

@@ -281,7 +281,7 @@ def test_bars_cut_by_the_visible_range() -> None:
     assert not inside.cut_right
 
 
-def test_badges_conflict_people_and_shared_in_order() -> None:
+def test_badges_conflict_and_shared_in_order() -> None:
     vacation = Absence.model_validate(
         {
             "id": "a",
@@ -301,13 +301,14 @@ def test_badges_conflict_people_and_shared_in_order() -> None:
     model = build(snap)
     absent = model.bar("short", "lb")
     assert absent is not None
-    assert [badge.kind for badge in absent.badges] == ["conflict", "people"]
+    assert [badge.kind for badge in absent.badges] == ["conflict", "shared"]
     assert absent.badges[0].text == "▲"
     assert "Vacances" in absent.badges[0].tooltip
-    assert absent.badges[1].text == "2/3"
+    # The people a task requires show nowhere: the « shared » tag, never « 2/3 ».
+    assert absent.badges[1].text == "×2"  # noqa: RUF001
     present = model.bar("short", "nf")
     assert present is not None
-    assert [badge.kind for badge in present.badges] == ["people"]
+    assert [badge.kind for badge in present.badges] == ["shared"]
     shared = model.bar("full", "sg")
     assert shared is not None
     assert [badge.text for badge in shared.badges] == ["×2"]  # noqa: RUF001
@@ -315,32 +316,22 @@ def test_badges_conflict_people_and_shared_in_order() -> None:
     assert shared.people == ("NF", "SG")
 
 
-def test_a_task_short_of_people_keeps_its_places_in_non_affecte() -> None:
+def test_a_task_short_of_people_takes_no_room_in_non_affecte() -> None:
     snap = snapshot(
         task("short", at(MONDAY, 6, 30), at(MONDAY, 16, 30), ["nf", "sg"], required_people=3),
-        task("pair", at(MONDAY, 13), at(MONDAY, 16, 30), ["mr"], number="", required_people=2),
         task("delivery", at(MONDAY, 6, 30), at(MONDAY, 12), [], number="2026-5207"),
-        task("full", at(MONDAY, 6, 30), at(MONDAY, 12), ["jd", "ps"], required_people=2),
         task("nobody", at(MONDAY, 6, 30), at(MONDAY, 12), [], required_people=3),
     )
 
     model = build(snap)
 
-    places = {place.task_id: place for place in model.open_places}
-    assert set(places) == {"short", "pair"}
-    assert places["short"].text == "5231 · à pourvoir (1)"
-    assert places["pair"].text == "Tâche pair · à pourvoir (1)"
-    assert (places["short"].start, places["short"].end) == (at(MONDAY, 6, 30), at(MONDAY, 16, 30))
-    # Not a bar: nothing to select, move or delete through it.
+    # Only the dated tasks without anybody: no « à pourvoir » place, lane or count.
     assert {bar.task_id for bar in model.bars_by_row[UNASSIGNED_ROW_ID]} == {"delivery", "nobody"}
     assert model.bar("short", UNASSIGNED_ROW_ID) is None
-    # Its own lane, beside the dated tasks without anybody, and counted with them.
     unassigned = model.rows.get(UNASSIGNED_ROW_ID)
     assert unassigned is not None
-    lanes = {bar.lane for bar in model.bars_by_row[UNASSIGNED_ROW_ID]}
-    assert places["short"].lane not in lanes
-    assert unassigned.lane_count == len(lanes) + 1
-    assert model.labels[UNASSIGNED_ROW_ID].count == 4
+    assert unassigned.lane_count == len({bar.lane for bar in model.bars_by_row[UNASSIGNED_ROW_ID]})
+    assert model.labels[UNASSIGNED_ROW_ID].count == 2
 
 
 def test_unknown_dossier_is_a_conflict() -> None:

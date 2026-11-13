@@ -158,8 +158,7 @@ def test_chips_of_backlog_unassigned_and_absence_entries() -> None:
 
         return entry_chips(text, parse_entry(text, CONTEXT), CONTEXT)
 
-    backlog = chips("129 relevé de cotes 2p <06.11 !")
-    assert _labels(backlog, "people") == ["2 pers. prévues"]
+    backlog = chips("129 relevé de cotes <06.11 !")
     assert _labels(backlog, "deadline") == ["Avant le ven 06.11"]
     assert _labels(backlog, "urgent") == ["Urgent"]
     assert _labels(backlog, "destination") == ["Entrée → À planifier"]

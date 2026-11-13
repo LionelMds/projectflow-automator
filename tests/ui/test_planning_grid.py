@@ -1142,29 +1142,3 @@ def test_week_header_names_the_half_days(grid: PlanningGrid) -> None:
     assert grid.header.height() == HEADER_HEIGHT
     image = grid.header.grab()
     assert not image.isNull()
-
-
-def test_open_places_are_drawn_in_non_affecte_but_never_picked(grid: PlanningGrid) -> None:
-    base = snapshot()
-    short = task("short", at(MONDAY, 6, 30), at(MONDAY, 16, 30), ["jd"], required_people=2)
-    snap = PlanningSnapshot(
-        tasks={**base.tasks, short.id: short},
-        resources=base.resources,
-        absences=base.absences,
-        meta=base.meta,
-    )
-    model = make_model(grid, snapshot=snap)
-    grid.set_model(model)
-    [place] = model.open_places
-    row = model.rows.get(UNASSIGNED_ROW_ID)
-    assert row is not None
-    box = bar_rect(model, row, place.start, place.end, place.lane)
-    assert grid.scene.bar_at(box.center()) is None
-    image = QImage(int(box.right()) + 4, int(row.bottom) + 2, QImage.Format.Format_ARGB32)
-    image.fill(QColor("white"))
-    painter = QPainter(image)
-    grid.scene.drawBackground(painter, QRectF(0, 0, image.width(), image.height()))
-    painter.end()
-    # The dashed outline: darker pixels on its top edge than in a plain cell.
-    edge = QColor(image.pixel(int(box.left()) + 1, int(box.top())))
-    assert edge.lightness() < 200

@@ -155,7 +155,7 @@ COMPACT_PLACEHOLDER: Final = "ex. débit portail 1,5j"
 EXAMPLES: Final = (
     "montage marquise jeu-ven",
     "débit portail 1,5j lun",
-    "relevé de cotes 2p",
+    "relevé de cotes",
     "livraison ven matin",
 )
 """Examples without dossier nor person, for a planning that has neither yet."""
@@ -343,7 +343,7 @@ def entry_examples(
     personal = (
         _joined(first, "montage marquise jeu-ven", *people[:2]),
         _joined(number(1), "débit portail 1,5j", person(2), "lun"),
-        _joined(number(2), f"relevé de cotes 2p <{deadline.day:02d}.{deadline.month:02d}"),
+        _joined(number(2), f"relevé de cotes <{deadline.day:02d}.{deadline.month:02d}"),
         _joined("livraison", number(3), "ven matin"),
     )
     kept: list[str] = []
@@ -432,7 +432,6 @@ class _ChipBuilder:
         self._people()
         if self.entry.absence is None:
             self._when()
-            self._required()
             self._flags()
         self._warnings()
         destination = DESTINATION_LABELS.get(self.entry.destination)
@@ -562,19 +561,6 @@ class _ChipBuilder:
             self._add("when", span, text=f"{when} · {length}" if length else when)
         elif length:
             self._add("when", span, text=f"~{length}")
-
-    def _required(self) -> None:
-        entry = self.entry
-        assigned = len(entry.resource_ids)
-        if entry.required_people <= max(1, assigned):
-            return
-        span = _first_span(self.text, self._tokens("people"))
-        text = (
-            f"{assigned}/{entry.required_people} pers."
-            if assigned
-            else f"{entry.required_people} pers. prévues"
-        )
-        self._add("people", span, text=text)
 
     def _flags(self) -> None:
         entry = self.entry

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Planning : onglet « Detail » refait. De haut en bas : le numero de projet en grand
+  (AAAA-XXXX, vide pour une tache interne) avec le client, la sous-designation (nom libre de
+  la tache ; vide, la designation du projet, rappelee dessous, la nomme), le type en
+  bascules, Debut et Fin, l'echeance avec Urgent et Travail de nuit, « Qui », les notes, et
+  le statut tout en bas. Le pied fixe garde « Renvoyer a planifier », « Dupliquer » et
+  « Supprimer ». La multi-selection suit le meme ordre et affiche « — » pour une valeur qui
+  differe d'une tache a l'autre.
+- Planning : dans « Detail », Debut, Fin et Echeance se reglent avec des rouleaux (jour,
+  heure, minutes a la demi-heure) : molette, glisser, clic sur une valeur ou fleches. Une
+  seule ligne s'ouvre a la fois ; Entree, Echap ou un clic ailleurs la referme et enregistre.
+  Une fin avant le debut s'affiche en rouge et n'est pas enregistree.
+- Planning : « Qui » montre toute l'equipe par groupe, en initiales a cocher. Une personne
+  absente sur la periode est hachuree (motif au survol) mais reste selectionnable.
+- Planning : retires du panneau « Detail » : « Decaler en jours ouvres », « Estimation » (la
+  duree reste enregistree), « A verifier », les boutons Dossier / Fiche / Repertoire /
+  Creation / Sortie et « Detacher ». Le clic droit d'une barre les propose toujours.
+- Planning : le nombre de personnes requises est supprime : champ « Requis » du Detail,
+  signalement « personnes manquantes », badge « 1/2 » des barres, places « a pourvoir » de
+  « Non affecte », puce « N pers. » des cartes et syntaxe `2p` de la saisie rapide (« 2p »
+  reste maintenant dans le titre). Les taches existantes ne changent pas.
+- Planning : choisir un dossier dans la liste du numero de projet n'ecrit plus que le numero
+  dans le champ, et non « numero · client · designation ».
+
 ## 0.1.79
 
 - macOS : premiere version signee Developer ID et notarisee par Apple, qui s'ouvre sans

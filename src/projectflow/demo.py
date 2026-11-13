@@ -244,7 +244,6 @@ class _DemoTask:
     minute: int = 30
     days: float = 1.0
     status: TaskStatus = "confirmed"
-    required: int = 1
     deadline: int | None = None
     urgent: bool = False
     origin: TaskOrigin = "grid"
@@ -344,7 +343,7 @@ DEMO_TASKS: Final[tuple[_DemoTask, ...]] = (
         f"SAV portail {EN_DASH} réglage", "sav", _BETRISEY, ("jd",), _THU, days=0.5, urgent=True
     ),
     _DemoTask("Fab. barrière parking", "soudure", _GILLIOZ, ("mr", "jd"), _NEXT_MON, days=2),
-    # Montage: 2 people of the 3 required, then a task for three.
+    # Montage: a pair, then a task for three.
     _DemoTask(
         "Pose marquise verre",
         _MONTAGE,
@@ -352,7 +351,6 @@ DEMO_TASKS: Final[tuple[_DemoTask, ...]] = (
         ("nf", "sg"),
         _MON,
         days=2,
-        required=3,
         author=_BUREAU,
     ),
     _DemoTask(
@@ -430,7 +428,6 @@ DEMO_TASKS: Final[tuple[_DemoTask, ...]] = (
         "soudure",
         _ROSSIER,
         days=3,
-        required=2,
         origin="sortie_dossier",
         released=-3,
         deadline=18,
@@ -586,7 +583,6 @@ class _DemoSeed:
             start=start,
             resource_ids=[self._people[key] for key in task.people],
             estimate_days=task.days,
-            required_people=max(task.required, len(task.people), 1),
             status=task.status,
             deadline=self._day(task.deadline) if task.deadline is not None else None,
             urgent=task.urgent,

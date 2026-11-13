@@ -9,14 +9,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from PySide6.QtCore import QDate, QPoint, QPointF, Qt
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QWheelEvent
-from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QVBoxLayout, QWidget
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent
+from PySide6.QtWidgets import QApplication, QLineEdit, QVBoxLayout, QWidget
 
 from projectflow.config import AppearanceConfig
 from projectflow.core.planning.calendar import WorkCalendar
 from projectflow.core.planning.changes import PlanningSnapshot
-from projectflow.core.planning.conflicts import Finding
 from projectflow.core.planning.models import (
     Absence,
     Author,
@@ -26,16 +25,16 @@ from projectflow.core.planning.models import (
     Resource,
 )
 from projectflow.core.planning.quick_entry import ProjectInfo
-from projectflow.core.planning.walltime import format_hhmm, wall_time
+from projectflow.core.planning.task_types import SIMPLE_TASK_TYPES
+from projectflow.core.planning.walltime import wall_time
 from projectflow.ui.planning.detail import (
+    END_ERROR,
     MULTI_SELECTION,
+    TITLE_PLACEHOLDER,
     DetailPanel,
-    PersonChip,
+    FitButton,
     author_text,
     availability,
-    parse_estimate,
-    time_choices,
-    unique_findings,
 )
 from projectflow.ui.planning.grid import task_mime_data
 from projectflow.ui.planning.side_panel import RAIL_WIDTH, SidePanel
@@ -95,7 +94,6 @@ FAB = _task(
     start=wall_time(MONDAY, 6, 30),
     end=wall_time(WEDNESDAY, 16, 30),
     assignments={"mr": {}, "jd": {}},
-    required_people=3,
     status="provisional",
     deadline=date(2026, 11, 6),
     notes="Prendre le poste TIG mobile",
@@ -110,7 +108,6 @@ CARD = _task(
     title="Barrière parking souterrain",
     task_type="montage",
     estimate_days=2,
-    required_people=2,
     assignments={"nf": {}},
     created_by=SBE,
 )
@@ -122,21 +119,18 @@ OTHER = _task(
     end=wall_time(TUESDAY, 16, 30),
     assignments={"nf": {}},
 )
-LB_OFF = Absence(id="off", resource_id="lb", first_day=MONDAY, last_day=WEDNESDAY)
-FINDINGS = [
-    Finding("missing_people", "fab", "mr", "1 personne manquante sur 3 requises"),
-    Finding("missing_people", "fab", "jd", "1 personne manquante sur 3 requises"),
-    Finding("absence", "fab", "jd", "Absent mercredi 21.10"),
-]
+LB_OFF = Absence(
+    id="off", resource_id="lb", first_day=MONDAY, last_day=WEDNESDAY, reason="vacances"
+)
 
 
-def _snapshot(*tasks: PlanningTask) -> PlanningSnapshot:
+def _snapshot(*tasks: PlanningTask, meta: PlanningMeta | None = None) -> PlanningSnapshot:
     chosen = tasks or (FAB, CARD, OTHER)
     return PlanningSnapshot(
         tasks={task.id: task for task in chosen},
         resources=RESOURCES,
         absences={LB_OFF.id: LB_OFF},
-        meta=PlanningMeta(),
+        meta=meta or PlanningMeta(),
     )
 
 
@@ -168,7 +162,7 @@ def _detail(
     task: PlanningTask = FAB,
     *,
     read_only: bool = False,
-    focus_resource_id: str | None = None,
+    snapshot: PlanningSnapshot | None = None,
 ) -> _Host:
     host = _Host()
     qtbot.addWidget(host)
@@ -176,12 +170,10 @@ def _detail(
     host.detail.set_project_choices(PROJECTS)
     host.detail.set_task(
         task,
-        _snapshot(),
+        snapshot or _snapshot(),
         calendar=GE,
         project=PROJECTS[0] if task.project_number == "2026-5231" else None,
-        findings=FINDINGS if task.id == "fab" else [],
         read_only=read_only,
-        focus_resource_id=focus_resource_id,
         now=NOW,
     )
     host.show()
@@ -195,137 +187,153 @@ def _focus(qtbot: Any, widget: QWidget) -> None:
     qtbot.waitUntil(widget.hasFocus)
 
 
-def _texts(combo: QComboBox) -> list[str]:
-    return [combo.itemText(index) for index in range(combo.count())]
+def _chip(detail: DetailPanel, key: str) -> FitButton:
+    return next(chip for chip in detail.type_chips() if chip.property("key") == key)
 
 
-def _choose(qtbot: Any, combo: QComboBox, text: str) -> None:
-    """Pick ``text`` in the open list of ``combo``, as a click or Enter in the list does."""
-    index = combo.findText(text)
-    assert index >= 0, (text, _texts(combo))
-    combo.showPopup()
-    view = combo.view()
-    qtbot.waitUntil(view.isVisible)
-    view.setCurrentIndex(combo.model().index(index, 0))
-    qtbot.keyClick(view, Qt.Key.Key_Return)
-    assert combo.currentIndex() == index
+def _checked_type(detail: DetailPanel) -> str | None:
+    checked = [chip.property("key") for chip in detail.type_chips() if chip.isChecked()]
+    return checked[0] if checked else None
 
 
-def _wheel(widget: QWidget, delta: int = -120) -> QWheelEvent:
-    center = QPointF(widget.rect().center())
-    event = QWheelEvent(
-        center,
-        QPointF(widget.mapToGlobal(center.toPoint())),
-        QPoint(0, 0),
-        QPoint(0, delta),
-        Qt.MouseButton.NoButton,
-        Qt.KeyboardModifier.NoModifier,
-        Qt.ScrollPhase.NoScrollPhase,
-        False,  # noqa: FBT003
-    )
-    QApplication.sendEvent(widget, event)
-    return event
+def _checked_people(detail: DetailPanel) -> list[str]:
+    return [button.resource_id for button in detail.person_buttons() if button.isChecked()]
+
+
+def _click(qtbot: Any, widget: QWidget) -> None:
+    qtbot.mouseClick(widget, Qt.MouseButton.LeftButton)
+
+
+def _top(detail: DetailPanel, widget: QWidget) -> int:
+    body = detail.scroll_area.widget()
+    return widget.mapTo(body, QPoint(0, 0)).y()
 
 
 # ------------------------------------------------------------- helpers ----
 
 
-def test_time_choices_offer_worked_half_hours_only() -> None:
-    def hours(day: date, *, end: bool) -> list[str]:
-        return [format_hhmm(minute) for minute in time_choices(GE, day, end=end)]
-
-    monday_starts = hours(MONDAY, end=False)
-    assert monday_starts[0] == "06:30"
-    assert "11:30" in monday_starts
-    assert "12:00" not in monday_starts
-    assert "12:30" not in monday_starts
-    assert monday_starts[-1] == "16:00"
-    monday_ends = hours(MONDAY, end=True)
-    assert (monday_ends[0], monday_ends[-1]) == ("07:00", "16:30")
-    assert "12:00" in monday_ends
-    assert "13:00" not in monday_ends
-    assert len(monday_starts) == len(monday_ends) == 18  # 9 h of work in half hours
-    # Friday afternoon is never offered.
-    assert hours(FRIDAY, end=False) == [format_hhmm(m) for m in range(390, 691, 30)]
-    assert hours(FRIDAY, end=True)[-1] == "12:00"
-    assert hours(SATURDAY, end=False) == []
-
-
-def test_parse_estimate_reads_days_and_hours() -> None:
-    assert parse_estimate("2 j") == (2.0, 0)
-    assert parse_estimate("1,5 j") == (1.5, 0)
-    assert parse_estimate("1 j ½") == (1.5, 0)
-    assert parse_estimate("½ j") == (0.5, 0)
-    assert parse_estimate("3 jours") == (3.0, 0)
-    assert parse_estimate("4 h") == (0.0, 240)
-    assert parse_estimate("3h30") == (0.0, 210)
-    assert parse_estimate("3 h 15") == (0.0, 210)
-    assert parse_estimate("90 min") == (0.0, 90)
-    assert parse_estimate("~2 j") == (2.0, 0)
-    assert parse_estimate("") == (0.0, 0)
-    assert parse_estimate("bientôt") is None
-    assert parse_estimate("0 h") is None
-
-
-def test_findings_said_once_and_author_line() -> None:
-    kept = unique_findings(FINDINGS)
-
-    assert [(f.kind, f.resource_id) for f in kept] == [("missing_people", None), ("absence", "jd")]
+def test_author_line() -> None:
     assert author_text(FAB, NOW) == "Modifié par JD · ATELIER-1 · il y a 3 min"
     assert author_text(CARD, NOW) == "Créé par SBE · BUREAU-2 · le 15.10.2026"
+
+
+def test_someone_away_part_of_the_task_is_not_free() -> None:
+    wednesday = Absence(id="wed", resource_id="lb", first_day=WEDNESDAY, last_day=WEDNESDAY)
+    one_day = PlanningSnapshot(
+        tasks={FAB.id: FAB},
+        resources=RESOURCES,
+        absences={wednesday.id: wednesday},
+        meta=PlanningMeta(),
+    )
+    two_days = Absence(id="two", resource_id="lb", first_day=MONDAY, last_day=TUESDAY)
+    away = PlanningSnapshot(
+        tasks={FAB.id: FAB},
+        resources=RESOURCES,
+        absences={two_days.id: two_days},
+        meta=PlanningMeta(),
+    )
+
+    assert availability(one_day, RESOURCES["lb"], FAB, GE) == "absent mercredi 21.10"
+    assert availability(away, RESOURCES["lb"], FAB, GE) == "absent en partie"
+    assert availability(one_day, RESOURCES["sg"], FAB, GE) == "libre"
+    assert availability(_snapshot(), RESOURCES["lb"], FAB, GE) == "absent"
 
 
 # -------------------------------------------------------------- display ----
 
 
-def test_shows_the_dossier_card_and_the_fields_of_a_scheduled_task(qtbot: Any) -> None:
+def test_shows_the_blocks_of_a_scheduled_task_top_to_bottom(qtbot: Any) -> None:
     host = _detail(qtbot)
     detail = host.detail
 
     assert detail.mode() == "task"
     assert detail.task_id() == "fab"
-    card = detail.dossier_card
-    assert (card.number_label.text(), card.client_label.text()) == ("2026-5231", "Müller SA")
-    assert card.designation_label.text() == "Garde-corps escalier ext."
-    assert card.contact_label.text() == "Contact : M. Müller"
-    assert card.facts_label.text() == "Sorti atelier 14.10.2026 · Géré par LM · Sion"
-    assert list(card.buttons) == ["folder", "fiche", "repertoire", "creation", "sortie"]
+    assert detail.number_edit.text() == "2026-5231"
+    assert detail.number_edit.placeholderText() == "AAAA-XXXX"
+    assert detail.client_label.text() == "Müller SA"
     assert detail.title_edit.text() == "Fab. garde-corps"
-    assert detail.dossier_edit.text() == "2026-5231"
-    assert detail.type_combo.currentData() == "soudure"
+    assert detail.project_label.text() == "Projet : Garde-corps escalier ext."
+    assert _checked_type(detail) == "soudure"
+    assert detail.start_row.value() == "lun 19 oct · 06:30"
+    assert detail.end_row.value() == "mer 21 oct · 16:30"
+    assert detail.duration_label.text() == "Durée : 3 j · 27 h"
+    assert detail.deadline_row.value() == "ven 6 nov"
+    assert not detail.urgent_button.isChecked()
+    assert not detail.night_button.isChecked()
+    assert _checked_people(detail) == ["mr", "jd"]
+    assert detail.people_count.text() == "2 sélectionnés"
+    assert detail.notes_edit.toPlainText() == "Prendre le poste TIG mobile"
     checked = detail.status_buttons.checkedButton()
     assert checked is not None
     assert checked.text() == "Provisoire"
-    assert [chip.text() for chip in detail.chips()] == ["MR", "JD"]
-    assert detail.people_caption.text() == "Affectés · 2 sur 3"
-    assert detail.required_spin.value() == 3
-    assert detail.start_date.date() == QDate(2026, 10, 19)
-    assert detail.start_time.currentText() == "06:30"
-    assert detail.end_date.date() == QDate(2026, 10, 21)
-    assert detail.end_time.currentText() == "16:30"
-    assert detail.duration_label.text() == "Durée : 3 j · 27 h"
-    assert detail.deadline_edit.date() == QDate(2026, 11, 6)
-    assert detail.notes_edit.toPlainText() == "Prendre le poste TIG mobile"
     assert detail.author_label.text() == "Modifié par JD · ATELIER-1 · il y a 3 min"
-    assert detail.findings_block.isVisibleTo(detail)
-    assert detail.findings_layout.count() == 2
-    assert detail.detach_button.isVisibleTo(detail)
     assert detail.unschedule_button.isVisibleTo(detail)
-    assert not detail.estimate_block.isVisibleTo(detail)
+    assert detail.open_picker() is None
+
+    # The order of the mockup, the status at the bottom; the footer out of the scroll.
+    blocks = [
+        detail.number_block,
+        detail.title_block,
+        detail.type_block,
+        detail.dates_block,
+        detail.deadline_block,
+        detail.night_block,
+        detail.people_block,
+        detail.notes_block,
+        detail.status_block,
+    ]
+    tops = [_top(detail, block) for block in blocks]
+    assert tops == sorted(tops)
+    assert detail.footer.parent() is detail
+    assert not detail.scroll_area.widget().isAncestorOf(detail.footer)
+    # Gone from the panel: dossier buttons, « Détacher », findings, « Décaler »,
+    # estimate, « Requis ».
+    for name in (
+        "dossier_card",
+        "detach_button",
+        "focus_resource_id",
+        "findings_block",
+        "shift_block",
+        "estimate_edit",
+        "required_spin",
+        "type_combo",
+    ):
+        assert not hasattr(detail, name), name
 
 
-def test_a_card_shows_its_estimate_and_foreseen_people(qtbot: Any) -> None:
+def test_the_sub_designation_names_the_task_or_leaves_it_to_the_project(qtbot: Any) -> None:
+    host = _detail(qtbot, FAB.model_copy(update={"title": ""}))
+    detail = host.detail
+
+    assert detail.title_edit.text() == ""
+    assert detail.title_edit.placeholderText() == TITLE_PLACEHOLDER
+    assert detail.project_label.text() == "Projet : Garde-corps escalier ext."
+    assert detail.project_label.isVisibleTo(detail)
+
+    detail.set_task(FAB, _snapshot(), calendar=GE, project=PROJECTS[0], now=NOW)
+    assert detail.title_edit.text() == "Fab. garde-corps"
+    assert detail.project_label.text() == "Projet : Garde-corps escalier ext."
+
+    internal = _task("internal", title="Rangement stock", task_type="interne")
+    detail.set_task(internal, _snapshot(), calendar=GE, now=NOW)
+    assert detail.number_edit.text() == ""
+    assert detail.client_label.text() == "Tâche interne"
+    assert not detail.project_label.isVisibleTo(detail)
+
+
+def test_a_card_has_no_dates_and_foreseen_people(qtbot: Any) -> None:
     host = _detail(qtbot, CARD)
     detail = host.detail
 
-    assert detail.people_caption.text() == "Pressentis"
-    assert [(chip.text(), chip.foreseen) for chip in detail.chips()] == [("NF", True)]
-    assert detail.estimate_block.isVisibleTo(detail)
-    assert detail.estimate_edit.text() == "2 j"
-    assert not detail.start_block.isVisibleTo(detail)
+    assert not detail.dates_box.isVisibleTo(detail)
+    assert detail.unscheduled_label.isVisibleTo(detail)
+    assert detail.people_count.text() == "1 pressenti"
+    assert _checked_people(detail) == ["nf"]
     assert not detail.unschedule_button.isVisibleTo(detail)
-    assert not detail.detach_button.isVisibleTo(detail)
-    assert detail.dossier_card.number_label.text() == "2026-5249"
+    assert detail.number_edit.text() == "2026-5249"
+    assert detail.client_label.text() == "Gillioz"
+    _click(qtbot, detail.start_row)
+    assert detail.open_picker() is None
 
 
 def test_clear_shows_the_hint(qtbot: Any) -> None:
@@ -338,6 +346,27 @@ def test_clear_shows_the_hint(qtbot: Any) -> None:
     assert detail.task_id() == ""
     assert detail.empty_label.isVisibleTo(detail)
     assert not detail.title_block.isVisibleTo(detail)
+    assert not detail.footer.isVisibleTo(detail)
+
+
+def test_three_types_share_one_row_and_a_longer_list_wraps(qtbot: Any) -> None:
+    simple = PlanningMeta(task_types=SIMPLE_TASK_TYPES)
+    montage = FAB.model_copy(update={"task_type": "montage"})
+    host = _detail(qtbot, montage, snapshot=_snapshot(meta=simple))
+    detail = host.detail
+
+    chips = detail.type_chips()
+    assert [chip.full_text() for chip in chips] == ["Atelier", "Montage", "Autre"]
+    assert len({chip.y() for chip in chips}) == 1
+    widths = [chip.width() for chip in chips]
+    assert max(widths) - min(widths) <= 1  # one third each
+    assert _checked_type(detail) == "montage"
+
+    detail.set_task(FAB, _snapshot(), calendar=GE, now=NOW)  # the ten default types
+    assert len(detail.type_chips()) == 10
+    qtbot.waitUntil(lambda: _chip(detail, "soudure").isVisible())
+    assert all(chip.text() == chip.full_text() for chip in detail.type_chips())
+    assert _checked_type(detail) == "soudure"
 
 
 # -------------------------------------------------------------- editing ----
@@ -375,21 +404,46 @@ def test_a_refresh_keeps_the_text_being_typed(qtbot: Any) -> None:
     assert detail.notes_edit.toPlainText() == "Autre"
 
 
-def test_dossier_completes_a_short_number_on_enter(qtbot: Any) -> None:
+def test_the_project_number_completes_and_checks_aaaa_xxxx(qtbot: Any) -> None:
     host = _detail(qtbot)
     detail = host.detail
+    edit = detail.number_edit
+    emitted: list[tuple[str, str, object]] = []
+    detail.field_changed.connect(lambda *args: emitted.append(args))
 
-    _focus(qtbot, detail.dossier_edit)
-    detail.dossier_edit.selectAll()
-    qtbot.keyClicks(detail.dossier_edit, "5244")
-    detail._dossier_completer.popup().hide()  # noqa: SLF001
-    with qtbot.waitSignal(detail.field_changed) as blocker:
-        qtbot.keyClick(detail.dossier_edit, Qt.Key.Key_Return)
-    assert blocker.args == ["fab", "project_number", "2026-5244"]
+    _focus(qtbot, edit)
+    edit.selectAll()
+    qtbot.keyClicks(edit, "5244")
+    detail._number_completer.popup().hide()  # noqa: SLF001
+    qtbot.keyClick(edit, Qt.Key.Key_Return)
+    assert emitted == [("fab", "project_number", "2026-5244")]
+    assert edit.text() == "2026-5244"
 
-    with qtbot.waitSignal(detail.field_changed) as blocker:
-        detail._dossier_completer.activated.emit("2026-5249 · Gillioz · Barrière parking")  # noqa: SLF001
-    assert blocker.args == ["fab", "project_number", "2026-5249"]
+    # The list shows the client and the designation, and writes the number alone.
+    completer = detail._number_completer  # noqa: SLF001
+    completer.setCompletionPrefix("5249")
+    assert completer.currentCompletion() == "2026-5249"
+    shown = completer.completionModel().index(0, 0).data()
+    assert shown == "2026-5249 · Gillioz · Barrière parking"
+    completer.activated.emit("2026-5249")
+    assert emitted[1:] == [("fab", "project_number", "2026-5249")]
+    assert edit.text() == "2026-5249"
+
+    # Letters are refused while typing; an unfinished number is shown wrong, not saved.
+    edit.selectAll()
+    qtbot.keyClicks(edit, "ab2026-52")
+    assert edit.text() == "2026-52"
+    detail._number_completer.popup().hide()  # noqa: SLF001
+    qtbot.keyClick(edit, Qt.Key.Key_Return)
+    assert len(emitted) == 2
+    assert edit.property("tone") == "error"
+    assert edit.toolTip().startswith("Numéro attendu : AAAA-XXXX")
+
+    # Empty: an internal task.
+    edit.clear()
+    qtbot.keyClick(edit, Qt.Key.Key_Return)
+    assert emitted[2:] == [("fab", "project_number", "")]
+    assert edit.property("tone") in ("", None)
 
 
 def test_notes_save_800_ms_after_the_last_keystroke(qtbot: Any) -> None:
@@ -421,183 +475,303 @@ def test_notes_save_at_once_when_the_field_is_left(qtbot: Any) -> None:
     assert blocker.args[1] == "notes"
 
 
-def test_type_status_urgent_required_and_deadline(qtbot: Any) -> None:
+def test_type_status_urgent_and_night_save_at_once(qtbot: Any) -> None:
     host = _detail(qtbot)
     detail = host.detail
     emitted: list[tuple[object, ...]] = []
     detail.field_changed.connect(lambda *args: emitted.append(args))
     detail.status_changed.connect(lambda *args: emitted.append(("status", *args)))
 
-    assert detail.type_combo.itemText(detail.type_combo.currentIndex()) == "Soudure / assemblage"
-    assert not detail.type_combo.itemIcon(0).isNull()
-    _choose(qtbot, detail.type_combo, "Montage chantier")
+    _click(qtbot, _chip(detail, "montage"))
+    _click(qtbot, _chip(detail, "montage"))  # already the type: nothing more
     confirmed = detail.status_buttons.button(1)
     assert confirmed is not None
     confirmed.click()
-    detail.urgent_check.click()
-    detail.required_spin.setValue(2)
-    detail.required_spin.editingFinished.emit()
-    detail.deadline_edit.setDate(QDate(2026, 11, 13))
-    detail.deadline_edit.editingFinished.emit()
-    detail.clear_deadline_button.click()
+    _click(qtbot, detail.urgent_button)
+    _click(qtbot, detail.night_button)
 
     assert emitted == [
         ("fab", "task_type", "montage"),
         ("status", "fab", "confirmed"),
         ("fab", "urgent", True),
-        ("fab", "required_people", 2),
-        ("fab", "deadline", date(2026, 11, 13)),
-        ("fab", "deadline", None),
+        ("fab", "off_hours", True),
     ]
+    assert _checked_type(detail) == "montage"
+    assert detail.urgent_button.property("tone") == "error"
 
 
-def test_start_and_end_offer_only_worked_times_of_their_day(qtbot: Any) -> None:
+# ----------------------------------------------------------------- rolls ----
+
+
+def test_a_click_on_debut_unfolds_its_rolls_and_moves_the_task(qtbot: Any) -> None:
+    host = _detail(qtbot)
+    detail = host.detail
+    dates: list[tuple[object, ...]] = []
+    detail.dates_changed.connect(lambda *args: dates.append(args))
+
+    _click(qtbot, detail.start_row)
+    assert detail.open_picker() == "start"
+    assert detail.start_picker.isVisible()
+    assert detail.start_row.is_open()
+    qtbot.waitUntil(detail.start_picker.hasFocus)
+    assert detail.start_picker.visible_texts(0) == [
+        "sam 17 oct",
+        "dim 18 oct",
+        "lun 19 oct",
+        "mar 20 oct",
+        "mer 21 oct",
+    ]
+    assert detail.start_picker.text(1) == "06"
+    assert detail.start_picker.text(2) == "30"
+
+    qtbot.keyClick(detail.start_picker, Qt.Key.Key_Down)  # one day later
+    # Shown at once, saved when folded: 27 worked hours from Tuesday end on Thursday.
+    assert detail.start_row.value() == "mar 20 oct · 06:30"
+    assert detail.end_row.value() == "jeu 22 oct · 16:30"
+    assert dates == []
+    _click(qtbot, detail.start_row)
+    assert detail.open_picker() is None
+    assert not detail.start_picker.isVisible()
+    assert dates == [("fab", wall_time(TUESDAY, 6, 30), wall_time(THURSDAY, 16, 30))]
+
+    moved = FAB.model_copy(update={"start": dates[0][1], "end": dates[0][2]})
+    detail.set_task(moved, _snapshot(), calendar=GE, now=NOW)
+    _click(qtbot, detail.start_row)
+    picker = detail.start_picker
+    qtbot.keyClick(picker, Qt.Key.Key_Right)
+    assert picker.current_column() == 1
+    for _ in range(7):
+        qtbot.keyClick(picker, Qt.Key.Key_Down)  # 06 -> 13
+    qtbot.keyClick(picker, Qt.Key.Key_Right)
+    qtbot.keyClick(picker, Qt.Key.Key_Up)  # 13:30 -> 13:00
+    assert detail.start_row.value() == "mar 20 oct · 13:00"
+    qtbot.keyClick(picker, Qt.Key.Key_Return)
+    assert detail.open_picker() is None
+    qtbot.waitUntil(detail.start_row.hasFocus)
+    assert dates[1:] == [("fab", wall_time(TUESDAY, 13, 0), wall_time(FRIDAY, 12, 0))]
+
+
+def test_one_row_open_at_a_time_and_a_click_elsewhere_folds(qtbot: Any) -> None:
+    host = _detail(qtbot)
+    detail = host.detail
+    dates: list[tuple[object, ...]] = []
+    detail.dates_changed.connect(lambda *args: dates.append(args))
+
+    _click(qtbot, detail.start_row)
+    _click(qtbot, detail.end_row)
+    assert detail.open_picker() == "end"
+    assert not detail.start_picker.isVisible()
+    assert detail.end_picker.isVisible()
+    assert not detail.start_row.is_open()
+    assert detail.end_row.is_open()
+    assert dates == []  # nothing rolled: nothing saved
+
+    _click(qtbot, detail.deadline_row)
+    assert detail.open_picker() == "deadline"
+    assert detail.deadline_picker.isVisible()
+
+    _click(qtbot, host.other)
+    assert detail.open_picker() is None
+    assert not detail.deadline_picker.isVisible()
+
+    _click(qtbot, detail.end_row)
+    qtbot.keyClick(detail.end_picker, Qt.Key.Key_Escape)
+    assert detail.open_picker() is None
+
+
+def test_an_end_before_the_start_turns_red_and_is_not_saved(qtbot: Any) -> None:
+    host = _detail(qtbot)
+    detail = host.detail
+    dates: list[tuple[object, ...]] = []
+    detail.dates_changed.connect(lambda *args: dates.append(args))
+
+    _click(qtbot, detail.end_row)
+    detail.end_picker.step(0, -3)  # Sunday 18th, before Monday's start
+    assert detail.end_row.has_error()
+    assert detail.end_row.value() == "dim 18 oct · 16:30"
+    assert detail.duration_label.text() == END_ERROR
+    assert detail.duration_label.property("tone") == "error"
+
+    _click(qtbot, host.other)
+    assert dates == []
+    assert not detail.end_row.has_error()
+    assert detail.end_row.value() == "mer 21 oct · 16:30"
+    assert detail.duration_label.text() == "Durée : 3 j · 27 h"
+
+
+def test_the_end_goes_back_to_the_last_worked_time(qtbot: Any) -> None:
     host = _detail(qtbot)
     detail = host.detail
 
-    assert "12:00" not in _texts(detail.start_time)
-    assert "16:30" not in _texts(detail.start_time)
-    assert _texts(detail.end_time)[-1] == "16:30"
-    detail.start_date.setDate(QDate(2026, 10, 23))  # a Friday
-    assert _texts(detail.start_time)[-1] == "11:30"
-    assert all(text < "12:00" for text in _texts(detail.start_time))
-    assert detail.start_time.currentText() == "06:30"
-    detail.end_date.setDate(QDate(2026, 10, 23))
-    assert _texts(detail.end_time)[-1] == "12:00"
-    assert detail.end_time.currentText() == "12:00"  # 16:30 does not exist on Friday
-
-
-def test_moving_the_start_keeps_the_worked_time(qtbot: Any) -> None:
-    host = _detail(qtbot)
-    detail = host.detail
-
-    detail.start_date.setDate(QDate(2026, 10, 20))
+    _click(qtbot, detail.end_row)
+    detail.end_picker.step(0, 1)  # Thursday 16:30
     with qtbot.waitSignal(detail.dates_changed) as blocker:
-        detail.start_date.editingFinished.emit()
-    # 27 h from Tuesday 06:30 end on Thursday at 16:30.
-    assert blocker.args == ["fab", wall_time(TUESDAY, 6, 30), wall_time(THURSDAY, 16, 30)]
+        qtbot.keyClick(detail.end_picker, Qt.Key.Key_Return)
+    assert blocker.args == ["fab", wall_time(MONDAY, 6, 30), wall_time(THURSDAY, 16, 30)]
 
+    _click(qtbot, detail.end_row)
+    detail.end_picker.step(0, 3)  # a Saturday: the week ends on Friday at noon
+    assert detail.end_row.value() == "ven 23 oct · 12:00"
     with qtbot.waitSignal(detail.dates_changed) as blocker:
-        _choose(qtbot, detail.start_time, "13:00")
-    assert blocker.args == ["fab", wall_time(TUESDAY, 13, 0), wall_time(FRIDAY, 12, 0)]
-
-
-def test_changing_the_end_and_a_weekend_end(qtbot: Any) -> None:
-    host = _detail(qtbot)
-    detail = host.detail
-
-    detail.end_date.setDate(QDate(2026, 10, 22))
-    with qtbot.waitSignal(detail.dates_changed) as blocker:
-        _choose(qtbot, detail.end_time, "12:00")
-    assert blocker.args == ["fab", wall_time(MONDAY, 6, 30), wall_time(THURSDAY, 12, 0)]
-
-    detail.end_date.setDate(QDate(2026, 10, 24))  # a Saturday: no time offered
-    assert detail.end_time.count() == 0
-    with qtbot.waitSignal(detail.dates_changed) as blocker:
-        detail.end_date.editingFinished.emit()
+        _click(qtbot, detail.end_row)
     assert blocker.args == ["fab", wall_time(MONDAY, 6, 30), wall_time(FRIDAY, 12, 0)]
 
 
-def test_people_chips_remove_and_add_with_availability(qtbot: Any) -> None:
+def test_the_deadline_rolls_a_day_and_the_cross_clears_it(qtbot: Any) -> None:
     host = _detail(qtbot)
-    detail = host.detail
-
-    chip = detail.chips()[0]
-    assert isinstance(chip, PersonChip)
-    with qtbot.waitSignal(detail.people_changed) as blocker:
-        qtbot.mouseClick(chip, Qt.MouseButton.LeftButton, pos=chip.close_rect().center())
-    assert blocker.args == ["fab", [], ["mr"]]
-
-    assert detail.person_choices() == [
-        "NF  Nicolas Favre · Montage · occupé à 67 %",
-        "SG  Samuel Gay · Montage · libre",
-        "LB  Laura Bron · Bureau technique · absent",
-    ]
-    detail.add_person_button.click()
-    assert detail.person_edit.isVisible()
-    popup = detail._person_completer.popup()  # noqa: SLF001
-    assert popup.isVisible()  # every choice is offered at once
-    popup.hide()
-    qtbot.keyClicks(detail.person_edit, "sg")
-    popup.hide()
-    with qtbot.waitSignal(detail.people_changed) as blocker:
-        qtbot.keyClick(detail.person_edit, Qt.Key.Key_Return)
-    assert blocker.args == ["fab", ["sg"], []]
-    assert not detail.person_edit.isVisible()
-
-    with qtbot.waitSignal(detail.people_changed) as blocker:
-        detail._person_completer.activated.emit(detail.person_choices()[2])  # noqa: SLF001
-    assert blocker.args == ["fab", ["lb"], []]
-
-
-def test_unscheduled_task_edits_its_estimate(qtbot: Any) -> None:
-    host = _detail(qtbot, CARD)
     detail = host.detail
     emitted: list[tuple[str, str, object]] = []
     detail.field_changed.connect(lambda *args: emitted.append(args))
 
-    _focus(qtbot, detail.estimate_edit)
-    detail.estimate_edit.selectAll()
-    qtbot.keyClicks(detail.estimate_edit, "3h30")
-    qtbot.keyClick(detail.estimate_edit, Qt.Key.Key_Return)
-    assert emitted == [("card", "estimate_days", 0.0), ("card", "estimate_minutes", 210)]
-    assert detail.estimate_edit.text() == "3 h 30"
+    _click(qtbot, detail.deadline_row)
+    assert detail.deadline_picker.day() == date(2026, 11, 6)
+    for _ in range(7):
+        qtbot.keyClick(detail.deadline_picker, Qt.Key.Key_Down)
+    assert detail.deadline_row.value() == "ven 13 nov"
+    qtbot.keyClick(detail.deadline_picker, Qt.Key.Key_Return)
+    assert emitted == [("fab", "deadline", date(2026, 11, 13))]
 
-    detail.estimate_edit.selectAll()
-    qtbot.keyClicks(detail.estimate_edit, "n'importe")
-    qtbot.keyClick(detail.estimate_edit, Qt.Key.Key_Return)
-    assert len(emitted) == 2
-    assert detail.estimate_label.text().startswith("Durée non comprise")
-
-    detail.estimate_edit.selectAll()
-    qtbot.keyClicks(detail.estimate_edit, "1 j ½")
-    _focus(qtbot, host.other)
-    assert emitted[2:] == [("card", "estimate_days", 1.5)]
+    assert detail.clear_deadline_button.isVisible()
+    assert detail.clear_deadline_button.parent() is detail.deadline_row
+    _click(qtbot, detail.clear_deadline_button)
+    assert emitted[1:] == [("fab", "deadline", None)]
+    assert detail.deadline_row.value() == "Aucune"
+    assert not detail.clear_deadline_button.isVisible()
+    assert detail.open_picker() is None
 
 
-def test_actions_and_dossier_buttons(qtbot: Any) -> None:
-    host = _detail(qtbot, focus_resource_id="jd")
+def test_without_deadline_the_rolls_start_on_the_task(qtbot: Any) -> None:
+    host = _detail(qtbot, FAB.model_copy(update={"deadline": None}))
+    detail = host.detail
+    emitted: list[tuple[str, str, object]] = []
+    detail.field_changed.connect(lambda *args: emitted.append(args))
+    assert detail.deadline_row.value() == "Aucune"
+    assert not detail.clear_deadline_button.isVisible()
+
+    _click(qtbot, detail.deadline_row)
+    assert detail.deadline_picker.day() == date(2026, 10, 21)  # the task ends 21.10
+    assert detail.deadline_row.value() == "mer 21 oct"
+    qtbot.keyClick(detail.deadline_picker, Qt.Key.Key_Escape)  # left untouched: none
+    assert emitted == []
+    assert detail.deadline_row.value() == "Aucune"
+
+    _click(qtbot, detail.deadline_row)
+    qtbot.keyClick(detail.deadline_picker, Qt.Key.Key_Return)
+    assert emitted == [("fab", "deadline", date(2026, 10, 21))]
+
+    card = _detail(qtbot, CARD)
+    _click(qtbot, card.detail.deadline_row)
+    assert card.detail.deadline_picker.day() == TODAY  # no dates: today
+
+
+def test_a_refresh_keeps_the_rolls_and_another_task_saves_them(qtbot: Any) -> None:
+    host = _detail(qtbot)
+    detail = host.detail
+
+    _click(qtbot, detail.end_row)
+    detail.end_picker.step(1, -1)  # Wednesday 15:30
+    detail.set_task(FAB.model_copy(update={"notes": "x"}), _snapshot(), calendar=GE, now=NOW)
+    assert detail.open_picker() == "end"
+    assert detail.end_row.value() == "mer 21 oct · 15:30"
+
+    with qtbot.waitSignal(detail.dates_changed) as blocker:
+        detail.set_task(OTHER, _snapshot(), calendar=GE, now=NOW)
+    assert blocker.args == ["fab", wall_time(MONDAY, 6, 30), wall_time(WEDNESDAY, 15, 30)]
+    assert detail.open_picker() is None
+    assert detail.end_row.value() == "mar 20 oct · 16:30"
+
+
+def test_escape_folds_the_rolls_before_going_back(qtbot: Any) -> None:
+    host = _detail(qtbot)
+    detail = host.detail
+    backs: list[bool] = []
+    detail.back_requested.connect(lambda: backs.append(True))
+
+    _click(qtbot, detail.start_row)
+    qtbot.keyClick(detail.start_picker, Qt.Key.Key_Escape)
+    assert detail.open_picker() is None
+    assert backs == []
+
+    _focus(qtbot, detail.title_edit)
+    qtbot.keyClick(detail.title_edit, Qt.Key.Key_Escape)
+    assert backs == [True]
+
+
+# ---------------------------------------------------------------- people ----
+
+
+def test_everybody_by_team_absent_people_hatched(qtbot: Any) -> None:
+    host = _detail(qtbot)
+    detail = host.detail
+
+    assert detail.team_titles() == ["Bureau technique", "Atelier", "Montage"]
+    assert [button.full_text() for button in detail.person_buttons()] == [
+        "LB",
+        "MR",
+        "JD",
+        "NF",
+        "SG",
+    ]
+    assert all(button.height() >= 44 for button in detail.person_buttons())
+    laura = detail.person_button("lb")
+    assert laura is not None
+    assert laura.absent
+    assert laura.isEnabled()  # away, still possible to pick
+    assert laura.toolTip() == "Laura Bron\nAbsent · Vacances"
+    nicolas = detail.person_button("nf")
+    assert nicolas is not None
+    assert not nicolas.absent
+    assert nicolas.toolTip() == "Nicolas Favre\nOccupé à 67 %"
+    sam = detail.person_button("sg")
+    assert sam is not None
+    assert sam.toolTip() == "Samuel Gay\nLibre"
+
+
+def test_a_click_on_initials_adds_or_removes_the_person(qtbot: Any) -> None:
+    host = _detail(qtbot)
+    detail = host.detail
+    emitted: list[tuple[object, ...]] = []
+    detail.people_changed.connect(lambda *args: emitted.append(args))
+
+    sam, marc, laura = (detail.person_button(rid) for rid in ("sg", "mr", "lb"))
+    assert sam is not None
+    assert marc is not None
+    assert laura is not None
+    _click(qtbot, sam)
+    _click(qtbot, marc)
+    _click(qtbot, laura)
+
+    assert emitted == [("fab", ["sg"], []), ("fab", [], ["mr"]), ("fab", ["lb"], [])]
+
+
+def test_someone_no_longer_on_the_planning_can_still_be_removed(qtbot: Any) -> None:
+    host = _detail(qtbot, FAB.model_copy(update={"assignments": {"mr": {}, "old": {}}}))
+    detail = host.detail
+
+    assert detail.team_titles()[-1] == "Autres"
+    olivier = detail.person_button("old")
+    assert olivier is not None
+    assert olivier.isChecked()
+    with qtbot.waitSignal(detail.people_changed) as blocker:
+        _click(qtbot, olivier)
+    assert blocker.args == ["fab", [], ["old"]]
+
+
+# --------------------------------------------------------------- actions ----
+
+
+def test_footer_actions(qtbot: Any) -> None:
+    host = _detail(qtbot)
     detail = host.detail
     emitted: list[tuple[str, str]] = []
     detail.action_requested.connect(lambda *args: emitted.append(args))
 
-    for key in ("folder", "fiche", "repertoire", "creation", "sortie"):
-        detail.dossier_card.buttons[key].click()
-    assert detail.detach_button.text() == "Détacher JD"
-    detail.detach_button.click()
-    detail.duplicate_button.click()
     detail.unschedule_button.click()
+    detail.duplicate_button.click()
     detail.delete_button.click()
 
-    assert [action for _task_id, action in emitted] == [
-        "folder",
-        "fiche",
-        "repertoire",
-        "creation",
-        "sortie",
-        "detach",
-        "duplicate",
-        "unschedule",
-        "delete",
-    ]
-    assert {task_id for task_id, _action in emitted} == {"fab"}
-    assert detail.focus_resource_id() == "jd"
-
-
-def test_detach_without_a_bar_offers_each_person(qtbot: Any) -> None:
-    host = _detail(qtbot)
-    detail = host.detail
-
-    assert detail.detach_button.text() == "Détacher…"
-    menu = detail.detach_menu()
-    assert [action.text() for action in menu.actions()] == [
-        "Détacher Marc Rey",
-        "Détacher Julien Dubois",
-    ]
-    with qtbot.waitSignal(detail.action_requested) as blocker:
-        menu.actions()[1].trigger()
-    assert blocker.args == ["fab", "detach"]
-    assert detail.focus_resource_id() == "jd"
+    assert emitted == [("fab", "unschedule"), ("fab", "duplicate"), ("fab", "delete")]
+    assert detail.delete_button.property("variant") == "danger"
 
 
 def test_read_only_disables_editing(qtbot: Any) -> None:
@@ -609,251 +783,135 @@ def test_read_only_disables_editing(qtbot: Any) -> None:
         detail.people_changed,
         detail.dates_changed,
         detail.status_changed,
+        detail.action_requested,
     ):
         signal.connect(lambda *args: emitted.append(args))
-    actions: list[tuple[str, str]] = []
-    detail.action_requested.connect(lambda *args: actions.append(args))
 
     assert detail.read_only_label.isVisibleTo(detail)
     assert detail.title_edit.isReadOnly()
+    assert detail.number_edit.isReadOnly()
     assert detail.notes_edit.isReadOnly()
-    assert detail.start_date.isReadOnly()
-    assert not detail.type_combo.isEnabled()
-    assert not detail.start_time.isEnabled()
+    assert not detail.start_row.isEnabled()
+    assert not detail.deadline_row.isEnabled()
     assert not detail.delete_button.isEnabled()
-    assert not detail.add_person_button.isVisibleTo(detail)
-    assert all(not chip.removable for chip in detail.chips())
+    assert not detail.clear_deadline_button.isVisibleTo(detail)
+    assert all(not chip.isEnabled() for chip in detail.type_chips())
+    assert all(not button.isEnabled() for button in detail.person_buttons())
     assert all(not button.isEnabled() for button in detail.status_buttons.buttons())
 
+    detail._toggle_picker("start")  # noqa: SLF001
+    assert detail.open_picker() is None
+    apply_theme(QApplication.instance(), AppearanceConfig(mode="dark"))  # type: ignore[arg-type]
+    assert all(not chip.isEnabled() for chip in detail.type_chips())  # rebuilt, still locked
     _focus(qtbot, detail.title_edit)
     qtbot.keyClicks(detail.title_edit, "x")
     _focus(qtbot, host.other)
-    detail.urgent_check.click()
-    detail.deadline_edit.editingFinished.emit()
+    detail.urgent_button.click()
     qtbot.wait(900)
     assert emitted == []
-    # Opening the dossier stays possible.
-    detail.dossier_card.buttons["folder"].click()
-    assert actions == [("fab", "folder")]
 
 
-def test_multi_selection_edits_every_task(qtbot: Any) -> None:
+def test_multi_selection_edits_every_task_and_shows_mixed_values(qtbot: Any) -> None:
     host = _detail(qtbot)
     detail = host.detail
     emitted: list[tuple[object, ...]] = []
     detail.field_changed.connect(lambda *args: emitted.append(args))
     detail.people_changed.connect(lambda *args: emitted.append(args))
+    detail.status_changed.connect(lambda *args: emitted.append(("status", *args)))
 
-    detail.set_multi(3, {"task_type": "montage", "resource_ids": ["nf"]}, snapshot=_snapshot())
+    detail.set_multi(3, {"resource_ids": ["nf"]}, snapshot=_snapshot())
 
     assert detail.mode() == "multi"
     assert detail.task_id() == ""
     assert detail.multi_label.text() == "3 tâches sélectionnées"
-    assert detail.type_combo.currentData() == "montage"
+    assert _checked_type(detail) is None
+    assert detail.type_mixed.text() == "—"
     assert detail.status_buttons.checkedButton() is None
-    assert detail.urgent_check.checkState() == Qt.CheckState.PartiallyChecked
-    assert [chip.text() for chip in detail.chips()] == ["NF"]
+    assert detail.status_mixed.text() == "—"
+    assert detail.urgent_button.text() == "! Urgent —"
+    assert not detail.urgent_button.isChecked()
+    assert _checked_people(detail) == ["nf"]
+    assert detail.people_count.text() == "1 en commun"
+    assert not detail.number_block.isVisibleTo(detail)
     assert not detail.title_block.isVisibleTo(detail)
-    _choose(qtbot, detail.type_combo, "Livraison")
-    detail.urgent_check.click()
-    detail.chips()[0].remove_requested.emit("nf")
+    assert not detail.dates_block.isVisibleTo(detail)
+    assert not detail.deadline_row.isVisibleTo(detail)
+    assert detail.urgent_button.isVisibleTo(detail)
+    assert not detail.author_label.isVisibleTo(detail)
+    tops = [
+        _top(detail, block)
+        for block in (
+            detail.type_block,
+            detail.deadline_block,
+            detail.people_block,
+            detail.status_block,
+        )
+    ]
+    assert tops == sorted(tops)
+
+    _click(qtbot, _chip(detail, "livraison"))
+    _click(qtbot, detail.urgent_button)
+    nicolas = detail.person_button("nf")
+    assert nicolas is not None
+    _click(qtbot, nicolas)
+    done = detail.status_buttons.button(2)
+    assert done is not None
+    done.click()
 
     assert emitted == [
         (MULTI_SELECTION, "task_type", "livraison"),
         (MULTI_SELECTION, "urgent", True),
         (MULTI_SELECTION, [], ["nf"]),
+        ("status", MULTI_SELECTION, "done"),
     ]
+    assert detail.type_mixed.text() == ""
+    assert detail.urgent_button.text() == "! Urgent"
+    assert detail.status_mixed.text() == ""
 
 
-def test_escape_goes_back_to_the_backlog(qtbot: Any) -> None:
-    host = _detail(qtbot)
+# ----------------------------------------------------------------- night ----
+
+
+NIGHT = _task(
+    "night",
+    title="Aéroport",
+    task_type="montage",
+    start=wall_time(MONDAY, 21, 0),
+    end=wall_time(TUESDAY, 5, 0),
+    assignments={"nf": {}},
+    off_hours=True,
+)
+
+
+def test_night_work_keeps_its_exact_times_and_its_rest(qtbot: Any) -> None:
+    host = _detail(qtbot, NIGHT)
     detail = host.detail
 
-    _focus(qtbot, detail.title_edit)
-    with qtbot.waitSignal(detail.back_requested):
-        qtbot.keyClick(detail.title_edit, Qt.Key.Key_Escape)
+    assert detail.night_button.text() == "Travail de nuit"
+    assert detail.night_button.isChecked()
+    assert detail.start_row.value() == "lun 19 oct · 21:00"
+    assert detail.end_row.value() == "mar 20 oct · 05:00"
+    assert detail.duration_label.text() == "Durée : 8 h (nuit)"
+    assert detail.rest_label.text().startswith("Repos : dès lun ")
+    assert not detail.rest_label.isHidden()
 
-
-def test_the_wheel_over_a_field_without_focus_scrolls_instead_of_editing(qtbot: Any) -> None:
-    host = _detail(qtbot)
-    detail = host.detail
-    emitted: list[tuple[object, ...]] = []
-    detail.field_changed.connect(lambda *args: emitted.append(args))
-    detail.dates_changed.connect(lambda *args: emitted.append(args))
-
-    def values() -> tuple[object, ...]:
-        return (
-            detail.type_combo.currentIndex(),
-            detail.start_time.currentIndex(),
-            detail.end_time.currentIndex(),
-            detail.required_spin.value(),
-            detail.start_date.date(),
-            detail.deadline_edit.date(),
-        )
-
-    before = values()
-    for widget, delta in (
-        (detail.type_combo, -120),
-        (detail.start_time, -120),
-        (detail.end_time, 120),
-        (detail.required_spin, -120),
-        (detail.start_date, 120),
-        (detail.deadline_edit, 120),
-    ):
-        assert widget.focusPolicy() == Qt.FocusPolicy.StrongFocus
-        event = _wheel(widget, delta)
-        assert not event.isAccepted()  # left to the scroll area
-    _focus(qtbot, host.other)
-
-    assert emitted == []
-    assert values() == before
-
-
-def test_arrow_keys_step_a_list_and_save_once_when_it_is_left(qtbot: Any) -> None:
-    host = _detail(qtbot)
-    detail = host.detail
-    dates: list[tuple[object, ...]] = []
-    fields: list[tuple[object, ...]] = []
-    detail.dates_changed.connect(lambda *args: dates.append(args))
-    detail.field_changed.connect(lambda *args: fields.append(args))
-
-    _focus(qtbot, detail.start_time)
-    for _ in range(4):
-        qtbot.keyClick(detail.start_time, Qt.Key.Key_Down)
-    assert detail.start_time.currentText() == "08:30"
-    assert dates == []
-    _focus(qtbot, host.other)
-    # Two hours later, the 27 worked hours end on Thursday at 08:30.
-    assert dates == [("fab", wall_time(MONDAY, 8, 30), wall_time(THURSDAY, 8, 30))]
-
-    _focus(qtbot, detail.type_combo)
-    qtbot.keyClick(detail.type_combo, Qt.Key.Key_Down)
-    assert fields == []
-    qtbot.keyClick(detail.type_combo, Qt.Key.Key_Return)
-    assert len(fields) == 1
-    assert fields[0][:2] == ("fab", "task_type")
-    _focus(qtbot, host.other)
-    assert len(fields) == 1
-
-
-def test_a_refresh_keeps_a_date_a_stepped_list_and_the_person_field(qtbot: Any) -> None:
-    host = _detail(qtbot)
-    detail = host.detail
-
-    _focus(qtbot, detail.deadline_edit)
-    detail.deadline_edit.setDate(QDate(2027, 11, 6))  # typed, not saved yet
-    detail.set_task(FAB, _snapshot(), calendar=GE, now=NOW)
-    assert detail.deadline_edit.date() == QDate(2027, 11, 6)
-
-    detail.add_person_button.click()
-    detail._person_completer.popup().hide()  # noqa: SLF001
-    qtbot.keyClicks(detail.person_edit, "s")
-    detail.set_task(FAB, _snapshot(), calendar=GE, now=NOW)
-    assert detail.person_edit.isVisible()
-    assert detail.person_edit.text() == "s"
-    assert not detail.add_person_button.isVisible()
-    detail.set_task(OTHER, _snapshot(), calendar=GE, now=NOW)  # another task closes it
-    assert not detail.person_edit.isVisible()
-    assert detail.add_person_button.isVisible()
-
-    detail.set_task(FAB, _snapshot(), calendar=GE, now=NOW)
-    _focus(qtbot, detail.end_time)
-    qtbot.keyClick(detail.end_time, Qt.Key.Key_Up)
-    stepped = detail.end_time.currentText()
-    detail.set_task(FAB, _snapshot(), calendar=GE, now=NOW)
-    assert detail.end_time.currentText() == stepped
-    assert detail.end_time.pending()
-    # Showing another task saves the end stepped to on the first one.
+    _click(qtbot, detail.start_row)
+    detail.start_picker.step(1, 1)  # 22:00
     with qtbot.waitSignal(detail.dates_changed) as blocker:
-        detail.set_task(OTHER, _snapshot(), calendar=GE, now=NOW)
-    assert blocker.args == ["fab", wall_time(MONDAY, 6, 30), wall_time(WEDNESDAY, 16, 0)]
+        _click(qtbot, detail.start_row)
+    # Night work keeps its exact times and its real length.
+    assert blocker.args == ["night", wall_time(MONDAY, 22, 0), wall_time(TUESDAY, 6, 0)]
 
 
-def test_without_deadline_the_calendar_opens_on_the_task(qtbot: Any) -> None:
-    host = _detail(qtbot, FAB.model_copy(update={"deadline": None}))
-    edit = host.detail.deadline_edit
-    assert edit.text() == "Aucune"
-
-    qtbot.mouseClick(
-        edit, Qt.MouseButton.LeftButton, pos=QPoint(edit.width() - 10, edit.height() // 2)
-    )
-    calendar = edit.calendarWidget()
-    qtbot.waitUntil(calendar.isVisible)
-    assert (calendar.yearShown(), calendar.monthShown()) == (2026, 10)  # the task ends 21.10
-    calendar.window().hide()
-    host.activateWindow()
-    qtbot.waitUntil(lambda: QApplication.activeWindow() is host)
-
-    _focus(qtbot, edit)
-    qtbot.keyClick(edit, Qt.Key.Key_Up)
-    assert edit.date() == QDate(2026, 10, 21)
-    with qtbot.waitSignal(host.detail.field_changed) as blocker:
-        _focus(qtbot, host.other)
-    assert blocker.args == ["fab", "deadline", date(2026, 10, 21)]
-
-    card = _detail(qtbot, CARD).detail.deadline_edit
-    assert card.blank_date == QDate(2026, 10, 22)  # no dates: today
-
-
-def test_someone_away_part_of_the_task_is_not_free() -> None:
-    wednesday = Absence(id="wed", resource_id="lb", first_day=WEDNESDAY, last_day=WEDNESDAY)
-    one_day = PlanningSnapshot(
-        tasks={FAB.id: FAB},
-        resources=RESOURCES,
-        absences={wednesday.id: wednesday},
-        meta=PlanningMeta(),
-    )
-    two_days = Absence(id="two", resource_id="lb", first_day=MONDAY, last_day=TUESDAY)
-    away = PlanningSnapshot(
-        tasks={FAB.id: FAB},
-        resources=RESOURCES,
-        absences={two_days.id: two_days},
-        meta=PlanningMeta(),
-    )
-
-    assert availability(one_day, RESOURCES["lb"], FAB, GE) == "absent mercredi 21.10"
-    assert availability(away, RESOURCES["lb"], FAB, GE) == "absent en partie"
-    assert availability(one_day, RESOURCES["sg"], FAB, GE) == "libre"
-    assert availability(_snapshot(), RESOURCES["lb"], FAB, GE) == "absent"
-
-
-def test_people_away_part_of_the_time_come_after_the_free_ones(qtbot: Any) -> None:
-    host = _detail(qtbot)
+def test_the_night_toggle_asks_for_night_work(qtbot: Any) -> None:
+    host = _detail(qtbot, OTHER)
     detail = host.detail
-    wednesday = Absence(id="wed", resource_id="nf", first_day=WEDNESDAY, last_day=WEDNESDAY)
-    snapshot = PlanningSnapshot(
-        tasks={task.id: task for task in (FAB, CARD, OTHER)},
-        resources=RESOURCES,
-        absences={LB_OFF.id: LB_OFF, wednesday.id: wednesday},
-        meta=PlanningMeta(),
-    )
 
-    detail.set_task(FAB, snapshot, calendar=GE, now=NOW)
-
-    assert detail.person_choices() == [
-        "SG  Samuel Gay · Montage · libre",
-        "NF  Nicolas Favre · Montage · absent mercredi 21.10",
-        "LB  Laura Bron · Bureau technique · absent",
-    ]
-
-
-def test_a_selection_shifts_by_working_days(qtbot: Any) -> None:
-    host = _detail(qtbot)
-    detail = host.detail
-    emitted: list[tuple[str, int]] = []
-    detail.shift_requested.connect(lambda *args: emitted.append(args))
-
-    assert not detail.shift_block.isVisibleTo(detail)
-    detail.set_multi(3, {"task_type": "montage"}, snapshot=_snapshot())
-    assert detail.shift_block.isVisibleTo(detail)
-    detail.later_button.click()
-    detail.shift_spin.setValue(3)
-    detail.earlier_button.click()
-    assert emitted == [(MULTI_SELECTION, 1), (MULTI_SELECTION, -3)]
-
-    detail.set_multi(3, {}, snapshot=_snapshot(), read_only=True)
-    assert not detail.later_button.isEnabled()
-    assert not detail.shift_spin.isEnabled()
+    assert not detail.night_button.isChecked()
+    assert detail.rest_label.isHidden()
+    with qtbot.waitSignal(detail.field_changed) as blocker:
+        detail.night_button.click()
+    assert blocker.args == ["other", "off_hours", True]
 
 
 # ----------------------------------------------------------- side panel ----
@@ -1081,8 +1139,6 @@ def test_screenshots_of_both_faces(qtbot: Any, qapp: QApplication, mode: str) ->
         _snapshot(FAB, OTHER, *cards),
         calendar=GE,
         project=PROJECTS[0],
-        findings=FINDINGS,
-        focus_resource_id="jd",
         now=NOW,
     )
     side.show_detail()
@@ -1090,6 +1146,12 @@ def test_screenshots_of_both_faces(qtbot: Any, qapp: QApplication, mode: str) ->
     side.detail.scroll_area.widget().adjustSize()
     qtbot.wait(50)
     _save(side, f"detail_{mode}")
+
+    side.detail.start_row.click()
+    side.detail.start_picker.step(1, 1)
+    qtbot.wait(20)
+    _save(side, f"detail_rolls_{mode}")
+    side.detail.flush()
 
     side.detail.set_multi(
         4,
@@ -1104,45 +1166,3 @@ def test_screenshots_of_both_faces(qtbot: Any, qapp: QApplication, mode: str) ->
     side.set_new_cards(has_new=True)
     qtbot.wait(20)
     _save(side, f"rail_{mode}")
-
-
-NIGHT = _task(
-    "night",
-    title="Aéroport",
-    task_type="montage",
-    start=wall_time(MONDAY, 21, 0),
-    end=wall_time(TUESDAY, 5, 0),
-    assignments={"nf": {}},
-    off_hours=True,
-)
-
-
-def test_night_work_offers_every_half_hour_and_its_rest(qtbot: Any) -> None:
-    host = _detail(qtbot, NIGHT)
-    detail = host.detail
-
-    assert detail.night_check.text() == "Travail de nuit"
-    assert detail.night_check.isChecked()
-    assert _texts(detail.start_time)[0] == "00:00"
-    assert _texts(detail.start_time)[-1] == "23:30"
-    assert detail.start_time.currentText() == "21:00"
-    assert detail.end_time.currentText() == "05:00"
-    assert detail.duration_label.text() == "Durée : 8 h (nuit)"
-    assert detail.rest_label.text().startswith("Repos : dès lun ")
-    assert not detail.rest_label.isHidden()
-
-    with qtbot.waitSignal(detail.dates_changed) as blocker:
-        _choose(qtbot, detail.start_time, "22:00")
-    # Night work keeps its exact times and its real length.
-    assert blocker.args == ["night", wall_time(MONDAY, 22, 0), wall_time(TUESDAY, 6, 0)]
-
-
-def test_the_night_checkbox_asks_for_night_work(qtbot: Any) -> None:
-    host = _detail(qtbot, OTHER)
-    detail = host.detail
-
-    assert not detail.night_check.isChecked()
-    assert detail.rest_label.isHidden()
-    with qtbot.waitSignal(detail.field_changed) as blocker:
-        detail.night_check.click()
-    assert blocker.args == ["other", "off_hours", True]

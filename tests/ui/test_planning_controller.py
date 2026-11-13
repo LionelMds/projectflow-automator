@@ -643,12 +643,11 @@ async def test_quick_entry_routes_to_unassigned_backlog_and_absence(
     assert (delivery.id, UNASSIGNED_ROW_ID) in bar_keys(tab)
 
     before = set(snapshot_of(controller).tasks)
-    tab.quick.set_text("129 fabrication main courante 3j 2p")
+    tab.quick.set_text("129 fabrication main courante 3j")
     assert tab.quick.submit()
     card = created_task(controller, before)
     assert card.start is None
     assert card.estimate_days == 3
-    assert card.required_people == 2
     controller.refresh_now()
     assert card.id in [item.task_id for item in tab.backlog.cards()]
     assert tab.backlog.current_card_id() == card.id
@@ -824,7 +823,7 @@ async def test_detail_panel_edits_go_through_commands(
 ) -> None:
     store = tmp_path / "store"
     await seed_store(store)
-    controller, tab, hooks = make_controller(qtbot, make_config(store))
+    controller, tab, _hooks = make_controller(qtbot, make_config(store))
     await started(controller)
     service = controller.service
     assert service is not None
@@ -832,7 +831,6 @@ async def test_detail_panel_edits_go_through_commands(
     tab.grid.detail_requested.emit("t-fab", "mre")
     assert tab.side.face() == "detail"
     assert tab.detail.task_id() == "t-fab"
-    assert tab.detail.focus_resource_id() == "mre"
 
     tab.detail.field_changed.emit("t-fab", "title", "Fabrication garde-corps inox")
     assert snapshot_of(controller).tasks["t-fab"].title == "Fabrication garde-corps inox"
@@ -844,16 +842,16 @@ async def test_detail_panel_edits_go_through_commands(
     tab.detail.people_changed.emit("t-fab", ["psi"], [])
     assert snapshot_of(controller).tasks["t-fab"].assignee_ids == ("mre", "jdu", "psi")
 
-    tab.detail.action_requested.emit("t-fab", "detach")
+    # « Détacher » is no longer in the detail: the right click of a bar keeps it.
+    menu = controller.bar_menu("t-fab", "mre")
+    assert menu is not None
+    next(action for action in menu.actions() if action.text() == "Détacher MRE").trigger()
     fab = snapshot_of(controller).tasks["t-fab"]
     assert fab.assignee_ids == ("jdu", "psi")
     assert any(
         item.assignee_ids == ("mre",) and item.id != "t-fab" and item.title == fab.title
         for item in snapshot_of(controller).live_tasks()
     )
-
-    tab.detail.action_requested.emit("t-fab", "folder")
-    assert ("folder", "2026-118") in hooks.opened
     await close(controller)
 
 

@@ -73,7 +73,9 @@ def test_demo_planning_has_every_kind_of_situation() -> None:
     assert any(len(t.assignments) == 2 for t in scheduled)
     unassigned = [t for t in scheduled if not t.assignments]
     assert [t.task_type for t in unassigned] == ["livraison"]
-    assert any(t.required_people > len(t.assignments) > 0 for t in scheduled)
+    assert any(len(t.assignments) == 3 for t in scheduled)
+    # No « Requis » any more: every task keeps the model's default.
+    assert all(t.required_people == 1 for t in tasks)
     assert any(by_id[r].is_subcontractor for t in scheduled for r in t.assignments)
     # Signed « initiales · poste », as every change of the shared planning.
     assert all(d.created_by.label and d.created_at for d in documents)

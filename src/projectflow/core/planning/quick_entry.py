@@ -75,7 +75,6 @@ TokenKind = Literal[
     "part",
     "time",
     "duration",
-    "people",
     "provisional",
     "urgent",
     "deadline",
@@ -289,7 +288,6 @@ _START_TIME_RE = re.compile(
     r"(?:a\s+partir\s+de|a|des|vers)\s+(?P<h>\d{1,2})\s?[h:](?P<m>\d{2})?" + _END
 )
 _CLOCK_RE = re.compile(r"(?P<h>\d{1,2}):(?P<m>\d{2})" + _END)
-_PEOPLE_RE = re.compile(r"(?P<n>\d{1,2})\s?(?:personnes?|pers\.?|p)" + _END)
 # "1j½", "1 j ½" (as format_days writes it), "1 ½ j", "1 1/2 j", "1 jour et demi".
 _DAYS_RE = re.compile(
     r"(?:(?P<n>\d+(?:[.,]\d+)?)(?P<h1>\s?½|\s1/2)?|(?P<h0>½|1/2|demi-?))"
@@ -361,7 +359,7 @@ class Token:
     ``value`` is the normalised meaning: dossier number, resource id (candidate ids joined
     by commas when ambiguous), team key, type key, absence reason, ISO day or
     ``first/last`` days, ``HH:MM`` or ``HH:MM-HH:MM``, minutes, working days followed by
-    ``j`` (``1.5j``), people count, part of day.
+    ``j`` (``1.5j``), part of day.
     """
 
     kind: TokenKind
@@ -406,7 +404,6 @@ class ParsedEntry:
     start: WallTime | None
     end: WallTime | None
     estimate_minutes: int
-    required_people: int
     provisional: bool
     urgent: bool
     deadline: date | None
@@ -439,7 +436,6 @@ def _unreadable_entry(text: str) -> ParsedEntry:
         start=None,
         end=None,
         estimate_minutes=0,
-        required_people=1,
         provisional=False,
         urgent=False,
         deadline=None,
@@ -782,7 +778,6 @@ class _Parser:
         # Typed durations: worked minutes of the hours, and working days as half days.
         self.durations: list[int] = []
         self.half_days = 0
-        self.required: int | None = None
         self.provisional = False
         self.urgent = False
         self.deadline: date | None = None
@@ -828,7 +823,6 @@ class _Parser:
             start=start,
             end=end,
             estimate_minutes=estimate,
-            required_people=self.required or max(1, len(people)),
             provisional=self.provisional,
             urgent=self.urgent,
             deadline=self.deadline,
@@ -935,7 +929,6 @@ class _Parser:
             self._scan_date,
             self._scan_time_range,
             self._scan_start_time,
-            self._scan_people_count,
             self._scan_duration,
             self._scan_bare_hour,
             self._scan_part,
@@ -1216,17 +1209,6 @@ class _Parser:
         else:
             self.start_minute, self.end_minute = first, last
         return self._add("time", *match.span(), value, message=message)
-
-    def _scan_people_count(self, position: int) -> int | None:
-        match = _PEOPLE_RE.match(self.folded, position)
-        if match is None:
-            return None
-        count = int(match["n"])
-        if count < 1:
-            message = f"Nombre de personnes invalide : {self._source(*match.span())}"
-            return self._add("people", *match.span(), ambiguous=True, message=message)
-        self.required = self.required or count
-        return self._add("people", *match.span(), str(count))
 
     def _scan_duration(self, position: int) -> int | None:
         days = _DAYS_RE.match(self.folded, position)
@@ -1852,8 +1834,6 @@ class _Parser:
             typed = self._typed_duration()
             if typed:
                 parts.append(typed)
-        if entry.required_people > max(1, len(entry.resource_ids)):
-            parts.append(f"{entry.required_people} pers.")
         if entry.deadline is not None:
             parts.append(f"avant le {self._day_label(entry.deadline)}")
         parts.extend(

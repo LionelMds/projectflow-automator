@@ -3,7 +3,7 @@
 A bar is one task on one row: ``(task_id, resource_id)``, with None for « Non affecté ».
 Findings never block an edit; they only tell the planner what to look at: a person
 absent during the task, a task starting on a day nobody works, a person booked beyond a
-full day, a task missing people, a dossier that does not exist.
+full day, a dossier that does not exist.
 """
 
 from __future__ import annotations
@@ -33,15 +33,12 @@ from projectflow.core.planning.walltime import (
     wall_date,
 )
 
-FindingKind = Literal[
-    "absence", "non_worked", "overload", "rest", "missing_people", "unknown_project"
-]
+FindingKind = Literal["absence", "non_worked", "overload", "rest", "unknown_project"]
 FINDING_KINDS: tuple[FindingKind, ...] = (
     "absence",
     "non_worked",
     "overload",
     "rest",
-    "missing_people",
     "unknown_project",
 )
 FINDING_LABELS: Mapping[FindingKind, str] = {
@@ -49,7 +46,6 @@ FINDING_LABELS: Mapping[FindingKind, str] = {
     "non_worked": "Jour non travaillé",
     "overload": "Surcharge",
     "rest": "Repos insuffisant",
-    "missing_people": "Personnes manquantes",
     "unknown_project": "Dossier introuvable",
 }
 REST_MESSAGE = f"Repos de {MIN_REST_MINUTES // MINUTES_PER_HOUR} h non respecté"
@@ -267,20 +263,6 @@ def _rest_findings(
 def _task_findings(task: PlanningTask, project_exists: ProjectExists | None) -> list[Finding]:
     """Return the findings of the task itself, repeated on each of its bars."""
     findings: list[Finding] = []
-    missing = task.required_people - len(task.assignments)
-    if missing > 0:
-        plural = "s" if missing > 1 else ""
-        findings.append(
-            Finding(
-                kind="missing_people",
-                task_id=task.id,
-                resource_id=None,
-                message=(
-                    f"{missing} personne{plural} manquante{plural} "
-                    f"sur {task.required_people} requise{'s' if task.required_people > 1 else ''}"
-                ),
-            )
-        )
     number = task.project_number.strip()
     if number and project_exists is not None and not project_exists(number):
         findings.append(

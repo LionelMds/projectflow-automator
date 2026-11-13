@@ -43,7 +43,6 @@ from projectflow.ui.planning.colors import (
     BarColors,
     mix,
     ok_color,
-    warn_color,
 )
 from projectflow.ui.planning.grid_model import (
     AbsenceBlock,
@@ -113,8 +112,6 @@ ABSENCE_LABEL_MIN_HEIGHT = 16.0
 ABSENCE_CHIP_HEIGHT = 16.0
 ABSENCE_CHIP_PADDING = 10.0
 DONE_OPACITY = 0.55
-OPEN_PLACE_FONT_PX = 11
-OPEN_PLACE_PADDING = 6.0
 GHOST_OPACITY = 0.6
 FLASH_MS = 600
 FLASH_TICK_MS = 30
@@ -290,8 +287,6 @@ class BarStyle:
     ghost_fill: QColor
     err: QColor
     err_bg: QColor
-    warn: QColor
-    warn_bg: QColor
     ok: QColor
     badge_bg: QColor
     badge_text: QColor
@@ -353,7 +348,6 @@ def build_bar_style(theme: Theme, *, compact: bool, growth: int = 0) -> BarStyle
     sub_font = body_font(11 + growth)
     badge_font = body_font(10, QFont.Weight.DemiBold)
     dark = theme.is_dark
-    warn = QColor(warn_color(dark=dark))
     return BarStyle(
         theme=theme,
         compact=compact,
@@ -375,8 +369,6 @@ def build_bar_style(theme: Theme, *, compact: bool, growth: int = 0) -> BarStyle
         ghost_fill=theme.color("accent", 0.16),
         err=theme.color("err"),
         err_bg=QColor(mix(theme.tokens["bg"], theme.tokens["err"], 0.14)),
-        warn=warn,
-        warn_bg=QColor(mix(theme.tokens["bg"], warn.name(), 0.16)),
         ok=QColor(ok_color(dark=dark)),
         badge_bg=theme.color("bg"),
         badge_text=theme.color("neutral-800"),
@@ -460,42 +452,7 @@ def paint_background(
     _paint_day_lines(painter, model, rect, style)
     _paint_absences(painter, model, rows, rect, style)
     _paint_rests(painter, model, rows, rect, style)
-    _paint_open_places(painter, model, rows, rect, style)
     _paint_row_lines(painter, rows, rect, style)
-
-
-def _paint_open_places(
-    painter: QPainter,
-    model: GridModel,
-    rows: Sequence[RowLayout],
-    rect: QRectF,
-    style: GridStyle,
-) -> None:
-    """Dashed places « 5212 · à pourvoir (1) » of the tasks short of people."""
-    row = next((item for item in rows if item.resource_id == UNASSIGNED_ROW_ID), None)
-    if row is None or not model.open_places:
-        return
-    theme = style.theme
-    pen = make_pen(theme.color("text", 0.40), 1.0, Qt.PenStyle.DashLine)
-    font = body_font(OPEN_PLACE_FONT_PX, QFont.Weight.DemiBold)
-    painter.save()
-    painter.setFont(font)
-    metrics = painter.fontMetrics()
-    for place in model.open_places:
-        box = bar_rect(model, row, place.start, place.end, place.lane)
-        if not box.intersects(rect):
-            continue
-        painter.fillRect(box, theme.color("bg"))
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(box.adjusted(0.5, 0.5, -0.5, -0.5))
-        inner = box.adjusted(OPEN_PLACE_PADDING, 0, -OPEN_PLACE_PADDING, 0)
-        text = metrics.elidedText(place.text, Qt.TextElideMode.ElideRight, int(inner.width()))
-        painter.setPen(theme.color("neutral-800"))
-        painter.drawText(
-            inner, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text
-        )
-    painter.restore()
 
 
 def _paint_alternate(painter: QPainter, model: GridModel, rect: QRectF, style: GridStyle) -> None:
@@ -1041,9 +998,8 @@ def _paint_badges(painter: QPainter, text: BarText, style: BarStyle) -> None:
             painter.fillRect(rect, style.err_bg)
             _paint_triangle(painter, rect, style.err)
             continue
-        warn = badge.kind == "people"
-        painter.fillRect(rect, style.warn_bg if warn else style.badge_bg)
-        painter.setPen(style.warn if warn else style.badge_text)
+        painter.fillRect(rect, style.badge_bg)
+        painter.setPen(style.badge_text)
         painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), badge.text)
 
 

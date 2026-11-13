@@ -91,7 +91,7 @@ BACKLOG_SOURCE = "backlog"
 """``source`` of the task drags that leave « À planifier » (``grid.task_mime_data``)."""
 
 BacklogGroup = Literal["none", "dossier", "type"]
-ChipKind = Literal["urgent", "people", "foreseen", "deadline", "soon", "late", "released"]
+ChipKind = Literal["urgent", "foreseen", "deadline", "soon", "late", "released"]
 DeadlineState = Literal["none", "normal", "soon", "late"]
 CardAction = Literal["detail", "duplicate", "folder", "delete"]
 
@@ -469,8 +469,6 @@ def _card(
     chips: list[CardChip] = []
     if task.urgent:
         chips.append(CardChip("Urgent", "urgent", "Tâche urgente"))
-    if task.required_people > 1:
-        chips.append(CardChip(f"{task.required_people} pers.", "people", "Personnes requises"))
     for resource_id, person in zip(task.assignments, foreseen, strict=True):
         text = person.short_label if person is not None else "?"
         name = person.name if person is not None else resource_id

@@ -196,8 +196,8 @@ def test_card_content_follows_the_prototype() -> None:
     ]
     barriere = cards["barriere"]
     assert barriere.origin == "par SBE · BUREAU-2 · il y a 5 min"
+    # Its ``required_people`` of 2 makes no « 2 pers. » chip: only the people foreseen.
     assert [(chip.text, chip.kind) for chip in barriere.chips] == [
-        ("2 pers.", "people"),
         ("NF", "foreseen"),
         ("SG", "foreseen"),
         ("avant 28.10", "soon"),

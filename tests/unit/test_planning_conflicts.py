@@ -250,7 +250,7 @@ def test_unassigned_bar_uses_the_default_calendar() -> None:
         first_day=CHRISTMAS,
         last_day=CHRISTMAS,
     )
-    assert [finding.kind for finding in found[("t", None)]] == ["non_worked", "missing_people"]
+    assert [finding.kind for finding in found[("t", None)]] == ["non_worked"]
 
 
 # ----------------------------------------------------------- overload ----
@@ -328,26 +328,14 @@ def test_overload_outside_the_period_still_marks_a_bar_crossing_it() -> None:
 # ------------------------------------------------------- task findings ----
 
 
-def test_missing_people_on_every_bar_and_on_the_unassigned_row() -> None:
+def test_people_required_by_a_task_are_never_a_finding() -> None:
+    # ``required_people`` stays in the documents only: nothing reports a task short of people.
     found = findings(
         make_task("two", at(MON, 6, 30), at(MON, 12), "anna", required_people=2),
         make_task("nobody", at(TUE, 6, 30), at(TUE, 12)),
         make_task("crew", at(WED, 6, 30), at(WED, 12), required_people=3),
     )
-    assert found[("two", "anna")] == [
-        Finding(
-            kind="missing_people",
-            task_id="two",
-            resource_id="anna",
-            message="1 personne manquante sur 2 requises",
-        )
-    ]
-    assert messages(found, ("nobody", None), "missing_people") == [
-        "1 personne manquante sur 1 requise"
-    ]
-    assert messages(found, ("crew", None), "missing_people") == [
-        "3 personnes manquantes sur 3 requises"
-    ]
+    assert found == {}
 
 
 def test_unknown_dossier_is_reported_on_each_bar() -> None:
@@ -369,7 +357,11 @@ def test_unknown_dossier_is_reported_on_each_bar() -> None:
 def test_findings_keep_a_stable_order_on_a_bar() -> None:
     found = findings(
         make_task(
-            "t", at(CHRISTMAS, 6, 30), at(date(2026, 12, 28), 16, 30), "anna", required_people=2
+            "t",
+            at(CHRISTMAS, 6, 30),
+            at(date(2026, 12, 28), 16, 30),
+            "anna",
+            project_number="2026-9999",
         ),
         make_task("u", at(date(2026, 12, 28), 6, 30), at(date(2026, 12, 28), 16, 30), "anna"),
         absence("vac", "anna", date(2026, 12, 28)),
@@ -378,15 +370,17 @@ def test_findings_keep_a_stable_order_on_a_bar() -> None:
         project_exists=lambda _number: False,
     )
     kinds = [finding.kind for finding in found[("t", "anna")]]
-    assert kinds == ["absence", "non_worked", "overload", "missing_people"]
+    assert kinds == ["absence", "non_worked", "overload", "unknown_project"]
 
 
 def test_only_live_scheduled_tasks_of_the_period_are_considered() -> None:
+    unknown = "2026-9999"
     found = findings(
-        make_task("next", at(NEXT_MON, 6, 30), at(NEXT_MON, 12), required_people=2),
-        make_task("gone", at(MON, 6, 30), at(MON, 12), required_people=2, deleted_at="x"),
-        PlanningTask(id="card", title="card", required_people=3),
-        make_task("edge", at(FRI, 6, 30), at(NEXT_MON, 10), required_people=2),
+        make_task("next", at(NEXT_MON, 6, 30), at(NEXT_MON, 12), project_number=unknown),
+        make_task("gone", at(MON, 6, 30), at(MON, 12), project_number=unknown, deleted_at="x"),
+        PlanningTask(id="card", title="card", project_number=unknown),
+        make_task("edge", at(FRI, 6, 30), at(NEXT_MON, 10), project_number=unknown),
+        project_exists=lambda _number: False,
     )
     assert set(found) == {("edge", None)}
 

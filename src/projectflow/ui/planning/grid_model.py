@@ -27,7 +27,6 @@ from projectflow.core.planning.layout import (
     Density,
     GridRows,
     RowKind,
-    RowLayout,
     TaskSpan,
     layout_rows,
     row_ids,
@@ -70,7 +69,7 @@ from projectflow.core.planning.walltime import (
 )
 from projectflow.ui.planning.colors import BarColors, ColorBy, bar_colors
 
-BadgeKind = Literal["night", "conflict", "people", "shared"]
+BadgeKind = Literal["night", "conflict", "shared"]
 BarKey = tuple[str, str]
 """``(task_id, row_id)`` of one bar; the row id of « Non affecté » is ``UNASSIGNED_ROW_ID``."""
 ProjectExists = Callable[[str], bool]
@@ -101,15 +100,11 @@ ARROW = "→"
 HALF = "½"
 CONFLICT_GLYPH = "▲"
 UNASSIGNED_SUBTITLE = "dates sans personne"
-OPEN_PLACE_PREFIX = "à-pourvoir:"
-"""Lane key of a task's « à pourvoir » place in « Non affecté » (never a task id)."""
-OPEN_PLACE_TEXT = "à pourvoir"
 YEAR_DIGITS = 4
 MIN_NUMBER_PARTS = 2
 CENTURY = 100
 
 WEEKDAY_SHORT = ("lun", "mar", "mer", "jeu", "ven", "sam", "dim")
-_PEOPLE_FINDING = "missing_people"
 RECURRING_PREFIX = "recurring:"
 """Lead of the ``absence_id`` of a recurring day off, never a document id."""
 _RECURRING_PARTS = 4
@@ -144,7 +139,7 @@ def column_tinted(view: str, day: date) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Badge:
-    """A small tag at the top right of a bar: ``▲`` conflict, ``n/m`` people, ``TIMES N`` shared."""
+    """A small tag at the top right of a bar: ``▲`` conflict, ``TIMES N`` shared."""
 
     kind: BadgeKind
     text: str
@@ -178,7 +173,7 @@ class BarData:
     people: tuple[str, ...] = ()
     """Initials (or names) of every assignee, in order."""
     findings: tuple[str, ...] = ()
-    """Messages of every finding of the bar, missing people included."""
+    """Messages of every finding of the bar."""
     urgent: bool = False
     cut_left: bool = False
     cut_right: bool = False
@@ -204,27 +199,6 @@ class BarData:
     @property
     def has_conflict(self) -> bool:
         return any(badge.kind == "conflict" for badge in self.badges)
-
-
-@dataclass(frozen=True, slots=True)
-class OpenPlace:
-    """Places still to fill on a task that needs more people, shown in « Non affecté ».
-
-    Drawn dashed as « 5212 · à pourvoir (1) » for the task's dates; not a bar: nothing
-    is selected, moved or deleted through it.
-    """
-
-    task_id: str
-    start: WallTime
-    end: WallTime
-    lane: int
-    number: str
-    title: str
-    missing: int
-
-    @property
-    def text(self) -> str:
-        return f"{self.number or self.title} · {OPEN_PLACE_TEXT} ({self.missing})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,8 +330,6 @@ class GridModel:
     day_cache: dict[WorkCalendar, tuple[DayInfo, ...]] = field(
         default_factory=dict, compare=False, repr=False
     )
-    open_places: tuple[OpenPlace, ...] = ()
-    """Tasks short of people: their places « à pourvoir » in the « Non affecté » row."""
     rests: tuple[RestBlock, ...] = ()
     """Rest of 8 h around the nights, on the row of each assignee."""
     rests_by_row: Mapping[str, tuple[RestBlock, ...]] = field(
@@ -731,22 +703,11 @@ def _badges(
     badges: list[Badge] = []
     if task.off_hours:
         badges.append(Badge(kind="night", text="", tooltip=NIGHT_TOOLTIP))
-    problems = [finding.message for finding in findings if finding.kind != _PEOPLE_FINDING]
+    problems = [finding.message for finding in findings]
     if problems:
         badges.append(Badge(kind="conflict", text=CONFLICT_GLYPH, tooltip="\n".join(problems)))
     assigned = len(task.assignments)
-    # A plain task of « Non affecté » obviously misses its one person: no « 0/1 » tag.
-    if assigned < task.required_people and (assigned or task.required_people > 1):
-        plural = "s" if task.required_people > 1 else ""
-        badges.append(
-            Badge(
-                kind="people",
-                text=f"{assigned}/{task.required_people}",
-                tooltip=f"{assigned} personne{'s' if assigned > 1 else ''} affectée"
-                f"{'s' if assigned > 1 else ''} sur {task.required_people} requise{plural}",
-            )
-        )
-    if assigned > 1 and not any(badge.kind == "people" for badge in badges):
+    if assigned > 1:
         badges.append(
             Badge(
                 kind="shared",
@@ -1063,12 +1024,8 @@ def build_grid_model(
     spans: dict[str, list[TaskSpan]] = spans_by_row(
         tasks, shown={resource.id for resource in resources}
     )
-    places = _open_place_spans(tasks, spans)
-    if places:
-        # After the dated tasks without anybody: they keep their lanes.
-        spans.setdefault(UNASSIGNED_ROW_ID, []).extend(places)
     if not night_axis:
-        spans, places = _night_columns(spans, places, snapshot, scale)
+        spans = _night_columns(spans, snapshot, scale)
     ids = _visible_row_ids(visible, collapsed)
     rows = _shrink_empty_unassigned(layout_rows(ids, spans, density=density, window=window), spans)
     laid_out = frozenset(row.resource_id for row in rows if row.kind == "resource")
@@ -1091,13 +1048,6 @@ def build_grid_model(
         for row in rows
         if row.kind != "team"
         for span in spans.get(row.resource_id, ())
-        if not span.task_id.startswith(OPEN_PLACE_PREFIX)
-    )
-    unassigned_row = rows.get(UNASSIGNED_ROW_ID)
-    open_places = (
-        tuple(_open_place(span, unassigned_row, snapshot, today.year) for span in places)
-        if unassigned_row is not None
-        else ()
     )
     shown = {resource.id: resource for resource in visible if resource.id in laid_out}
     absences = tuple(_absences(snapshot, scale, shown, calendar_for))
@@ -1122,7 +1072,7 @@ def build_grid_model(
                 collapsed=collapsed,
                 scale=scale,
                 calendar_for=calendar_for,
-                unassigned_count=len(by_row.get(UNASSIGNED_ROW_ID, ())) + len(open_places),
+                unassigned_count=len(by_row.get(UNASSIGNED_ROW_ID, ())),
                 tasks_by_row=_by_assignee(tasks),
             )
         ),
@@ -1141,7 +1091,6 @@ def build_grid_model(
         bars_by_task=MappingProxyType(_group(bars, lambda bar: bar.task_id)),
         bars_by_key=MappingProxyType({bar.key: bar for bar in bars}),
         absences_by_row=MappingProxyType(_group_absences(absences)),
-        open_places=open_places,
         rests=rests,
         rests_by_row=MappingProxyType(_group_rests(rests)),
         zoom=clamp_zoom(zoom),
@@ -1159,21 +1108,19 @@ def _has_night(snapshot: PlanningSnapshot, day: date) -> bool:
 
 def _night_columns(
     spans: Mapping[str, Sequence[TaskSpan]],
-    places: Sequence[TaskSpan],
     snapshot: PlanningSnapshot,
     scale: TimeScale,
-) -> tuple[dict[str, list[TaskSpan]], list[TaskSpan]]:
+) -> dict[str, list[TaskSpan]]:
     """Spans with every night over its evening's column, so that it takes a lane there."""
 
     def placed(span: TaskSpan) -> TaskSpan:
-        task = snapshot.tasks.get(span.task_id.removeprefix(OPEN_PLACE_PREFIX))
+        task = snapshot.tasks.get(span.task_id)
         if task is None or not task.off_hours:
             return span
         start, end = column_span(scale, night_day(span.start))
         return TaskSpan(task_id=span.task_id, start=start, end=end)
 
-    moved = {row_id: [placed(span) for span in items] for row_id, items in spans.items()}
-    return moved, [placed(span) for span in places]
+    return {row_id: [placed(span) for span in items] for row_id, items in spans.items()}
 
 
 def _rests(
@@ -1204,38 +1151,6 @@ def _rests(
                         )
                     )
     return sorted(blocks, key=lambda block: (block.row_id, block.start, block.end))
-
-
-def _open_place_spans(
-    tasks: Iterable[PlanningTask], spans: Mapping[str, Sequence[TaskSpan]]
-) -> list[TaskSpan]:
-    """Spans of the places to fill: tasks with someone, but fewer than required.
-
-    A task already on « Non affecté » (nobody, or nobody shown) is there as itself.
-    """
-    unassigned = {span.task_id for span in spans.get(UNASSIGNED_ROW_ID, ())}
-    return [
-        TaskSpan(task_id=f"{OPEN_PLACE_PREFIX}{task.id}", start=task.start, end=task.end)
-        for task in sorted(tasks, key=lambda item: (item.created_at, item.id))
-        if not task.deleted
-        and task.start is not None
-        and task.end is not None
-        and 0 < len(task.assignments) < task.required_people
-        and task.id not in unassigned
-    ]
-
-
-def _open_place(span: TaskSpan, row: RowLayout, snapshot: PlanningSnapshot, year: int) -> OpenPlace:
-    task = snapshot.tasks[span.task_id.removeprefix(OPEN_PLACE_PREFIX)]
-    return OpenPlace(
-        task_id=task.id,
-        start=span.start,
-        end=span.end,
-        lane=row.lanes.get(span.task_id, 0),
-        number=short_number(task.project_number, year) if task.project_number else "",
-        title=task.title or task.project_cache.designation,
-        missing=task.required_people - len(task.assignments),
-    )
 
 
 def _shrink_empty_unassigned(rows: GridRows, spans: Mapping[str, Sequence[TaskSpan]]) -> GridRows:

@@ -395,7 +395,7 @@ consultation seule et se synchronise de nouveau dès le retour du réseau.
   - Sans jour : carte dans `À planifier`.
   - `/vac LBI 26.10-30.10`, `/ecole`, `/formation`… : une absence.
   - Durées : `2j` = deux jours ouvrés (« jeu 2j » finit vendredi à 12:00), `½j`, `4h`, `1h30`.
-    Heures : `7h30-11h`, `à 10h`. Personnes requises : `2p`. Provisoire : `?`. Urgent : `!`.
+    Heures : `7h30-11h`, `à 10h`. Provisoire : `?`. Urgent : `!`.
   - `Maj+Entrée` crée la tâche et garde le dossier pour la suivante.
 - **Sur la grille** : double-cliquer une case vide, ou glisser dans le vide sur une ou
   plusieurs lignes, puis taper le dossier et le titre ; la personne et les dates viennent de
@@ -421,8 +421,8 @@ consultation seule et se synchronise de nouveau dès le retour du réseau.
 | `Ctrl+Z` / `Ctrl+Y` | Annule / rétablit ses propres actions, sans limite |
 | Clic droit | Statut, type, affecter, détacher, dossier, fiche, répertoire… |
 
-Une tâche partagée par plusieurs personnes porte le badge `×N` ; `1/2` signale qu'il manque
-une personne. Le statut se lit à la forme : provisoire hachuré, confirmé plein, terminé estompé.
+Une tâche partagée par plusieurs personnes porte le badge `×N`. Le statut se lit à la forme :
+provisoire hachuré, confirmé plein, terminé estompé.
 
 ### Types de tâche
 
@@ -441,8 +441,8 @@ Pour un chantier de nuit (aéroport…), taper par exemple `118 aéroport KDU je
 `mer 21:00-05:00` ou simplement `nuit` (21:00 à 05:00) : la tâche garde ses heures exactes et
 sa durée réelle (« 🌙 nuit jeu 29.10 22:00 → ven 30.10 05:00 · 7 h »). Une nuit commence entre
 18:00 et 06:00 du lundi au jeudi soir et finit à 06:30 au plus tard ; il n'y a pas de travail de
-nuit le vendredi soir ni le week-end. Dans `Détail`, la case `Travail de nuit` bascule une tâche
-(décochée, elle revient sur les horaires de jour). En vue semaine ou mois, une nuit occupe toute
+nuit le vendredi soir ni le week-end. Dans `Détail`, le bouton `Travail de nuit` bascule une
+tâche (relâché, elle revient sur les horaires de jour). En vue semaine ou mois, une nuit occupe toute
 la colonne de son soir, en barre sombre avec une lune et ses heures ; la vue jour passe sur
 24 heures dès qu'une nuit touche le jour affiché. Autour de chaque nuit, la ligne de la personne
 montre 8 h de « Repos » hachuré avant et après : une autre tâche posée dedans est signalée
@@ -463,9 +463,28 @@ légèrement teinté pour mieux se repérer, aussi à l'impression.
 ### Informations du dossier
 
 Le survol d'une barre affiche le dossier : client, contact, désignation, sortie atelier, géré
-par et les autres tâches du dossier. Le panneau `Détail` (double-clic ou `Entrée`) permet de
-tout modifier et d'ouvrir le dossier, la fiche, la ligne du répertoire, le formulaire de
-création ou la sortie dossier.
+par et les autres tâches du dossier. Le clic droit d'une barre ouvre le dossier, la fiche, la
+ligne du répertoire, le formulaire de création ou la sortie dossier.
+
+### Panneau `Détail`
+
+Double-clic ou `Entrée` sur une barre ou une carte. De haut en bas :
+
+- **N° de projet** (`AAAA-XXXX`, vide pour une tâche interne ; `5231` seul complète le numéro)
+  et le client du dossier.
+- **Sous-désignation** : nom libre de la tâche. Vide, la désignation du projet (rappelée
+  dessous) nomme la tâche partout.
+- **Type**, **Début** / **Fin**, **Échéance**, **Urgent** et **Travail de nuit**. Un clic sur
+  `Début`, `Fin` ou `Échéance` déplie des rouleaux (jour, heure, minutes à la demi-heure) :
+  molette, glisser, clic sur une valeur ou flèches `↑` `↓` (`←` `→` changent de rouleau).
+  `Entrée`, `Échap` ou un clic ailleurs les replient et enregistrent. Une fin avant le début
+  s'affiche en rouge et n'est pas enregistrée.
+- **Qui** : toute l'équipe par groupe, en initiales à cocher ; une personne absente sur la
+  période est hachurée (motif au survol) mais reste sélectionnable.
+- **Notes**, puis **Statut** tout en bas. Le pied garde `Renvoyer à planifier`, `Dupliquer` et
+  `Supprimer`.
+
+Il n'y a pas de bouton Enregistrer : chaque champ s'enregistre en quittant le champ.
 
 ### Importer des rendez-vous d'un autre calendrier
 
