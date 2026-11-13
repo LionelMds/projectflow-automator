@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.80
+
 - Planning : onglet « Detail » refait. De haut en bas : le numero de projet en grand
   (AAAA-XXXX, vide pour une tache interne) avec le client, la sous-designation (nom libre de
   la tache ; vide, la designation du projet, rappelee dessous, la nomme), le type en
