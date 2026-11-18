@@ -83,7 +83,6 @@ export function demoPlanning(today: number = todayNumber()): PlanningData {
         start: iso(monday, '06:30'),
         end: iso(monday + 1, '16:30'),
         assignments: { kdu: {}, ych: {} },
-        required_people: 2,
         project_cache: cache(0),
       },
       {
@@ -125,7 +124,6 @@ export function demoPlanning(today: number = todayNumber()): PlanningData {
         start: iso(monday + 1, '06:30'),
         end: iso(monday + 2, '16:30'),
         assignments: { mro: {}, jpe: {} },
-        required_people: 2,
         project_cache: cache(4),
       },
       {
@@ -136,7 +134,6 @@ export function demoPlanning(today: number = todayNumber()): PlanningData {
         start: iso(monday + 3, '06:30'),
         end: iso(monday + 3, '16:30'),
         assignments: { mro: {} },
-        required_people: 2,
         project_cache: cache(2),
       },
       {
@@ -182,7 +179,6 @@ export function demoPlanning(today: number = todayNumber()): PlanningData {
         project_number: number(3),
         title: 'Montage escalier',
         task_type: 'montage',
-        required_people: 2,
         backlog_rank: 'b',
         project_cache: cache(3),
       },

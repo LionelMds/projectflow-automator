@@ -1,13 +1,16 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { CalendarMinus, CalendarPlus, ChevronLeft, ChevronRight, Eye, PenLine, Plus, Trash2, X, Zap } from 'lucide-react-native';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarMinus, CalendarPlus, ChevronLeft, ChevronRight, Eye, ListFilter, PenLine, Plus, Search, Trash2, X } from 'lucide-react-native';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import {
+  Animated,
   AppState,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type GestureResponderEvent,
   type HostInstance,
@@ -50,34 +53,202 @@ import {
   STATUS_LABELS,
   taskLabel,
   taskTypeOf,
+  taskTypesOf,
   type PlanningTask,
   type TaskStatus,
 } from '@/lib/planning/models';
 import { usePlanning } from '@/lib/planning/PlanningContext';
 import { snap } from '@/lib/planning/calendar';
-import { parseDate, todayNumber } from '@/lib/planning/walltime';
-import { buildBoard, DAY_END, DAY_START, NOON, AFTERNOON, UNASSIGNED, type Board, type Column, type Segment, type WeekRow } from '@/lib/planning/week';
+import { dateParts, dayNumber, mondayOf, parseDate, todayNumber, weekday } from '@/lib/planning/walltime';
+import {
+  barParts,
+  buildBoard,
+  DAY_END,
+  DAY_START,
+  NOON,
+  AFTERNOON,
+  UNASSIGNED,
+  weekdaysBetween,
+  type Board,
+  type Column,
+  type Segment,
+  type WeekGroup,
+  type WeekRow,
+} from '@/lib/planning/week';
 import { withDossiers } from '@/lib/planning/dossiers';
 import { useRepertoire } from '@/lib/repertoire/RepertoireContext';
 import { useRestriction } from '@/lib/restriction/RestrictionContext';
 import { useSettings } from '@/lib/settings';
 import { colors, fonts, iconStroke, touch } from '@/theme/tokens';
 
-const NAME_WIDTH = 52;
-const LANE_HEIGHT = 30;
-const BAR_HEIGHT = 26;
+const NAME_WIDTH = 44;
+const CONTENT_PAD = 10;
+/** Where the tracks begin, from the left edge of the screen. */
+const TRACK_LEFT = CONTENT_PAD + NAME_WIDTH;
+/**
+ * Height of a lane before any zoom. Day and week bars stack the dossier over the title,
+ * on a row tall enough for a finger; the month's, a column of 34 px each, keep one line.
+ */
+const LANE_BASE: Record<ViewKind, number> = { day: 42, week: 42, month: 30 };
+const LANE_GAP = 4;
+/**
+ * Pinching widens the days and, more gently, raises the rows; a bar then shows as many
+ * lines as it has room for (dossier, title, client, hours, people, notes), as the events
+ * of the iPhone's Calendar do.
+ */
+const ZOOM_MAX: Record<ViewKind, number> = { day: 3, week: 4, month: 6 };
+const ZOOM_STEP = 0.02;
+const NUMBER_LINE = 16;
+const DETAIL_LINE = 14;
+/** From this height a bar stacks its lines; under it, one line. */
+const STACKED_FROM = 34;
+/** Of a bar's height and width, what its border and padding take from its texts. */
+const BAR_FRAME = 4;
+const BAR_PADDING = 6;
+/** Mean width of a character, to judge whether a text needs a second line (13 px condensed bold, 11 px regular). */
+const HEAD_CHAR = 6;
+const TEXT_CHAR = 5.6;
+/** A text never takes more lines than this, however much room is left. */
+const MAX_WRAP = 4;
+/** A day this wide has room for its full name, and shows where noon falls. */
+const WIDE_DAY = 110;
+const NARROW_DAY = 44;
+const TINY_DAY = 22;
+/** How much a day's heading can say, from its width. */
+type Grain = 'tiny' | 'narrow' | 'normal' | 'wide';
 const TEAM_HEIGHT = 30;
+/**
+ * The board is one strip of pages side by side: a day, a week or a month each. The scroll
+ * slides from one to the next and comes to rest on a page as long as a page fits the
+ * screen; zoomed in, it runs freely across them. Only the pages around the one on screen
+ * are drawn, the others keep their place.
+ */
+type Page = { key: string; anchor: number; days: number[]; base: number };
+/** How far back and ahead of where it opens the strip runs, in pages. */
+const PAGES_BACK: Record<ViewKind, number> = { day: 130, week: 52, month: 12 };
+const PAGES_AHEAD: Record<ViewKind, number> = { day: 390, week: 104, month: 24 };
+/** A month never has more working days than this: the width the month's zoom is measured against. */
+const MONTH_DAYS_MAX = 23;
+
+function monthStart(day: number, months: number): number {
+  const { year, month } = dateParts(day);
+  const at = year * 12 + month - 1 + months;
+  return dayNumber(Math.floor(at / 12), (at % 12) + 1, 1);
+}
+
+function pagesOf(view: ViewKind, origin: number, viewport: number): Page[] {
+  const pages: Page[] = [];
+  if (view === 'month') {
+    for (let step = -PAGES_BACK.month; step <= PAGES_AHEAD.month; step += 1) {
+      const first = monthStart(origin, step);
+      const days = viewDays('month', first);
+      pages.push({ key: `m${first}`, anchor: first, days, base: days.length * MONTH_DAY_WIDTH });
+    }
+    return pages;
+  }
+  const monday = mondayOf(origin);
+  if (view === 'week') {
+    for (let step = -PAGES_BACK.week; step <= PAGES_AHEAD.week; step += 1) {
+      const first = monday + 7 * step;
+      pages.push({ key: `w${first}`, anchor: first, days: weekdaysBetween(first, first + 4), base: viewport });
+    }
+    return pages;
+  }
+  for (const day of weekdaysBetween(monday - (PAGES_BACK.day / 5) * 7, monday + (PAGES_AHEAD.day / 5) * 7 - 1)) {
+    pages.push({ key: `d${day}`, anchor: day, days: [day], base: viewport });
+  }
+  return pages;
+}
+
+/** Whether `page` is the one showing `day`. */
+function holds(view: ViewKind, page: Page, day: number): boolean {
+  if (view === 'day') return page.anchor === shownDay(day);
+  if (view === 'week') return page.anchor === mondayOf(day);
+  return monthStart(day, 0) === page.anchor;
+}
+
+/** The page holding `x`, counted on the strip before any zoom. */
+function pageAt(lefts: readonly number[], x: number): number {
+  let low = 0;
+  let high = Math.max(0, lefts.length - 2);
+  while (low < high) {
+    const mid = (low + high + 1) >> 1;
+    if (lefts[mid] <= x) low = mid;
+    else high = mid - 1;
+  }
+  return low;
+}
+
+/**
+ * A phone is given the offsets its scroll rests on. A browser rests on elements instead:
+ * one mark a page, which stays on the strip whichever pages are drawn (a browser that
+ * loses the element it rests on looks for another one, however far).
+ */
+const WEB = Platform.OS === 'web';
+const WEB_SNAP = { scrollSnapType: 'x mandatory' } as object;
+const WEB_REST = { position: 'absolute', top: 0, width: 1, height: 1, scrollSnapAlign: 'start' } as object;
+const WEEKDAY_LETTERS = 'LMMJV';
 const MONTH_DAY_WIDTH = 34;
 const REFRESH_SECONDS = 30;
 const DAY_TICKS = [DAY_START, 9 * 60, NOON, AFTERNOON, DAY_END];
+/** The day view zoomed in: every hour that has room beside its neighbours. */
+const HOUR_TICKS = [DAY_START, ...[8, 9, 10, 11, 12, 13, 14, 15].map((hour) => hour * 60), DAY_END];
+const HOUR_TICKS_FROM = 44;
 
 function clock(date: Date | null): string {
   if (!date) return '';
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-function rowHeight(row: WeekRow): number {
-  return row.lanes * LANE_HEIGHT + 4;
+function clamp(value: number, low: number, high: number): number {
+  return Math.min(high, Math.max(low, value));
+}
+
+/** Rows grow more slowly than days widen: at ×4 a lane is a little over twice as tall. */
+function laneHeight(view: ViewKind, zoom: number): number {
+  return Math.round(LANE_BASE[view] * Math.pow(Math.max(1, zoom), 0.6));
+}
+
+function rowHeight(row: WeekRow, lane: number): number {
+  return row.lanes * lane + LANE_GAP;
+}
+
+/** A height in the list of rows, split into what a zoom leaves as it is and what it scales. */
+type Spot = { fixed: number; lanes: number };
+
+/** What lies `y` down the list: team headings and row margins keep their height, lanes grow. */
+function spotAt(groups: readonly WeekGroup[], lane: number, y: number): Spot {
+  let top = 0;
+  let fixed = 0;
+  let lanes = 0;
+  for (const group of groups) {
+    if (y < top + TEAM_HEIGHT) return { fixed: fixed + Math.max(0, y - top), lanes };
+    top += TEAM_HEIGHT;
+    fixed += TEAM_HEIGHT;
+    for (const row of group.rows) {
+      const height = row.lanes * lane;
+      if (y < top + LANE_GAP + height) {
+        const inside = y - top;
+        if (inside < LANE_GAP) return { fixed: fixed + inside, lanes };
+        return { fixed: fixed + LANE_GAP, lanes: lanes + (inside - LANE_GAP) / lane };
+      }
+      top += LANE_GAP + height;
+      fixed += LANE_GAP;
+      lanes += row.lanes;
+    }
+  }
+  return { fixed: fixed + (y - top), lanes };
+}
+
+/** Distance between the two fingers of a pinch. */
+function spread(touches: readonly { pageX: number; pageY: number }[]): number {
+  return Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY);
+}
+
+/** Minutes since midnight, for the « now » line of the day view. */
+function minuteNow(): number {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
 }
 
 const STATUSES: TaskStatus[] = ['provisional', 'confirmed', 'done'];
@@ -90,11 +261,15 @@ type Menu =
 
 export default function PlanningScreen() {
   const { status } = useAuth();
-  const { settings, loaded } = useSettings();
+  const { settings, loaded, save } = useSettings();
+  const [choosingShown, setChoosingShown] = useState(false);
   const planning = usePlanning();
   const { data, loading, error, loadedAt, load, notice, clearNotice, undo, runUndo, apply, author, editBlocker } = planning;
   const [view, setView] = useState<ViewKind>('week');
   const [anchor, setAnchor] = useState(() => shownDay(todayNumber()));
+  // Counts the days asked for (a link, the widget): the board goes to them, where a day
+  // reached by scrolling is only named.
+  const [asked, setAsked] = useState(0);
   const [actionError, setActionError] = useState('');
   const [menu, setMenu] = useState<Menu | null>(null);
   const dossier = useDossierActions();
@@ -114,6 +289,7 @@ export default function PlanningScreen() {
     if (day !== null) {
       setView('day');
       setAnchor(shownDay(day));
+      setAsked((count) => count + 1);
     }
   } else if (!params.jour && followedDay) setFollowedDay('');
   useEffect(() => {
@@ -134,6 +310,7 @@ export default function PlanningScreen() {
     if (day !== undefined) {
       setView('week');
       setAnchor(shownDay(day));
+      setAsked((count) => count + 1);
     }
   }
 
@@ -165,13 +342,362 @@ export default function PlanningScreen() {
   const shown = useMemo(() => (data ? withDossiers(data, projects) : null), [data, projects]);
 
   const calendarFor = useMemo(() => (data ? calendarResolver(data) : null), [data]);
-  const board = useMemo<Board | null>(() => {
-    if (!data || !calendarFor) return null;
-    const days = viewDays(view, anchor);
+  // Zoom, one per view. Unzoomed, a day or a week is as wide as the screen and the month
+  // gives 34 px to a day; everything on the strip is `zoom` times as wide.
+  const { width: windowWidth } = useWindowDimensions();
+  const [zooms, setZooms] = useState<Record<ViewKind, number>>({ day: 1, week: 1, month: 1 });
+  const zoomRef = useRef(zooms);
+  const [pinching, setPinching] = useState(false);
+  const viewport = Math.max(0, windowWidth - 2 * CONTENT_PAD - NAME_WIDTH);
+  const zoom = zooms[view];
+
+  // The strip of pages, around the day it was opened on; a day asked for beyond its ends
+  // lays it out again around that day.
+  const [origin, setOrigin] = useState(anchor);
+  const pages = useMemo(() => pagesOf(view, origin, viewport), [view, origin, viewport]);
+  const lefts = useMemo(() => {
+    const edges = [0];
+    for (const page of pages) edges.push(edges[edges.length - 1] + page.base);
+    return edges;
+  }, [pages]);
+  let index = pages.findIndex((candidate) => holds(view, candidate, anchor));
+  if (index < 0) {
+    if (origin !== anchor) setOrigin(anchor);
+    index = 0;
+  }
+  // Drawn: the page on screen and its neighbours, which a swipe brings in.
+  const from = Math.max(0, index - 1);
+  const to = Math.min(pages.length - 1, index + 1);
+  const hiddenTypes = settings.planningHiddenTypes;
+  const boards = useMemo(() => {
+    if (!data || !calendarFor) return [];
     const dayInfo = dayInfoFrom(calendarFor(null), data.meta);
-    const axis = view === 'day' ? ({ kind: 'day', day: anchor } as const) : ({ kind: 'slots', days } as const);
-    return buildBoard(shown ?? data, axis, { dayInfo, compact: view === 'month' });
-  }, [data, shown, calendarFor, view, anchor]);
+    const all = shown ?? data;
+    // Types left out of the display on this phone: their tasks and cards are not laid at all.
+    const source = hiddenTypes.length
+      ? { ...all, tasks: all.tasks.filter((task) => !hiddenTypes.includes(taskTypeOf(all.meta, task.task_type).key)) }
+      : all;
+    return pages.slice(from, to + 1).map((page, offset) => {
+      const axis = view === 'day' ? ({ kind: 'day', day: page.anchor } as const) : ({ kind: 'slots', days: page.days } as const);
+      const board = buildBoard(source, axis, { dayInfo, compact: view === 'month' });
+      const byRow = new Map(board.groups.flatMap((group) => group.rows.map((row) => [row.key, row] as const)));
+      return { page, at: from + offset, board, byRow };
+    });
+  }, [data, shown, calendarFor, view, pages, from, to, hiddenTypes]);
+  /** The page on screen: what the heading names, and where « À planifier » is read. */
+  const board: Board | null = boards.find((item) => item.at === index)?.board ?? null;
+
+  const total = lefts[pages.length] ?? 0;
+  const widest = view === 'month' ? MONTH_DAYS_MAX * MONTH_DAY_WIDTH : viewport;
+  // The month can be pinched in until any month fits the screen.
+  const minZoom = view === 'month' && widest > 0 ? Math.min(1, viewport / widest) : 1;
+  const maxZoom = ZOOM_MAX[view];
+  const contentWidth = total * zoom;
+  const maxScroll = Math.max(0, contentWidth - viewport);
+  // Pages hold the scroll at rest as long as one fits the screen.
+  const fits = widest * zoom <= viewport + 1;
+  const lane = laneHeight(view, zoom);
+  const dayWidth = view === 'day' ? viewport * zoom : view === 'week' ? (viewport * zoom) / 5 : MONTH_DAY_WIDTH * zoom;
+  /** What a scroll offset is counted in: it means nothing in another view, or on a strip laid out again. */
+  const scope = `${view}:${origin}`;
+
+  const boardRef = useRef<HostInstance>(null);
+  const sideways = useRef<ComponentRef<typeof Animated.ScrollView>>(null);
+  const scrollX = useRef(0);
+  const scrollAfterZoom = useRef<number | null>(null);
+  const restAfterZoom = useRef<number | null>(null);
+  // The sideways scroll, as a value the frozen heading follows without a round trip
+  // through React: on a phone it is moved on the thread that scrolls.
+  const [scrollAnim] = useState(() => new Animated.Value(0));
+  const headingShift = useMemo(() => Animated.multiply(scrollAnim, -1), [scrollAnim]);
+  const onScrollEvent = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { x: scrollAnim } } }], { useNativeDriver: Platform.OS !== 'web' }),
+    [scrollAnim],
+  );
+  // Where that scroll came to rest: a bar that begins off the left edge then writes its
+  // text from the edge, not from its hidden start. Following every frame of the scroll
+  // from here would lag behind the finger; the text moves once the scroll settles.
+  const [settled, setSettled] = useState({ scope, x: 0 });
+  // The strip as it is laid out now. The scroll's listener reads it from here: the effects
+  // that put the tracks in place run before a listener could subscribe again, and one that
+  // still knew the strip of another view would name a page of that view.
+  const strip = useRef({ pages, lefts, zoom, viewport, view, scope });
+  useLayoutEffect(() => {
+    strip.current = { pages, lefts, zoom, viewport, view, scope };
+  });
+  useEffect(() => {
+    let settling: ReturnType<typeof setTimeout> | undefined;
+    const listener = scrollAnim.addListener(({ value }) => {
+      scrollX.current = value;
+      const now = strip.current;
+      // The page under the middle of the screen is the one the heading names.
+      const page = now.pages[pageAt(now.lefts, now.zoom > 0 ? (value + now.viewport / 2) / now.zoom : 0)];
+      if (page) {
+        // A month's first day may be a Sunday: the anchor is always a day the board shows.
+        const day = shownDay(page.anchor);
+        setAnchor((current) => (holds(now.view, page, current) ? current : day));
+      }
+      clearTimeout(settling);
+      settling = setTimeout(() => setSettled({ scope: now.scope, x: value }), 120);
+    });
+    return () => {
+      clearTimeout(settling);
+      scrollAnim.removeListener(listener);
+    };
+  }, [scrollAnim]);
+  /** Put the tracks at `x`, and the heading with them without waiting for the scroll's echo. */
+  const scrollTracksTo = useCallback(
+    (x: number) => {
+      sideways.current?.scrollTo({ x, animated: false });
+      scrollAnim.setValue(x);
+      scrollX.current = x;
+    },
+    [scrollAnim],
+  );
+
+  // A pinch in progress. The scroll view stays where it was (`from`) and the tracks are
+  // shifted so that they show from `x`: width and shift then change in one and the same
+  // frame, where moving the scroll view itself would arrive a frame late and shake them.
+  // The same goes for the list of rows, which grow with the zoom: the row under the
+  // fingers stays under them (`y`, `fromY`).
+  const [pinchAt, setPinchAt] = useState<{ x: number; from: number; y: number; fromY: number; holdY: number } | null>(null);
+  const pinch = useRef<{ distance: number; zoom: number; instant: number; spot: Spot; lane: number; contentHeight: number } | null>(null);
+  const listBox = useRef<HostInstance>(null);
+  const list = useRef<ComponentRef<typeof ScrollView>>(null);
+  const listAt = useRef({ top: 0, height: 0 });
+  const scrollY = useRef(0);
+  const contentHeight = useRef(0);
+  const pinchFromY = useRef(0);
+  const pinchY = useRef(0);
+  const scrollAfterZoomY = useRef<number | null>(null);
+  const pinched = useRef(false);
+  const pinchFrom = useRef(0);
+  const pinchX = useRef(0);
+  const pinchNext = useRef<{ distance: number; focalX: number; focalY: number } | null>(null);
+  const pinchFrame = useRef<number | null>(null);
+
+  // The rows: everyone on the pages drawn but the people left out on this phone (kept with
+  // its settings). A row is as high as the page that stacks the most bars on it, so that
+  // the rows line up from a page to the next.
+  const groups = useMemo(() => {
+    const hidden = new Set(settings.planningHidden);
+    const merged: WeekGroup[] = [];
+    for (const { board: drawn } of boards) {
+      for (const group of drawn.groups) {
+        let mine = merged.find((other) => other.key === group.key);
+        if (!mine) {
+          mine = { key: group.key, name: group.name, rows: [] };
+          merged.push(mine);
+        }
+        for (const row of group.rows) {
+          if (hidden.has(row.key)) continue;
+          const known = mine.rows.find((other) => other.key === row.key);
+          if (known) known.lanes = Math.max(known.lanes, row.lanes);
+          else mine.rows.push({ key: row.key, label: row.label, name: row.name, lanes: row.lanes, segments: [] });
+        }
+      }
+    }
+    // « Non affecté » closes the board, whichever page brought it.
+    return merged.filter((group) => group.rows.length).sort((a, b) => Number(a.key === UNASSIGNED) - Number(b.key === UNASSIGNED));
+  }, [boards, settings.planningHidden]);
+  const laneCount = groups.reduce((sum, group) => sum + group.rows.reduce((lanes, row) => lanes + row.lanes, 0), 0);
+
+  /** Zoom to `value`, keeping the instant under `focalX` (from the left of the tracks) in place. */
+  const zoomTo = useCallback(
+    (value: number, focalX: number) => {
+      const current = zoomRef.current[view];
+      const next = clamp(Math.round(value / ZOOM_STEP) * ZOOM_STEP, minZoom, maxZoom);
+      if (next === current || total <= 0) return;
+      const instant = (scrollX.current + focalX) / (total * current);
+      scrollAfterZoom.current = clamp(instant * total * next - focalX, 0, Math.max(0, total * next - viewport));
+      zoomRef.current = { ...zoomRef.current, [view]: next };
+      setZooms(zoomRef.current);
+      setSettled({ scope, x: scrollAfterZoom.current });
+    },
+    [view, scope, total, viewport, minZoom, maxZoom, setSettled],
+  );
+  useLayoutEffect(() => {
+    if (pinchAt) return;
+    if (scrollAfterZoom.current !== null) scrollTracksTo(scrollAfterZoom.current);
+    scrollAfterZoom.current = null;
+    // A pinch let go where pages hold the scroll: the nearest one slides into place.
+    if (restAfterZoom.current !== null) sideways.current?.scrollTo({ x: restAfterZoom.current, animated: true });
+    restAfterZoom.current = null;
+    if (scrollAfterZoomY.current !== null) {
+      list.current?.scrollTo({ y: scrollAfterZoomY.current, animated: false });
+      scrollY.current = scrollAfterZoomY.current;
+    }
+    scrollAfterZoomY.current = null;
+  }, [zoom, pinchAt, scrollTracksTo]);
+
+  // A day asked for puts its page on screen.
+  useLayoutEffect(() => {
+    scrollTracksTo(clamp((lefts[index] ?? 0) * zoom, 0, maxScroll));
+    // The day asked for only: scrolling, a zoom or a wider screen move nothing here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked]);
+  // A strip just laid out opens on its page; a month wider than the screen, with today a
+  // column in from the left edge when today is in it.
+  const initial = useMemo(() => {
+    let x = (lefts[index] ?? 0) * zoom;
+    const month = pages[index];
+    if (view === 'month' && !fits && month) {
+      const column = month.days.findIndex((day) => day >= todayNumber());
+      // Never past the month's own last screen: the heading would name the next month.
+      if (column > 1 && month.days[0] <= todayNumber()) x = Math.max(x, Math.min(x + (column - 1) * dayWidth, (lefts[index + 1] ?? 0) * zoom - viewport));
+    }
+    return { x: clamp(x, 0, maxScroll), y: 0 };
+    // Only where a strip opens: zooming must not send the board back there.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
+  useLayoutEffect(() => {
+    // The browser's scroll view does not read `contentOffset`.
+    scrollTracksTo(initial.x);
+  }, [initial, scrollTracksTo]);
+
+  // The tracks come with the planning, once it is read: they open where the heading already is.
+  const hasBoard = board !== null && ready;
+  useLayoutEffect(() => {
+    if (hasBoard) sideways.current?.scrollTo({ x: scrollX.current, animated: false });
+  }, [hasBoard]);
+
+  /** Slide to the page of `day`: the arrows, « Aujourd'hui ». A page next door is slid to, a far one shown at once. */
+  const goTo = (day: number) => {
+    const at = pages.findIndex((candidate) => holds(view, candidate, day));
+    if (at < 0) {
+      setAnchor(shownDay(day));
+      setAsked((count) => count + 1);
+      return;
+    }
+    const x = clamp(lefts[at] * zoom, 0, maxScroll);
+    if (Math.abs(at - index) <= 1) sideways.current?.scrollTo({ x, animated: true });
+    else scrollTracksTo(x);
+  };
+
+  // Two fingers zoom: the board takes the touch over from the bars and rows under it (the
+  // « capture » half of the responder system) once there is a second finger. One finger is
+  // left to the scroll, which slides the pages.
+  /** One step of a pinch, at most once a frame however many moves the fingers reported. */
+  const applyPinch = () => {
+    pinchFrame.current = null;
+    const start = pinch.current;
+    const now = pinchNext.current;
+    if (!start || !now || start.distance < 1 || total <= 0) return;
+    const next = clamp(Math.round((start.zoom * now.distance) / start.distance / ZOOM_STEP) * ZOOM_STEP, minZoom, maxZoom);
+    const x = clamp(start.instant * total * next - now.focalX, 0, Math.max(0, total * next - viewport));
+    // The rows grow with the zoom: the one under the fingers is kept under them.
+    const nextLane = laneHeight(view, next);
+    const height = start.contentHeight + laneCount * (nextLane - start.lane);
+    const y = clamp(start.spot.fixed + start.spot.lanes * nextLane - now.focalY, 0, Math.max(0, height - listAt.current.height));
+    if (next === zoomRef.current[view] && x === pinchX.current && y === pinchY.current) return;
+    pinchX.current = x;
+    pinchY.current = y;
+    zoomRef.current = { ...zoomRef.current, [view]: next };
+    setZooms(zoomRef.current);
+    // `holdY`: the list keeps at least the height it is scrolled to, however far the rows shrink.
+    setPinchAt({ x, from: pinchFrom.current, y, fromY: pinchFromY.current, holdY: pinchFromY.current + listAt.current.height });
+  };
+  const endPinch = () => {
+    // The last move may still be waiting for its frame: it counts.
+    if (pinchFrame.current !== null) {
+      cancelAnimationFrame(pinchFrame.current);
+      applyPinch();
+    }
+    pinchNext.current = null;
+    if (pinched.current) {
+      scrollAfterZoom.current = pinchX.current;
+      scrollAfterZoomY.current = pinchY.current;
+      const reached = zoomRef.current[view];
+      if (widest * reached <= viewport + 1) {
+        // Back to where a page fits the screen: the board rests on the nearest one.
+        const at = pageAt(lefts, pinchX.current / reached + viewport / reached / 2);
+        const rest = clamp(lefts[at] * reached, 0, Math.max(0, total * reached - viewport));
+        if (Math.abs(rest - pinchX.current) > 0.5) restAfterZoom.current = rest;
+      }
+      setSettled({ scope, x: restAfterZoom.current ?? pinchX.current });
+    }
+    pinch.current = null;
+    pinched.current = false;
+    setPinchAt(null);
+    setPinching(false);
+  };
+  const gestures = {
+    onStartShouldSetResponderCapture: (event: GestureResponderEvent) => event.nativeEvent.touches.length === 2,
+    onMoveShouldSetResponderCapture: (event: GestureResponderEvent) => event.nativeEvent.touches.length === 2,
+    onResponderMove: (event: GestureResponderEvent) => {
+      const touches = event.nativeEvent.touches;
+      if (touches.length !== 2) {
+        pinch.current = null;
+        return;
+      }
+      const distance = spread(touches);
+      // The middle of the two fingers, from the left of the tracks and from the top of the list.
+      const focalX = (touches[0].pageX + touches[1].pageX) / 2 - TRACK_LEFT;
+      const focalY = (touches[0].pageY + touches[1].pageY) / 2 - listAt.current.top;
+      if (!pinch.current) {
+        if (!pinched.current) {
+          pinchFrom.current = scrollX.current;
+          pinchX.current = scrollX.current;
+          pinchFromY.current = scrollY.current;
+          pinchY.current = scrollY.current;
+          setPinching(true);
+        }
+        pinched.current = true;
+        const current = zoomRef.current[view];
+        const currentLane = laneHeight(view, current);
+        pinch.current = {
+          distance,
+          zoom: current,
+          instant: total > 0 ? (pinchX.current + focalX) / (total * current) : 0,
+          // What is under the fingers, in the list: so much that does not grow, so many lanes that do.
+          spot: spotAt(groups, currentLane, pinchY.current + focalY),
+          lane: currentLane,
+          contentHeight: contentHeight.current,
+        };
+        return;
+      }
+      pinchNext.current = { distance, focalX, focalY };
+      if (pinchFrame.current === null) pinchFrame.current = requestAnimationFrame(applyPinch);
+    },
+    // The lists under the fingers would otherwise take a pinch for a scroll.
+    onResponderTerminationRequest: () => !pinched.current,
+    onResponderTerminate: endPinch,
+    onResponderRelease: endPinch,
+  };
+
+  // In a browser there are no two fingers: Ctrl + wheel (or a trackpad pinch) zooms.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !hasBoard) return undefined;
+    const node = boardRef.current as unknown as HTMLElement | null;
+    if (!node) return undefined;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      zoomTo(zoomRef.current[view] * Math.exp(-event.deltaY / 300), event.clientX - TRACK_LEFT);
+    };
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return () => node.removeEventListener('wheel', onWheel);
+  }, [hasBoard, view, zoomTo]);
+
+  /** Back to the view as it opens, when its tab is touched again. */
+  const resetZoom = () => {
+    const x = lefts[index] ?? 0;
+    // The strip changes width with the zoom: its place is given once it has the new one.
+    if (zoomRef.current[view] === 1) scrollTracksTo(x);
+    else scrollAfterZoom.current = x;
+    zoomRef.current = { ...zoomRef.current, [view]: 1 };
+    setZooms(zoomRef.current);
+    setSettled({ scope, x });
+  };
+  const scrolledX = pinchAt ? pinchAt.x : settled.scope === scope ? settled.x : initial.x;
+  // While pinching, the strip slides inside a scroll view that does not move.
+  const pinchShift = pinchAt ? pinchAt.from - pinchAt.x : 0;
+  const scrollWidth = pinchAt ? Math.max(contentWidth, pinchAt.from + viewport) : contentWidth;
+  const grain: Grain = dayWidth < TINY_DAY ? 'tiny' : dayWidth < NARROW_DAY ? 'narrow' : dayWidth >= WIDE_DAY ? 'wide' : 'normal';
+  const hourly = view === 'day' && (dayWidth / (DAY_END - DAY_START)) * 60 >= HOUR_TICKS_FROM;
+  // Where a page rests: its left edge, as long as a page fits the screen.
+  const rests = fits ? pages.map((_page, at) => lefts[at] * zoom) : undefined;
+  const marks = WEB && rests ? rests.map((left, at) => <View key={pages[at].key} style={[WEB_REST, { left }]} />) : null;
 
   if (!ready) {
     const waiting = status === 'loading' || !loaded;
@@ -189,13 +715,13 @@ export default function PlanningScreen() {
   }
 
   /** The half-day (or the minute, in the day view) under a place of a row. */
-  const slotAt = (rowKey: string, unit: number): { start: number; end: number | null } | null => {
-    if (!board || !calendarFor) return null;
+  const slotAt = (rowKey: string, unit: number, on: { page: Page; board: Board }): { start: number; end: number | null } | null => {
+    if (!calendarFor) return null;
     const calendar = calendarFor(rowKey === UNASSIGNED ? null : rowKey);
     let start: number;
-    if (view === 'day') start = snap(dayStart(anchor) + DAY_START + unit);
+    if (view === 'day') start = snap(dayStart(on.page.anchor) + DAY_START + unit);
     else {
-      const column = board.columns[Math.floor(unit / 2)];
+      const column = on.board.columns[Math.floor(unit / 2)];
       if (!column) return null;
       start = halfDayStart(calendar, column.day, unit % 2 === 1);
     }
@@ -208,17 +734,17 @@ export default function PlanningScreen() {
   const newTaskAt = (rowKey: string, slot: { start: number; end: number | null }) => {
     const query: Record<string, string> = { row: rowKey, start: String(slot.start), anchor: String(anchor) };
     if (slot.end !== null) query.end = String(slot.end);
-    router.push({ pathname: '/saisie', params: query });
+    router.push({ pathname: '/creer', params: query });
   };
 
   // « Accès limité »: the planning is only looked at, an empty place does nothing.
-  const onCell = (rowKey: string, unit: number) => {
-    const slot = restricted ? null : slotAt(rowKey, unit);
+  const onCell = (rowKey: string, unit: number, on: { page: Page; board: Board }) => {
+    const slot = restricted ? null : slotAt(rowKey, unit, on);
     if (slot) newTaskAt(rowKey, slot);
   };
 
-  const onCellLongPress = (rowKey: string, unit: number) => {
-    const slot = restricted ? null : slotAt(rowKey, unit);
+  const onCellLongPress = (rowKey: string, unit: number, on: { page: Page; board: Board }) => {
+    const slot = restricted ? null : slotAt(rowKey, unit, on);
     if (!slot) return;
     pressFeedback();
     setMenu({ kind: 'cell', rowKey, ...slot });
@@ -402,7 +928,7 @@ export default function PlanningScreen() {
             {
               key: 'new',
               label: 'Nouvelle tâche ici',
-              detail: `Saisie rapide sur ${who}`,
+              detail: `Sur la ligne ${who}`,
               icon: (c) => <Plus size={20} color={c} strokeWidth={iconStroke} />,
               onPress: () => newTaskAt(menu.rowKey, { start: menu.start, end: menu.end }),
             },
@@ -437,8 +963,109 @@ export default function PlanningScreen() {
     }
   };
 
-  const month = view === 'month';
-  const trackWidth = month && board ? board.columns.length * MONTH_DAY_WIDTH : undefined;
+  const hidden = new Set(settings.planningHidden);
+  const teams = board ? board.groups.filter((group) => group.key !== UNASSIGNED) : [];
+  const people = teams.flatMap((group) => group.rows);
+  const hiddenCount = people.filter((person) => hidden.has(person.key)).length;
+  const showOnly = (ids: string[]) => save({ ...settings, planningHidden: people.map((person) => person.key).filter((id) => !ids.includes(id)) });
+  const me = settings.initials ? people.find((person) => person.label.toUpperCase() === settings.initials.toUpperCase()) : undefined;
+  const shownIds = people.filter((person) => !hidden.has(person.key)).map((person) => person.key);
+  // Task types work as filters do: none chosen, they are all shown; a first one touched is
+  // then the only one shown (« seulement les rendez-vous » is one touch), the next ones add up.
+  const kinds = data ? taskTypesOf(data.meta) : [];
+  const kindKeys = kinds.map((kind) => kind.key);
+  const hiddenKinds = settings.planningHiddenTypes.filter((key) => kindKeys.includes(key));
+  const shownKinds = kinds.filter((kind) => !hiddenKinds.includes(kind.key));
+  const filtering = hiddenKinds.length > 0;
+  const showKinds = (keys: string[]) =>
+    save({ ...settings, planningHiddenTypes: keys.length === 0 || keys.length === kindKeys.length ? [] : kindKeys.filter((key) => !keys.includes(key)) });
+  const toggleKind = (key: string) => {
+    const now = shownKinds.map((kind) => kind.key);
+    if (!filtering) return showKinds([key]);
+    return showKinds(now.includes(key) ? now.filter((other) => other !== key) : [...now, key]);
+  };
+  /** What is left out on this phone, in a line: said over the board, which may look empty for it. */
+  const filterText = [
+    filtering ? shownKinds.map((kind) => kind.label).join(', ') : '',
+    hiddenCount ? `${people.length - hiddenCount} personne${people.length - hiddenCount > 1 ? 's' : ''} sur ${people.length}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const shownSections: SheetSection[] = [
+    {
+      title: 'Types de tâche',
+      actions: [
+        { key: 'all-types', label: 'Tous les types', selected: !filtering, keepOpen: true, onPress: () => showKinds([]) },
+        ...kinds.map((kind) => ({
+          key: `type:${kind.key}`,
+          label: kind.label,
+          selected: filtering && !hiddenKinds.includes(kind.key),
+          keepOpen: true,
+          icon: () => <View style={[styles.swatch, { backgroundColor: kind.color }]} />,
+          onPress: () => {
+            selectionFeedback();
+            return toggleKind(kind.key);
+          },
+        })),
+      ],
+    },
+    {
+      title: 'Personnes',
+      actions: [
+        {
+          key: 'all',
+          label: 'Tout le monde',
+          selected: hiddenCount === 0,
+          keepOpen: true,
+          onPress: () => showOnly(people.map((person) => person.key)),
+        },
+        ...(me
+          ? [
+              {
+                key: 'me',
+                label: 'Moi seulement',
+                detail: me.name,
+                selected: shownIds.length === 1 && shownIds[0] === me.key,
+                keepOpen: true,
+                onPress: () => showOnly([me.key]),
+              },
+            ]
+          : []),
+      ],
+    },
+    ...teams.map((group) => ({
+      title: group.name,
+      actions: group.rows.map((row) => ({
+        key: row.key,
+        label: row.name,
+        detail: row.label !== row.name ? row.label : undefined,
+        selected: !hidden.has(row.key),
+        keepOpen: true,
+        onPress: () => {
+          selectionFeedback();
+          return showOnly(hidden.has(row.key) ? [...shownIds, row.key] : shownIds.filter((id) => id !== row.key));
+        },
+      })),
+    })),
+  ];
+
+  /** What a bar adds under its title as it grows: project, client, hours, people, notes. */
+  const infoOf = (task: PlanningTask): string[] => {
+    const title = (task.title ?? '').trim();
+    const designation = (task.project_cache?.designation ?? '').trim();
+    const start = parseInstant(task.start ?? '');
+    const end = parseInstant(task.end ?? '');
+    const people = Object.keys(task.assignments ?? {})
+      .map((id) => data?.resources.find((resource) => resource.id === id)?.initials ?? '')
+      .filter(Boolean);
+    return [
+      title && designation && designation !== title ? designation : '',
+      (task.project_cache?.client ?? '').trim(),
+      start !== null && end !== null ? `${describeInstant(start)} → ${describeInstant(end)}` : '',
+      people.length > 1 ? people.join(' ') : '',
+      (task.notes ?? '').trim().replace(/\s+/g, ' '),
+    ].filter(Boolean);
+  };
 
   return (
     <Screen>
@@ -449,19 +1076,41 @@ export default function PlanningScreen() {
               key={kind}
               accessibilityRole="tab"
               accessibilityState={{ selected: view === kind }}
-              onPress={() => setView(kind)}
+              accessibilityHint={view === kind && zoom !== 1 ? 'Revenir à l’affichage sans zoom' : undefined}
+              onPress={() => (view === kind ? resetZoom() : setView(kind))}
               style={[styles.segment, view === kind && styles.segmentOn]}
             >
               <Text style={[styles.segmentText, view === kind && styles.segmentTextOn]}>{VIEW_LABELS[kind]}</Text>
             </Pressable>
           ))}
         </View>
-        <Pressable accessibilityRole="button" onPress={() => setAnchor(shownDay(todayNumber()))} style={styles.todayButton}>
-          <Text style={styles.todayText}>Aujourd’hui</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Aujourd’hui"
+          onPress={() => goTo(shownDay(todayNumber()))}
+          style={styles.todayButton}
+        >
+          <Text style={styles.todayText}>Auj.</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={filterText ? `Affichage filtré : ${filterText}` : 'Choisir ce qui est affiché'}
+          onPress={() => setChoosingShown(true)}
+          style={[styles.toolButton, filterText !== '' && styles.toolButtonOn]}
+        >
+          <ListFilter size={18} color={colors.accent700} strokeWidth={iconStroke} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Rechercher une tâche"
+          onPress={() => router.push('/recherche')}
+          style={styles.toolButton}
+        >
+          <Search size={18} color={colors.accent700} strokeWidth={iconStroke} />
         </Pressable>
       </View>
       <View style={styles.periodRow}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Précédent" onPress={() => setAnchor(shiftView(view, anchor, -1))} style={styles.arrow}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Précédent" onPress={() => goTo(shiftView(view, anchor, -1))} style={styles.arrow}>
           <ChevronLeft size={22} color={colors.accent700} strokeWidth={iconStroke} />
         </Pressable>
         <View style={styles.period}>
@@ -470,15 +1119,14 @@ export default function PlanningScreen() {
           </Text>
           <Muted>{loading ? 'Actualisation…' : settings.demo ? 'Mode démo' : loadedAt ? `À jour, ${clock(loadedAt)}` : ''}</Muted>
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Suivant" onPress={() => setAnchor(shiftView(view, anchor, 1))} style={styles.arrow}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Suivant" onPress={() => goTo(shiftView(view, anchor, 1))} style={styles.arrow}>
           <ChevronRight size={22} color={colors.accent700} strokeWidth={iconStroke} />
         </Pressable>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void load()} tintColor={colors.accent700} />}
-      >
+      {/* Messages sit over the days' heading, which stays in place while the rows scroll under it. */}
+      {error || actionError || notice || undo || focus || filterText ? (
+        <View style={styles.notices}>
         {error ? <Notice tone="error" message={error} action={{ label: 'Réessayer', onPress: () => void load() }} /> : null}
         {actionError ? <Notice tone="error" message={actionError} /> : null}
         {notice ? <Notice message={notice} action={{ label: 'Compris', onPress: clearNotice }} /> : null}
@@ -489,6 +1137,22 @@ export default function PlanningScreen() {
             </Text>
             <Pressable accessibilityRole="button" onPress={() => void onUndo()} style={styles.toastAction}>
               <Text style={styles.toastActionText}>Annuler</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {filterText ? (
+          <View style={styles.focus}>
+            <ListFilter size={16} color={colors.accent700} strokeWidth={iconStroke} />
+            <Text style={styles.focusText} numberOfLines={1}>
+              {filterText}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Tout afficher"
+              onPress={() => void save({ ...settings, planningHidden: [], planningHiddenTypes: [] })}
+              style={styles.focusClose}
+            >
+              <X size={18} color={colors.accent700} strokeWidth={iconStroke} />
             </Pressable>
           </View>
         ) : null}
@@ -508,12 +1172,56 @@ export default function PlanningScreen() {
             </Pressable>
           </View>
         ) : null}
+        </View>
+      ) : null}
 
+      {/* The days (or the hours) stay on screen: outside the list of rows, and carried
+          sideways with the tracks by the scroll itself. */}
+      {board && groups.length ? (
+        <View style={styles.heading} {...gestures}>
+          <View style={[styles.headerCell, { width: NAME_WIDTH }]} />
+          <View style={styles.headingClip}>
+            <Animated.View style={{ transform: [{ translateX: headingShift }] }}>
+              <View style={[styles.strip, { width: scrollWidth, transform: [{ translateX: pinchShift }] }]}>
+                <View style={{ width: (lefts[from] ?? 0) * zoom }} />
+                {boards.map((drawn) => (
+                  <View key={drawn.page.key} style={{ width: drawn.page.base * zoom }}>
+                    <Header board={drawn.board} view={view} grain={grain} hourly={hourly} />
+                  </View>
+                ))}
+              </View>
+            </Animated.View>
+          </View>
+        </View>
+      ) : null}
+
+      <View
+        ref={listBox}
+        style={styles.flex}
+        onLayout={() =>
+          listBox.current?.measure((_x, _y, _width, height, _left, top) => {
+            listAt.current = { top, height };
+          })
+        }
+      >
+      <ScrollView
+        ref={list}
+        scrollEnabled={!pinching}
+        onScroll={(event) => {
+          scrollY.current = event.nativeEvent.contentOffset.y;
+        }}
+        onContentSizeChange={(_width, height) => {
+          if (!pinched.current) contentHeight.current = height;
+        }}
+        scrollEventThrottle={16}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void load()} tintColor={colors.accent700} />}
+      >
+        {/* While pinching, the rows slide inside a list that does not move, as the tracks do sideways. */}
+        <View style={[styles.content, pinchAt ? { minHeight: pinchAt.holdY, transform: [{ translateY: pinchAt.fromY - pinchAt.y }] } : null]}>
         {board ? (
-          <View style={styles.board}>
+          <View ref={boardRef} style={styles.board} {...gestures}>
             <View style={{ width: NAME_WIDTH }}>
-              <View style={styles.headerCell} />
-              {board.groups.map((group) => (
+              {groups.map((group) => (
                 <View key={group.key}>
                   <View style={styles.teamCell}>
                     <Caps style={styles.team} numberOfLines={1}>
@@ -521,7 +1229,7 @@ export default function PlanningScreen() {
                     </Caps>
                   </View>
                   {group.rows.map((row) => (
-                    <View key={row.key} style={[styles.nameCell, { height: rowHeight(row) }]}>
+                    <View key={row.key} style={[styles.nameCell, { height: rowHeight(row, lane) }]}>
                       <Text style={styles.name} numberOfLines={1} accessibilityLabel={row.name}>
                         {row.label}
                       </Text>
@@ -530,49 +1238,83 @@ export default function PlanningScreen() {
                 </View>
               ))}
             </View>
-            <ScrollView
-              key={`${view}:${board.columns[0]?.day}`}
-              horizontal={month}
-              scrollEnabled={month}
-              showsHorizontalScrollIndicator={month}
-              contentOffset={{ x: month ? todayOffset(board) : 0, y: 0 }}
-              style={styles.flex}
+            <Animated.ScrollView
+              ref={sideways}
+              key={scope}
+              horizontal
+              scrollEnabled={!pinching}
+              showsHorizontalScrollIndicator={false}
+              contentOffset={initial}
+              onScroll={onScrollEvent}
+              scrollEventThrottle={16}
+              // One page a swipe, which the scroll slides into place by itself.
+              snapToOffsets={rests}
+              disableIntervalMomentum={fits}
+              decelerationRate={fits ? 'fast' : 'normal'}
+              style={[styles.flex, WEB && fits ? WEB_SNAP : null]}
             >
-              <View style={trackWidth ? { width: trackWidth } : styles.flex}>
-                <Header board={board} view={view} />
-                {board.groups.map((group) => (
-                  <View key={group.key}>
-                    <View style={styles.teamCell} />
-                    {group.rows.map((row) => (
-                      <Track
-                        key={row.key}
-                        row={row}
-                        board={board}
-                        view={view}
-                        focus={focus}
-                        onCell={onCell}
-                        onCellLongPress={onCellLongPress}
-                        onBar={onBar}
-                        onBarLongPress={onBarLongPress}
-                      />
-                    ))}
-                  </View>
-                ))}
+              <View style={[styles.strip, { width: scrollWidth, transform: [{ translateX: pinchShift }] }]}>
+                <View style={{ width: (lefts[from] ?? 0) * zoom }} />
+                {boards.map((drawn) => {
+                  const width = drawn.page.base * zoom;
+                  const left = (lefts[drawn.at] ?? 0) * zoom;
+                  return (
+                    <View key={drawn.page.key} style={{ width }}>
+                      {groups.map((group) => (
+                        <View key={group.key}>
+                          <View style={styles.teamCell} />
+                          {group.rows.map((row) => (
+                            <Track
+                              key={row.key}
+                              // What this page lays on the row; the row's height is the same on every page.
+                              row={drawn.byRow.get(row.key) ?? row}
+                              lanes={row.lanes}
+                              board={drawn.board}
+                              view={view}
+                              lane={lane}
+                              wide={grain === 'wide'}
+                              trackWidth={width}
+                              pageLeft={left}
+                              scrolledX={scrolledX}
+                              scroll={pinchAt ? null : scrollAnim}
+                              infoOf={infoOf}
+                              focus={focus}
+                              onCell={(rowKey, unit) => onCell(rowKey, unit, drawn)}
+                              onCellLongPress={(rowKey, unit) => onCellLongPress(rowKey, unit, drawn)}
+                              onBar={onBar}
+                              onBarLongPress={onBarLongPress}
+                            />
+                          ))}
+                        </View>
+                      ))}
+                    </View>
+                  );
+                })}
+                {marks}
               </View>
-            </ScrollView>
+            </Animated.ScrollView>
           </View>
         ) : null}
         {board && board.groups.length === 0 ? <Muted style={styles.none}>Personne dans le planning.</Muted> : null}
+        {board && board.groups.length > 0 && groups.length === 0 ? (
+          <Notice
+            message="Toutes les personnes sont masquées."
+            action={{ label: 'Choisir les personnes', onPress: () => setChoosingShown(true) }}
+          />
+        ) : null}
 
         {board ? <Backlog cards={board.backlog} data={data} focus={focus} onLongPress={onCardLongPress} /> : null}
         {board ? (
           <Muted style={styles.hint}>
             {restricted
               ? 'Planning en consultation (accès limité). Touchez une tâche pour la voir.'
-              : 'Touchez une tâche pour la modifier, restez appuyé pour ses actions.'}
+              : 'Touchez une tâche pour la modifier, restez appuyé pour ses actions.'}{' '}
+            Écartez deux doigts sur la grille pour l’agrandir et lire plus de détails.
           </Muted>
         ) : null}
+        </View>
       </ScrollView>
+      </View>
 
       <ActionSheet
         visible={sheet !== null}
@@ -583,17 +1325,27 @@ export default function PlanningScreen() {
         accent={sheet?.accent}
         sections={sheet?.sections ?? []}
       />
+      <ActionSheet
+        visible={choosingShown}
+        onClose={() => setChoosingShown(false)}
+        kicker="Planning"
+        title="Affichage"
+        subtitle={filterText ? `${filterText}, sur ce téléphone` : 'Tout est affiché, sur ce téléphone'}
+        sections={shownSections}
+        closeLabel="Terminé"
+      />
 
       {restricted ? null : (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Saisie rapide"
-          onPress={() => router.push('/saisie')}
+          accessibilityLabel="Nouvelle tâche"
+          accessibilityHint="Crée une tâche, une question à la fois"
+          onPress={() => router.push('/creer')}
           style={styles.quick}
         >
-          <Zap size={18} color={colors.accent700} strokeWidth={iconStroke} />
+          <Plus size={18} color={colors.accent700} strokeWidth={iconStroke} />
           <Text style={styles.quickText} numberOfLines={1}>
-            Saisie rapide : <Text style={styles.quickHint}>5252 relevé lun LM</Text>
+            Nouvelle tâche <Text style={styles.quickHint}>· dossier, type, qui, quand</Text>
           </Text>
         </Pressable>
       )}
@@ -617,18 +1369,17 @@ function focusSummary(tasks: PlanningTask[]): string {
   return parts.join(' · ');
 }
 
-/** Month view: today's column a little in from the left edge. */
-function todayOffset(board: Board): number {
-  const index = board.columns.findIndex((column) => column.day >= todayNumber());
-  return index > 1 ? (index - 1) * MONTH_DAY_WIDTH : 0;
-}
-
-function Header({ board, view }: { board: Board; view: ViewKind }) {
+// The heading, the shading and the bars are told what changes them (a grain, a height),
+// not the zoom itself: a pinch redraws the board at every frame, and all it then has to
+// touch is the width of the tracks and the few bars that gain or lose a line.
+const Header = memo(function Header({ board, view, grain, hourly }: { board: Board; view: ViewKind; grain: Grain; hourly: boolean }) {
   if (view === 'day') {
     const span = DAY_END - DAY_START;
+    // Zoomed in, the five marks of the day make room for one per hour.
+    const ticks = hourly ? HOUR_TICKS : DAY_TICKS;
     return (
       <View style={styles.headerCell}>
-        {DAY_TICKS.map((minute) => (
+        {ticks.map((minute) => (
           <Text
             key={minute}
             style={[
@@ -645,58 +1396,97 @@ function Header({ board, view }: { board: Board; view: ViewKind }) {
       </View>
     );
   }
-  const compact = view === 'month';
+  // The heading says as much as the day is wide: « 9 » under its weekday letter, « Lu 9 »,
+  // then « lundi 09.11 ». A whole month on one screen only dates its Mondays.
+  const tiny = grain === 'tiny';
+  const compact = tiny || grain === 'narrow';
+  const wide = grain === 'wide';
+  const today = todayNumber();
   return (
     <View style={[styles.headerCell, styles.headerDays]}>
-      {board.columns.map((column) => (
-        <View key={column.day} style={styles.flex} accessibilityLabel={column.label || undefined}>
-          <Caps style={[styles.dayHeading, column.day === todayNumber() && styles.today]} numberOfLines={1}>
-            {columnHeading(column.day, compact)}
-          </Caps>
-          {column.label && !compact ? (
-            <Text style={styles.holiday} numberOfLines={1}>
-              {column.label}
-            </Text>
-          ) : null}
-        </View>
-      ))}
+      {board.columns.map((column) => {
+        if (tiny) {
+          return (
+            <View key={column.day} style={styles.flex} accessibilityLabel={describeDay(column.day)}>
+              {weekday(column.day) === 0 ? (
+                <Caps style={styles.mondayDate} numberOfLines={1}>
+                  {columnHeading(column.day, true)}
+                </Caps>
+              ) : null}
+              <View style={[styles.todayMark, column.day === today && styles.todayMarkOn]} />
+            </View>
+          );
+        }
+        return (
+          <View key={column.day} style={styles.flex} accessibilityLabel={column.label || undefined}>
+            {compact ? <Text style={styles.weekdayLetter}>{WEEKDAY_LETTERS[weekday(column.day)]}</Text> : null}
+            {column.label && !compact ? (
+              <Text style={styles.holiday} numberOfLines={1}>
+                {column.label}
+              </Text>
+            ) : null}
+            <Caps style={[styles.dayHeading, column.day === today && styles.today]} numberOfLines={1}>
+              {wide ? describeDay(column.day) : columnHeading(column.day, compact)}
+            </Caps>
+          </View>
+        );
+      })}
     </View>
   );
-}
+});
 
-function Shading({ columns, view }: { columns: Column[]; view: ViewKind }) {
+/** `minute`: the time of day, so that the « now » line of the day view moves with it. */
+const Shading = memo(function Shading({ columns, view, wide, minute }: { columns: Column[]; view: ViewKind; wide: boolean; minute: number }) {
   if (view === 'day') {
     const column = columns[0];
     const span = DAY_END - DAY_START;
     const pct = (minute: number) => `${((minute - DAY_START) / span) * 100}%` as const;
     if (!column) return null;
     if (column.closed) return <View style={[styles.closed, styles.fill]} />;
+    const now = column.day === todayNumber() ? minute : null;
     return (
       <>
         <View style={[styles.closed, { left: pct(NOON), width: pct(DAY_START + AFTERNOON - NOON) }]} />
         {!column.worked[1] ? <View style={[styles.closed, { left: pct(NOON), right: 0 }]} /> : null}
+        {now !== null && now > DAY_START && now < DAY_END ? <View style={[styles.nowLine, { left: pct(now) }]} /> : null}
       </>
     );
   }
   const units = columns.length * 2;
   const pct = (unit: number) => `${(unit / units) * 100}%` as const;
+  const today = todayNumber();
   return (
     <>
-      {columns.map((column, index) => (
-        <Fragment key={column.day}>
-          {!column.worked[0] ? <View style={[styles.closed, { left: pct(index * 2), width: pct(1) }]} /> : null}
-          {!column.worked[1] ? <View style={[styles.closed, { left: pct(index * 2 + 1), width: pct(1) }]} /> : null}
-          <View style={[styles.dayLine, { left: pct(index * 2) }]} />
-        </Fragment>
-      ))}
+      {columns.map((column, index) => {
+        // A firmer line where a week begins, to read the month by weeks; and between days
+        // once they are wide enough to be halved by a lighter one at noon.
+        const firm = wide || (view === 'month' && index > 0 && weekday(column.day) === 0);
+        return (
+          <Fragment key={column.day}>
+            {column.day === today ? <View style={[styles.todayColumn, { left: pct(index * 2), width: pct(2) }]} /> : null}
+            {!column.worked[0] ? <View style={[styles.closed, { left: pct(index * 2), width: pct(1) }]} /> : null}
+            {!column.worked[1] ? <View style={[styles.closed, { left: pct(index * 2 + 1), width: pct(1) }]} /> : null}
+            <View style={[styles.dayLine, firm && styles.weekLine, { left: pct(index * 2) }]} />
+            {wide ? <View style={[styles.dayLine, { left: pct(index * 2 + 1) }]} /> : null}
+          </Fragment>
+        );
+      })}
     </>
   );
-}
+});
 
 function Track({
   row,
   board,
   view,
+  lane,
+  wide,
+  trackWidth,
+  pageLeft,
+  lanes,
+  scrolledX,
+  scroll,
+  infoOf,
   focus,
   onCell,
   onCellLongPress,
@@ -706,6 +1496,17 @@ function Track({
   row: WeekRow;
   board: Board;
   view: ViewKind;
+  lane: number;
+  wide: boolean;
+  /** The width of this row's page, and where the page begins on the strip. */
+  trackWidth: number;
+  pageLeft: number;
+  /** Lanes of the row on the page that stacks the most: its height on every page. */
+  lanes: number;
+  scrolledX: number;
+  /** The sideways scroll as it moves, for the bars' texts to follow; none while a pinch moves the tracks itself. */
+  scroll: Animated.Value | null;
+  infoOf: (task: PlanningTask) => string[];
   focus: string;
   onCell: (rowKey: string, unit: number) => void;
   onCellLongPress: (rowKey: string, unit: number) => void;
@@ -713,8 +1514,22 @@ function Track({
   onBarLongPress: (segment: Segment) => void;
 }) {
   const track = useRef<HostInstance>(null);
-  const height = rowHeight(row);
-  const pct = (unit: number) => `${(unit / board.units) * 100}%` as const;
+  const height = lanes * lane + LANE_GAP;
+  /** Where a bar starts on the tracks, and how far its text can slide before leaving it. */
+  const reach = (segment: Segment) => ({
+    left: Math.round(pageLeft + (segment.startSlot / board.units) * trackWidth),
+    slack: Math.max(0, Math.round((segment.span / board.units) * trackWidth) - 48),
+  });
+  /** How far a bar's start is hidden past the left edge, short of pushing its text out of it. */
+  const hidden = (segment: Segment) => {
+    const { left, slack } = reach(segment);
+    return clamp(Math.round(scrolledX) - left, 0, slack);
+  };
+  /** Lines given to each text of a bar, for the room it has: its height, and its width past that inset. */
+  const fit = (segment: Segment) => {
+    const width = (segment.span / board.units) * trackWidth - hidden(segment) - BAR_PADDING;
+    return fitBar(barLines(segment, infoOf), segment.badge, lane - LANE_GAP, width);
+  };
   const at = (event: GestureResponderEvent, then: (rowKey: string, unit: number) => void) => {
     // pageX exists on phones and in the browser alike (locationX does not on the web).
     const pageX = event.nativeEvent.pageX;
@@ -733,37 +1548,168 @@ function Track({
       delayLongPress={350}
       style={[styles.track, { height }]}
     >
-      <Shading columns={board.columns} view={view} />
+      <Shading columns={board.columns} view={view} wide={wide} minute={view === 'day' ? minuteNow() : 0} />
       {row.segments.map((segment) => (
         <Bar
           key={`${segment.id}:${segment.lane}`}
           segment={segment}
+          rowKey={row.key}
+          units={board.units}
           focused={Boolean(focus) && (segment.task?.project_number ?? '').trim() === focus}
           dimmed={Boolean(focus) && segment.kind === 'task' && (segment.task?.project_number ?? '').trim() !== focus}
-          style={{ left: pct(segment.startSlot), width: pct(segment.span), top: segment.lane * LANE_HEIGHT + 4 }}
-          onPress={() => onBar(segment, row.key)}
-          onLongPress={() => onBarLongPress(segment)}
+          barHeight={lane - LANE_GAP}
+          inset={hidden(segment)}
+          scroll={scroll}
+          left={scroll ? reach(segment).left : 0}
+          slack={scroll ? reach(segment).slack : 0}
+          fit={fit(segment)}
+          infoOf={infoOf}
+          onBar={onBar}
+          onBarLongPress={onBarLongPress}
         />
       ))}
     </Pressable>
   );
 }
 
-function Bar({
-  segment,
-  focused,
-  dimmed,
-  style,
-  onPress,
-  onLongPress,
-}: {
+/** A text of a bar: its first line (the dossier, or the title of a task without one), the title, or a detail. */
+type BarLine = { key: string; kind: 'head' | 'title' | 'more'; text: string; wraps: boolean };
+
+/** The texts a task's bar can show, most wanted first. */
+function barLines(segment: Segment, infoOf: (task: PlanningTask) => string[]): BarLine[] {
+  const task = segment.task;
+  if (!task) return [{ key: 'head', kind: 'head', text: segment.label, wraps: true }];
+  const { number, title } = barParts(task);
+  // The moon of a night stays on the first line, which is read at any size.
+  const mark = (segment.provisional ? ' ?' : '') + (segment.night ? ' ☾' : '');
+  const lines: BarLine[] = [];
+  // A dossier number stands alone on the first line, and is cut rather than wrapped: a
+  // half-day bar is just as wide as its four digits.
+  if (number) {
+    lines.push({ key: 'head', kind: 'head', text: number + mark, wraps: false });
+    if (title || segment.badge) lines.push({ key: 'title', kind: 'title', text: title, wraps: true });
+  } else lines.push({ key: 'head', kind: 'head', text: (title || segment.label) + mark, wraps: true });
+  // A night says its hours before anything else: its bar fills a column, not those hours.
+  if (segment.night) lines.push({ key: 'night', kind: 'more', text: `Nuit ${segment.night}`, wraps: true });
+  infoOf(task).forEach((text, index) => lines.push({ key: `more${index}`, kind: 'more', text, wraps: true }));
+  return lines;
+}
+
+/**
+ * How many lines each text of a bar gets, as « 1.2.1.0 », for a bar `barHeight` high whose
+ * texts have `width` to run in. In turn: the first line; the title; one more piece of
+ * information; a second line for the title if it needs one; the other pieces, a line
+ * each; then, with what room is left, every text is wrapped as far as it needs, the title
+ * first. A narrow or low bar thus says a little of everything before it says all of one
+ * thing. Whether a text needs wrapping is judged from its length: nothing is measured,
+ * so a text may be given a line it does not fill.
+ */
+function fitBar(lines: BarLine[], badge: string, barHeight: number, width: number): string {
+  const counts = lines.map(() => 0);
+  const lineOf = (line: BarLine) => (line.kind === 'head' ? NUMBER_LINE : DETAIL_LINE);
+  const needs = lines.map((line) => {
+    if (!line.wraps) return 1;
+    const lead = line.kind !== 'more' && badge ? badge.length + 1 : 0;
+    const run = (line.text.length + lead) * (line.kind === 'head' ? HEAD_CHAR : TEXT_CHAR);
+    return clamp(Math.ceil(run / Math.max(1, width)), 1, MAX_WRAP);
+  });
+  const main = lines.findIndex((line) => line.wraps && line.kind !== 'more');
+  const details = lines.map((_line, index) => index).filter((index) => lines[index].kind === 'more');
+  const mainTurn = main >= 0 ? [main] : [];
+  // A task without a dossier has only its title to be known by: its second line comes first.
+  const order = main === 0 ? [0, 0, ...details] : [0, ...mainTurn, ...details.slice(0, 1), ...mainTurn, ...details.slice(1)];
+  for (let pass = 2; pass < MAX_WRAP; pass += 1) order.push(...mainTurn, ...details);
+  let left = barHeight - BAR_FRAME;
+  for (const index of order) {
+    const first = index === 0 && counts[0] === 0;
+    if (counts[index] >= needs[index] || (!first && left < lineOf(lines[index]))) continue;
+    // A piece of information is not shown after one that had to be left out.
+    if (lines[index].kind === 'more' && counts[index] === 0 && details.some((other) => other < index && counts[other] === 0)) continue;
+    counts[index] += 1;
+    left -= lineOf(lines[index]);
+  }
+  return counts.join('.');
+}
+
+type BarProps = {
   segment: Segment;
+  rowKey: string;
+  units: number;
   focused: boolean;
   dimmed: boolean;
-  style: { left: `${number}%`; width: `${number}%`; top: number };
-  onPress: () => void;
-  onLongPress: () => void;
-}) {
+  barHeight: number;
+  /** How far its text is pushed in, where the sideways scroll last came to rest. */
+  inset: number;
+  /** The scroll as it moves, and what `inset` is worked out from: the text follows the edge between two rests. */
+  scroll: Animated.Value | null;
+  left: number;
+  slack: number;
+  /** Lines of each of its texts, from `fitBar`. */
+  fit: string;
+  infoOf: (task: PlanningTask) => string[];
+  onBar: (segment: Segment, rowKey: string) => void;
+  onBarLongPress: (segment: Segment) => void;
+};
+
+/**
+ * A bar is drawn again only when what it shows changes. Its three functions are new at
+ * every render of the screen but always do the same for a given segment (open it, open
+ * its menu, read its task), and a planning read again brings new segments: they are left
+ * out of the comparison.
+ */
+function sameBar(a: BarProps, b: BarProps): boolean {
+  return (
+    a.segment === b.segment &&
+    a.rowKey === b.rowKey &&
+    a.units === b.units &&
+    a.focused === b.focused &&
+    a.dimmed === b.dimmed &&
+    a.barHeight === b.barHeight &&
+    a.inset === b.inset &&
+    a.scroll === b.scroll &&
+    a.left === b.left &&
+    a.slack === b.slack &&
+    a.fit === b.fit
+  );
+}
+
+const Bar = memo(function Bar({
+  segment,
+  rowKey,
+  units,
+  focused,
+  dimmed,
+  barHeight,
+  inset,
+  scroll,
+  left,
+  slack,
+  fit,
+  infoOf,
+  onBar,
+  onBarLongPress,
+}: BarProps) {
+  // Between two rests of the scroll the text slides with the edge, moved where the scroll
+  // is (no round trip through React, so no lag); at rest `inset` takes over, the text is
+  // laid out again in the width it has left, and this slide is back to nothing.
+  const slide = useMemo(
+    () =>
+      scroll && slack > 0
+        ? scroll.interpolate({ inputRange: [left, left + slack], outputRange: [-inset, slack - inset], extrapolate: 'clamp' })
+        : null,
+    [scroll, left, slack, inset],
+  );
+  const style = {
+    left: `${(segment.startSlot / units) * 100}%`,
+    width: `${(segment.span / units) * 100}%`,
+    top: segment.lane * (barHeight + LANE_GAP) + LANE_GAP,
+  } as const;
+  const onPress = () => onBar(segment, rowKey);
+  const onLongPress = () => onBarLongPress(segment);
+  const height = { height: barHeight, paddingLeft: 2 + inset };
+  const sliding = slide ? { transform: [{ translateX: slide }] } : undefined;
+  // Lines of detail a bar has room for under its first one.
+  const room = Math.max(0, Math.floor((barHeight - 2 - NUMBER_LINE) / DETAIL_LINE));
   if (segment.kind === 'absence') {
     return (
       <Pressable
@@ -773,54 +1719,98 @@ function Bar({
         onPress={onPress}
         onLongPress={onLongPress}
         delayLongPress={350}
-        style={[styles.bar, styles.absence, style]}
+        style={[styles.bar, height, styles.absence, style]}
       >
-        <Text style={styles.absenceText} numberOfLines={1}>
-          {segment.label}
-        </Text>
+        <Animated.View style={sliding}>
+          <Text style={styles.absenceText} numberOfLines={clamp(room + 1, 1, 3)}>
+            {segment.label}
+          </Text>
+        </Animated.View>
       </Pressable>
     );
   }
+  const urgent = Boolean(segment.task?.urgent);
+  const night = Boolean(segment.night);
+  // A bar tall enough stacks its texts, each on the lines `fit` gives it: the dossier, the
+  // people badge and the title, then what `infoOf` adds as the zoom makes room for it.
+  const stacked = barHeight >= STACKED_FROM;
+  const lines = stacked ? barLines(segment, infoOf) : [];
+  const counts = fit.split('.').map(Number);
+  const shown = counts.reduce((sum, count) => sum + count, 0);
+  // The badge leads the title, or the first line of a task without a dossier.
+  const badged = lines.some((line) => line.kind === 'title') ? 'title' : 'head';
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${segment.task ? taskLabel(segment.task) : segment.label}${segment.badge ? `, ${segment.badge}` : ''}`}
+      accessibilityLabel={`${segment.task ? taskLabel(segment.task) : segment.label}${segment.badge ? `, ${segment.badge}` : ''}${urgent ? ', urgent' : ''}${night ? `, travail de nuit ${segment.night}` : ''}`}
       accessibilityHint="Appui long : actions de la tâche"
       onPress={onPress}
       onLongPress={onLongPress}
       delayLongPress={350}
       style={[
         styles.bar,
+        height,
         style,
         { borderColor: segment.color, backgroundColor: `${segment.color}33` },
+        // A night of work: the one dark bar of the board, edged in the colour of its type.
+        night && [styles.night, { borderLeftColor: segment.color }],
         segment.provisional && styles.provisional,
+        // A red edge says « urgent » at any width, where a « ! » would be cut off.
+        urgent && styles.urgentEdge,
         segment.done && styles.done,
         focused && styles.focused,
         dimmed && styles.dimmed,
+        stacked && shown > 2 && styles.barFromTop,
       ]}
     >
-      <Text style={styles.barText} numberOfLines={1}>
-        {/* The badge leads so that a narrow bar still shows « 1/2 » or « ×2 ». */}
-        {segment.badge ? <Text style={styles.badge}>{segment.badge} </Text> : null}
-        {segment.task?.urgent ? <Text style={styles.urgent}>! </Text> : null}
-        {segment.label}
-        {segment.provisional ? ' ?' : ''}
-      </Text>
+      <Animated.View style={sliding}>
+      {stacked ? (
+        lines.map((line, index) => {
+          const count = counts[index] ?? 0;
+          if (!count) return null;
+          if (!line.wraps) {
+            // One line high and cut, not « 49… ».
+            return (
+              <View key={line.key} style={styles.barNumberBox}>
+                <Text style={[styles.barNumber, night && styles.nightText]}>{line.text}</Text>
+              </View>
+            );
+          }
+          return (
+            <Text
+              key={line.key}
+              style={[line.kind === 'head' ? styles.barNumber : line.kind === 'title' ? styles.barDetail : styles.barMore, night && styles.nightText]}
+              numberOfLines={count}
+            >
+              {segment.badge && line.kind === badged ? <Text style={[styles.badge, night && styles.nightText]}>{segment.badge} </Text> : null}
+              {line.text}
+            </Text>
+          );
+        })
+      ) : (
+        <Text style={[styles.barText, night && styles.nightText]} numberOfLines={1}>
+          {night ? '☾ ' : ''}
+          {/* The badge leads so that a narrow bar still shows « 1/2 » or « ×2 ». */}
+          {segment.badge ? <Text style={styles.badge}>{segment.badge} </Text> : null}
+          {urgent ? <Text style={styles.urgent}>! </Text> : null}
+          {segment.label}
+          {segment.provisional ? ' ?' : ''}
+        </Text>
+      )}
+      </Animated.View>
     </Pressable>
   );
-}
+}, sameBar);
 
-function Backlog({
-  cards,
-  data,
-  focus,
-  onLongPress,
-}: {
+type BacklogProps = {
   cards: PlanningTask[];
   data: ReturnType<typeof usePlanning>['data'];
   focus: string;
   onLongPress: (task: PlanningTask) => void;
-}) {
+};
+
+/** Not drawn again by a pinch: `onLongPress` always opens the menu of the card it is given. */
+const Backlog = memo(function Backlog({ cards, data, focus, onLongPress }: BacklogProps) {
   return (
     <View style={styles.backlog}>
       <View style={styles.backlogHead}>
@@ -854,27 +1844,33 @@ function Backlog({
               <Text style={styles.cardTitle} numberOfLines={2}>
                 {(task.title ?? '').trim() || task.project_cache?.designation || 'Sans titre'}
               </Text>
-              {(task.required_people ?? 1) > 1 ? <Muted>{task.required_people}p</Muted> : null}
             </Pressable>
           );
         })}
       </ScrollView>
     </View>
   );
-}
+}, (a, b) => a.cards === b.cards && a.data === b.data && a.focus === b.focus);
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   fill: { left: 0, right: 0 },
   empty: { padding: 20, gap: 12 },
-  toolbar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 8 },
+  toolbar: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingTop: 8 },
   segments: { flex: 1, flexDirection: 'row', borderWidth: 1, borderColor: colors.line },
   segment: { flex: 1, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
   segmentOn: { backgroundColor: colors.accent100 },
-  segmentText: { fontFamily: fonts.heading, fontSize: 14, letterSpacing: 1, textTransform: 'uppercase', color: colors.muted },
+  segmentText: { fontFamily: fonts.heading, fontSize: 14, letterSpacing: 0.6, textTransform: 'uppercase', color: colors.muted },
   segmentTextOn: { color: colors.accent900 },
-  todayButton: { minHeight: 36, justifyContent: 'center', paddingHorizontal: 10, borderWidth: 1, borderColor: colors.line },
+  todayButton: { minHeight: 36, justifyContent: 'center', paddingHorizontal: 8, borderWidth: 1, borderColor: colors.line },
   todayText: { fontFamily: fonts.heading, fontSize: 14, letterSpacing: 1, textTransform: 'uppercase', color: colors.accent700 },
+  toolButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line },
+  // Something is left out of the board: the button says so.
+  toolButtonOn: { borderColor: colors.accent700, backgroundColor: colors.accent100 },
+  swatch: { width: 14, height: 14 },
+  notices: { paddingHorizontal: CONTENT_PAD, paddingTop: 10, gap: 10 },
+  heading: { flexDirection: 'row', paddingHorizontal: CONTENT_PAD, paddingTop: 6, backgroundColor: colors.bg },
+  headingClip: { flex: 1, overflow: 'hidden' },
   periodRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -886,7 +1882,8 @@ const styles = StyleSheet.create({
   arrow: { width: touch, height: touch, alignItems: 'center', justifyContent: 'center' },
   period: { flex: 1, alignItems: 'center' },
   periodText: { fontFamily: fonts.headingBold, fontSize: 17, textTransform: 'uppercase', color: colors.text },
-  content: { padding: 16, paddingBottom: 32, gap: 10 },
+  // Narrow side margins: every pixel of width goes to the days.
+  content: { paddingHorizontal: CONTENT_PAD, paddingBottom: 32, gap: 10 },
   toast: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -898,10 +1895,15 @@ const styles = StyleSheet.create({
   toastAction: { minHeight: touch, justifyContent: 'center', paddingHorizontal: 14 },
   toastActionText: { fontFamily: fonts.headingBold, fontSize: 15, letterSpacing: 1, textTransform: 'uppercase', color: colors.accent200 },
   board: { flexDirection: 'row' },
+  // The pages, side by side.
+  strip: { flexDirection: 'row' },
   headerCell: { height: 34, borderBottomWidth: 1, borderBottomColor: colors.text, position: 'relative' },
   headerDays: { flexDirection: 'row', alignItems: 'flex-end', paddingBottom: 2 },
   dayHeading: { textAlign: 'center' },
-  today: { color: colors.accent700 },
+  weekdayLetter: { fontFamily: fonts.heading, fontSize: 9, lineHeight: 11, textAlign: 'center', color: colors.muted },
+  today: { color: '#ffffff', backgroundColor: colors.accent700 },
+  todayColumn: { position: 'absolute', top: 0, bottom: 0, backgroundColor: `${colors.accent}1f` },
+  nowLine: { position: 'absolute', top: 0, bottom: 0, width: 2, marginLeft: -1, backgroundColor: colors.accent700 },
   holiday: { fontFamily: fonts.body, fontSize: 9, color: colors.absenceInk, textAlign: 'center' },
   holidayTag: { position: 'absolute', top: 0, right: 0, fontFamily: fonts.body, fontSize: 11, color: colors.absenceInk },
   tick: { position: 'absolute', bottom: 2, fontFamily: fonts.heading, fontSize: 11, color: colors.muted, marginLeft: -2 },
@@ -913,18 +1915,29 @@ const styles = StyleSheet.create({
   name: { fontFamily: fonts.headingBold, fontSize: 14, letterSpacing: 0.5, color: colors.text },
   track: { position: 'relative', borderBottomWidth: 1, borderBottomColor: colors.lineSoft },
   dayLine: { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: colors.lineSoft },
+  weekLine: { backgroundColor: colors.line },
   closed: { position: 'absolute', top: 0, bottom: 0, backgroundColor: colors.closed },
   bar: {
     position: 'absolute',
-    height: BAR_HEIGHT,
     borderWidth: 1,
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
     justifyContent: 'center',
     overflow: 'hidden',
   },
   barText: { fontFamily: fonts.heading, fontSize: 12, color: colors.text },
+  barNumberBox: { height: 16, overflow: 'hidden' },
+  barNumber: { fontFamily: fonts.headingBold, fontSize: 13, lineHeight: 16, color: colors.text },
+  barDetail: { fontFamily: fonts.body, fontSize: 11, lineHeight: DETAIL_LINE, color: colors.subtle },
+  barMore: { fontFamily: fonts.body, fontSize: 11, lineHeight: DETAIL_LINE, color: colors.muted },
+  barFromTop: { justifyContent: 'flex-start', paddingTop: 2 },
+  mondayDate: { width: 40, fontSize: 10, letterSpacing: 0.4 },
+  todayMark: { height: 3 },
+  todayMarkOn: { backgroundColor: colors.accent700 },
   badge: { fontFamily: fonts.headingBold, color: colors.accent900 },
   urgent: { fontFamily: fonts.headingBold, color: colors.err },
+  urgentEdge: { borderLeftWidth: 3, borderLeftColor: colors.err },
+  night: { backgroundColor: colors.accent900, borderColor: colors.accent900, borderLeftWidth: 4 },
+  nightText: { color: '#ffffff' },
   provisional: { borderStyle: 'dashed' },
   done: { opacity: 0.45 },
   focused: { borderWidth: 2.5, borderColor: colors.accent900 },

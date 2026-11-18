@@ -60,7 +60,7 @@ export function useDossierActions() {
       repertoire: (number: string) =>
         router.navigate({ pathname: '/repertoire', params: { dossier: number, at: String(Date.now()) } }),
       planning: (number: string) => router.navigate({ pathname: '/planning', params: { dossier: number, at: String(Date.now()) } }),
-      task: (number: string) => router.push({ pathname: '/saisie', params: { text: `${number} ` } }),
+      task: (number: string) => router.push({ pathname: '/creer', params: { dossier: number } }),
       copy: (number: string) => Clipboard.setStringAsync(number).then(() => undefined),
     }),
     [openFiche],

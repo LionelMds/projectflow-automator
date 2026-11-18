@@ -43,6 +43,8 @@ export default function RootLayout() {
                     <Stack.Screen name="ligne" options={{ presentation: 'modal' }} />
                     <Stack.Screen name="tache" options={{ presentation: 'modal' }} />
                     <Stack.Screen name="absence" options={{ presentation: 'modal' }} />
+                    <Stack.Screen name="creer" options={{ presentation: 'modal' }} />
+                    <Stack.Screen name="recherche" options={{ presentation: 'modal' }} />
                     <Stack.Screen name="saisie" options={{ presentation: 'modal' }} />
                     <Stack.Screen name="dossier" options={{ presentation: 'modal' }} />
                   </Stack>

@@ -30,6 +30,8 @@ export function WhenPicker({
   calendar,
   today,
   disabled = false,
+  reveal = null,
+  onEdge,
 }: {
   value: When;
   /** The new span, and the edge turned. */
@@ -37,10 +39,21 @@ export function WhenPicker({
   calendar: WorkCalendar;
   today: number;
   disabled?: boolean;
+  /** The edge being written elsewhere (a text read as it is typed): its wheels open, and turn with `value`. */
+  reveal?: Edge | null;
+  /** The edge whose wheels were just opened: what looks at the span may then look at that end of it. */
+  onEdge?: (edge: Edge) => void;
 }) {
-  const [open, setOpen] = useState<Edge | null>(null);
+  const [open, setOpen] = useState<Edge | null>(reveal);
+  // Opened by what is being written, never closed by it: the hand may be on the wheels.
+  const [revealed, setRevealed] = useState(reveal);
+  if (reveal !== revealed) {
+    setRevealed(reveal);
+    if (reveal) setOpen(reveal);
+  }
   const toggle = (edge: Edge) => {
     LayoutAnimation.configureNext(LayoutAnimation.create(220, 'easeInEaseOut', 'opacity'));
+    if (open !== edge) onEdge?.(edge);
     setOpen((current) => (current === edge ? null : edge));
   };
   const backwards = value.end <= value.start;
@@ -148,14 +161,17 @@ function InstantWheels({
 }) {
   const parts = wheelParts(value);
   // The days are set when the wheels open: they hold the day shown whatever is turned after.
-  const [days] = useState(() => {
-    const { first, count } = wheelDays(today, parts.day);
+  // A day set from outside them (a date typed) that they do not hold sets them again.
+  const daysAround = (shown: number) => {
+    const { first, count } = wheelDays(today, shown);
     const items: WheelItem[] = Array.from({ length: count }, (_, index) => {
       const day = first + index;
       return { key: String(day), label: wheelDayLabel(day, today), muted: !calendar.isWorkday(day) };
     });
     return { first, items };
-  });
+  };
+  const [days, setDays] = useState(() => daysAround(parts.day));
+  if (parts.day < days.first || parts.day >= days.first + days.items.length) setDays(daysAround(parts.day));
   return (
     <View style={styles.wheels}>
       <WheelBand />
