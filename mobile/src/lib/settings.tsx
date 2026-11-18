@@ -34,6 +34,8 @@ export type Settings = {
   widgetPeople: string[];
   /** People left out of the planning board on this phone, by id; the others are shown. */
   planningHidden: string[];
+  /** Task types left out of the planning board on this phone, by key; the others are shown. */
+  planningHiddenTypes: string[];
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -52,6 +54,7 @@ export const DEFAULT_SETTINGS: Settings = {
   plannerAssigneeNames: [],
   widgetPeople: [],
   planningHidden: [],
+  planningHiddenTypes: [],
 };
 const STORAGE_KEY = 'projectflow.settings';
 
@@ -102,6 +105,7 @@ export function parseSettings(raw: string | null): Settings {
       plannerAssigneeNames: strings(data.plannerAssigneeNames),
       widgetPeople: strings(data.widgetPeople),
       planningHidden: strings(data.planningHidden),
+      planningHiddenTypes: strings(data.planningHiddenTypes),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -133,6 +137,7 @@ export function cleanSettings(next: Settings): Settings {
     plannerAssigneeNames: names,
     widgetPeople: [...new Set(next.widgetPeople)],
     planningHidden: [...new Set(next.planningHidden)],
+    planningHiddenTypes: [...new Set(next.planningHiddenTypes)],
   };
 }
 

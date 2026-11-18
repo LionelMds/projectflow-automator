@@ -19,7 +19,7 @@ import {
   type PlanningTask,
   type Resource,
 } from '@/lib/planning/models';
-import { parseDate, parseWallTime, weekday, type WallTime } from '@/lib/planning/walltime';
+import { hhmm, parseDate, parseWallTime, weekday, type WallTime } from '@/lib/planning/walltime';
 
 export const DAYS = 5;
 export const SLOTS = DAYS * 2;
@@ -44,6 +44,8 @@ export type Segment = {
   done: boolean;
   /** « ×2 » when several people share the task. */
   badge: string;
+  /** « 21:00–05:00 » for a night of work, which fills the column of its evening; empty otherwise. */
+  night: string;
   task?: PlanningTask;
   absenceId?: string;
 };
@@ -213,6 +215,7 @@ function absenceSegment(id: string, units: [number, number], label: string, abse
     provisional: false,
     done: false,
     badge: '',
+    night: '',
     absenceId,
   };
 }
@@ -253,6 +256,7 @@ export function buildBoard(
       provisional: task.status === 'provisional',
       done: task.status === 'done',
       badge: badgeOf(task),
+      night: task.off_hours ? `${hhmm(start.minutes)}–${hhmm(end.minutes)}` : '',
       task,
     };
     const owners = assigneeIds(task).filter((id) => known.has(id));

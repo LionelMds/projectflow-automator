@@ -425,7 +425,7 @@ export default function TacheScreen() {
             <LabeledInput
               label="Dossier"
               value={text('project_number')}
-              placeholder="2026-4995"
+              placeholder="20AA-XXXX"
               autoCapitalize="characters"
               editable={!locked}
               onChangeText={(value) => setEdits((previous) => ({ ...previous, project_number: value }))}

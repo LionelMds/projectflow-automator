@@ -31,6 +31,7 @@ export function WhenPicker({
   today,
   disabled = false,
   reveal = null,
+  onEdge,
 }: {
   value: When;
   /** The new span, and the edge turned. */
@@ -40,6 +41,8 @@ export function WhenPicker({
   disabled?: boolean;
   /** The edge being written elsewhere (a text read as it is typed): its wheels open, and turn with `value`. */
   reveal?: Edge | null;
+  /** The edge whose wheels were just opened: what looks at the span may then look at that end of it. */
+  onEdge?: (edge: Edge) => void;
 }) {
   const [open, setOpen] = useState<Edge | null>(reveal);
   // Opened by what is being written, never closed by it: the hand may be on the wheels.
@@ -50,6 +53,7 @@ export function WhenPicker({
   }
   const toggle = (edge: Edge) => {
     LayoutAnimation.configureNext(LayoutAnimation.create(220, 'easeInEaseOut', 'opacity'));
+    if (open !== edge) onEdge?.(edge);
     setOpen((current) => (current === edge ? null : edge));
   };
   const backwards = value.end <= value.start;

@@ -1,17 +1,6 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
-import {
-  Keyboard,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  type HostInstance,
-  type KeyboardEvent,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, type HostInstance } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Blueprint } from '@/components/Blueprint';
@@ -21,8 +10,10 @@ import { Notice } from '@/components/Notice';
 import { Segmented } from '@/components/Segmented';
 import { Caps, DossierNumber, Kicker, Muted } from '@/components/Text';
 import { WhenPicker } from '@/components/WhenPicker';
+import { useKeyboardLift } from '@/lib/keyboard';
 import { close } from '@/lib/navigation';
 import type { WorkCalendar } from '@/lib/planning/calendar';
+import { awayOver } from '@/lib/planning/away';
 import { calendarResolver, contextFor, createAbsence, createTask } from '@/lib/planning/commands';
 import type { Change } from '@/lib/planning/documents';
 import { dossierCache } from '@/lib/planning/dossiers';
@@ -136,25 +127,6 @@ function withWhen(text: string, tokens: readonly Token[], words: string): string
   const who = tokens.filter((token) => token.kind === 'person' || token.kind === 'team').sort((a, b) => a.start - b.start)[0];
   const at = Math.min(said.length ? said[0].start : who ? who.start : rest.length, rest.length);
   return `${[rest.slice(0, at).trim(), words, rest.slice(at).trim()].filter(Boolean).join(' ').replace(/\s+/g, ' ')} `;
-}
-
-/**
- * How far the keyboard covers the screen above its bottom inset. The screen is a sheet: it
- * does not start at the top of the display, which a `KeyboardAvoidingView` does not know
- * (and measuring a view « in the window » answers within the sheet too), but it does end at
- * the bottom of the display, where the keyboard's own height says what it hides.
- */
-function useKeyboardLift(inset: number): number {
-  const [height, setHeight] = useState(0);
-  useEffect(() => {
-    // Android resizes the window itself; a browser has no keyboard of its own.
-    if (Platform.OS !== 'ios') return undefined;
-    const rise = (event: KeyboardEvent) => setHeight(event.endCoordinates.height);
-    const fall = () => setHeight(0);
-    const subscriptions = [Keyboard.addListener('keyboardWillShow', rise), Keyboard.addListener('keyboardWillHide', fall)];
-    return () => subscriptions.forEach((subscription) => subscription.remove());
-  }, []);
-  return Math.max(0, height - inset);
 }
 
 export default function SaisieScreen() {
@@ -870,28 +842,6 @@ export default function SaisieScreen() {
       </View>
     </SafeAreaView>
   );
-}
-
-/** Who is away at some point of `when`, and why (an absence, or a day off every week). */
-function awayOver(data: PlanningData, when: When): Map<string, string> {
-  const reasons = new Map<string, string>();
-  const first = instantDay(when.start);
-  const last = instantDay(when.end - 1);
-  for (const record of data.absences) {
-    if (record.deleted_at) continue;
-    const from = parseDate(record.first_day);
-    const to = parseDate(record.last_day);
-    if (from === null || to === null || from > last || to < first) continue;
-    reasons.set(record.resource_id, ABSENCE_LABELS[record.reason ?? 'absent'] ?? 'Absent');
-  }
-  for (const resource of data.resources) {
-    for (const off of resource.recurring_off ?? []) {
-      for (let day = first; day <= last; day += 1) {
-        if (weekday(day) === off.weekday && !reasons.has(resource.id)) reasons.set(resource.id, ABSENCE_LABELS[off.reason ?? 'ecole'] ?? 'Absent');
-      }
-    }
-  }
-  return reasons;
 }
 
 /**

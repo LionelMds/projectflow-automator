@@ -46,6 +46,30 @@ du poste sont reprises en TypeScript avec leurs propres tests unitaires (portés
   - vues **Jour**, **Semaine** et **Mois** du tableau magnétique (une ligne par personne, par
     équipe ; demi-journées ; samedi et dimanche jamais affichés), jours fériés GE / VD et
     fermetures de l'entreprise grisés avec leur nom, vendredi après-midi non travaillé ;
+  - **défilement continu** : les jours, semaines ou mois sont des pages côte à côte sur une seule
+    bande (un an en arrière, deux en avant ; seules la page affichée et ses voisines sont
+    dessinées). Un glissement amène la page suivante, qui s'aimante pile en place tant qu'une
+    page tient à l'écran ; agrandie (deux doigts, ou Ctrl + molette dans un navigateur), la bande
+    défile librement d'une page à l'autre. La ligne des jours ou des heures reste figée en haut ;
+  - **nuits de travail** : barre sombre bordée de la couleur du type, marquée « ☾ », avec ses
+    heures (« Nuit 21:00–05:00 ») dès que la barre a la place ;
+  - **affichage** (bouton filtre) : types de tâche et personnes montrés sur ce téléphone. Aucun
+    type choisi, tous sont affichés ; le premier touché devient le seul affiché (« seulement les
+    rendez-vous » en un geste), les suivants s'ajoutent. Une ligne au-dessus de la grille rappelle
+    le filtre en service et l'efface ;
+  - **recherche** (loupe, `src/app/recherche.tsx`, `src/lib/planning/search.ts`) : toutes les
+    tâches, trouvées par des mots tapés comme ils viennent (numéro, désignation, client, lieu,
+    initiales ou nom, type, statut, notes, date `16.11`, semaine `s47`, `nuit`, `urgent`) et
+    resserrées par des filtres : Quand (en cours et à venir, à planifier, passées), Type, Statut,
+    Urgent, Nuit, Qui. Une tâche ouvre sa fiche ; son bouton calendrier montre son jour au
+    planning ;
+  - **nouvelle tâche, une question à la fois** (`src/app/creer.tsx`) : Dossier (numéro, dossiers
+    récents à toucher, « Sans dossier »), Désignation, Type, Qui, Quand (rouleaux Début / Fin,
+    travail de nuit, « Sans date », et un aperçu de l'emplacement : la semaine des personnes
+    choisies avec la nouvelle tâche, ses conflits et absences), puis Finaliser (récapitulatif,
+    statut, urgent, échéance, notes). Un fil en haut rappelle les réponses et ramène à chacune ;
+    ouverte depuis une case ou un dossier, les questions déjà répondues sont passées. C'est
+    l'entrée par défaut ; « Saisie texte » ouvre la saisie en une ligne ci-dessous ;
   - **saisie rapide** avec la grammaire du poste (`2026-121 montage marquise jeu-ven LBI YCH`,
     `/vac LBI lun 5j`…), aperçu en direct, avertissement si une personne est absente ; toucher une
     case vide ouvre la saisie sur cette ligne et cette demi-journée. Sous le champ, ce qui est
@@ -62,8 +86,9 @@ du poste sont reprises en TypeScript avec leurs propres tests unitaires (portés
     tâche du dossier et met ses tâches en évidence ;
   - **désignation des tâches** comme sur le poste : une tâche sans titre saisi prend la désignation
     de son dossier (sinon le nom du type), et copie client, contact et désignation du répertoire ;
-    le répertoire de l'année du dossier est lu au besoin. Un numéro court (`4998`) se complète en
-    `2026-4998` quand il est unique, et changer le dossier d'une tâche recopie ses données. Une
+    le répertoire de l'année du dossier est lu au besoin. Un numéro s'écrit sans son année : le
+    champ montre `20AA-XXXX`, et un numéro court (`4998`) se complète en `2026-4998` quand il est
+    unique, et changer le dossier d'une tâche recopie ses données. Une
     tâche sans copie affiche celles du répertoire ;
   - **fiche d'une tâche** : titre, dossier et statut en tête avec les accès au dossier, puis Quand
     (jour, demi-journée, durée), Qui (personnes, choix par équipe), Détails
