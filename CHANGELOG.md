@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.81
+
 - Planning : nouveau bouton « Hors horaires standard » dans le « Detail », a cote de
   « Travail de nuit ». Une tache ainsi marquee n'est plus retenue par les horaires : elle se
   place, s'etire et se saisit aussi entre 12:00 et 13:00 et le vendredi apres-midi, et ces
