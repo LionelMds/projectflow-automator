@@ -53,6 +53,14 @@ du poste sont reprises en TypeScript avec leurs propres tests unitaires (portés
     défile librement d'une page à l'autre. La ligne des jours ou des heures reste figée en haut ;
   - **nuits de travail** : barre sombre bordée de la couleur du type, marquée « ☾ », avec ses
     heures (« Nuit 21:00–05:00 ») dès que la barre a la place ;
+  - **hors horaires standard** : les horaires restent bloqués (06:30–12:00 et 13:00–16:30, vendredi
+    jusqu'à 12:00), mais une tâche peut en sortir par la bascule « Hors horaires standard », à côté
+    de « Travail de nuit » (création par étapes, saisie rapide, fiche de la tâche). Elle est alors
+    posée et mesurée sans pause : lundi à vendredi 06:30–12:00 et 12:00–16:30 (une journée = 10 h),
+    week-ends, fériés et fermetures toujours exclus. Activer ne change que le drapeau ; désactiver
+    remet la tâche sur les horaires standard en gardant sa durée (ven 13:00–15:00 devient lun
+    06:30–08:30). Jamais en même temps que le travail de nuit. Champ `off_standard` de la tâche,
+    `WorkCalendar.withoutBreaks` et `setOffStandard` (`src/lib/planning/`), comme sur le poste ;
   - **affichage** (bouton filtre) : types de tâche et personnes montrés sur ce téléphone. Aucun
     type choisi, tous sont affichés ; le premier touché devient le seul affiché (« seulement les
     rendez-vous » en un geste), les suivants s'ajoutent. Une ligne au-dessus de la grille rappelle
@@ -79,11 +87,15 @@ du poste sont reprises en TypeScript avec leurs propres tests unitaires (portés
     statut Confirmé / Provisoire. Chaque touche écrit le mot que la grammaire lit (`LBI`, `!`,
     `/montage`) ; dossiers du répertoire proposés pendant la frappe. Comme sur le poste, il n'y a
     plus de « personnes requises » (`2p`) ni de badge `1/2` ;
-  - **appui long** (menus du poste) : sur une tâche ou une carte, statut, Modifier, Renvoyer à
-    planifier / Placer, Ouvrir le dossier, Ouvrir la fiche, Voir dans Répertoire, Charger dans
-    Création, Supprimer ; sur une case vide, Nouvelle tâche ici et l'absence du jour ; sur une
-    absence, la voir ou la supprimer. « Voir dans le planning » ouvre la semaine de la prochaine
-    tâche du dossier et met ses tâches en évidence ;
+  - **tâche maintenue, tâche touchée deux fois** : rester appuyé sur une barre ou une carte montre
+    une bulle d'aperçu près du doigt (dossier, désignation, client, dates et durée, type,
+    personnes, statut, urgent, échéance, début des notes) qui disparaît dès qu'on relâche
+    (`src/components/TaskPeek.tsx`). Deux touchers rapprochés ouvrent la fiche ; un seul ne fait
+    rien. Statut, renvoi à planifier, dossier et suppression se font depuis la fiche : le menu
+    d'appui long d'une tâche n'existe plus ;
+  - **appui long ailleurs** (menus du poste) : sur une case vide, Nouvelle tâche ici et l'absence
+    du jour ; sur une absence, la voir ou la supprimer. « Voir dans le planning » ouvre la semaine
+    de la prochaine tâche du dossier et met ses tâches en évidence ;
   - **désignation des tâches** comme sur le poste : une tâche sans titre saisi prend la désignation
     de son dossier (sinon le nom du type), et copie client, contact et désignation du répertoire ;
     le répertoire de l'année du dossier est lu au besoin. Un numéro s'écrit sans son année : le

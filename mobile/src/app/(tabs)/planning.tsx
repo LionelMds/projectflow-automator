@@ -1,5 +1,5 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { CalendarMinus, CalendarPlus, ChevronLeft, ChevronRight, Eye, ListFilter, PenLine, Plus, Search, Trash2, X } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Eye, ListFilter, Plus, Search, Trash2, X } from 'lucide-react-native';
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import {
   Animated,
@@ -21,16 +21,13 @@ import { Notice } from '@/components/Notice';
 import { Screen } from '@/components/Screen';
 import { Caps, DossierNumber, Kicker, Muted } from '@/components/Text';
 import { useAuth } from '@/lib/auth';
-import { useDossierActions } from '@/lib/dossierActions';
+import { TaskPeek, type TaskPeekHandle } from '@/components/TaskPeek';
 import { pressFeedback, selectionFeedback } from '@/lib/haptics';
 import {
   calendarResolver,
   contextFor,
   createAbsence,
   deleteAbsence,
-  deleteTask,
-  setStatus,
-  unscheduleTask,
 } from '@/lib/planning/commands';
 import {
   columnHeading,
@@ -50,12 +47,10 @@ import { dayStart, instantDay, minuteOfDay, parseInstant } from '@/lib/planning/
 import {
   ABSENCE_LABELS,
   isScheduled,
-  STATUS_LABELS,
   taskLabel,
   taskTypeOf,
   taskTypesOf,
   type PlanningTask,
-  type TaskStatus,
 } from '@/lib/planning/models';
 import { usePlanning } from '@/lib/planning/PlanningContext';
 import { snap } from '@/lib/planning/calendar';
@@ -245,17 +240,27 @@ function spread(touches: readonly { pageX: number; pageY: number }[]): number {
   return Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY);
 }
 
+/** Two touches of a task this close open it. */
+const DOUBLE_TAP_MS = 320;
+
+/** When a touch happened, in milliseconds: its own clock on a phone, the browser's otherwise. */
+function touchTime(event: GestureResponderEvent): number {
+  return event.nativeEvent?.timestamp ?? event.timeStamp ?? Date.now();
+}
+/** A task held this long shows its bubble. */
+const PEEK_AFTER_MS = 260;
+
 /** Minutes since midnight, for the « now » line of the day view. */
 function minuteNow(): number {
   const now = new Date();
   return now.getHours() * 60 + now.getMinutes();
 }
 
-const STATUSES: TaskStatus[] = ['provisional', 'confirmed', 'done'];
-
-/** What a long press was on: a task (bar or card), an absence, or an empty half-day of a row. */
+/**
+ * What a long press opened a menu on: an absence, or an empty half-day of a row. A task
+ * held shows its bubble instead; what its menu offered is on its sheet.
+ */
 type Menu =
-  | { kind: 'task'; task: PlanningTask }
   | { kind: 'absence'; absenceId: string; label: string }
   | { kind: 'cell'; rowKey: string; start: number; end: number | null };
 
@@ -272,7 +277,7 @@ export default function PlanningScreen() {
   const [asked, setAsked] = useState(0);
   const [actionError, setActionError] = useState('');
   const [menu, setMenu] = useState<Menu | null>(null);
-  const dossier = useDossierActions();
+  const peek = useRef<TaskPeekHandle>(null);
   const { restricted } = useRestriction();
   const ready = loaded && (settings.demo || status === 'signedIn');
 
@@ -750,25 +755,26 @@ export default function PlanningScreen() {
     setMenu({ kind: 'cell', rowKey, ...slot });
   };
 
+  /** A task touched twice, or an absence touched: its sheet. */
   const onBar = (segment: Segment, rowKey: string) => {
     if (segment.task) router.push({ pathname: '/tache', params: { id: segment.task.id, row: rowKey } });
     else if (segment.absenceId) router.push({ pathname: '/absence', params: { id: segment.absenceId } });
   };
 
-  const onBarLongPress = (segment: Segment) => {
-    if (segment.task) {
-      pressFeedback();
-      setMenu({ kind: 'task', task: segment.task });
-    } else if (segment.absenceId) {
+  /** A task held: its bubble, by the finger, for as long as it is held. An absence held: its menu. */
+  const onBarLongPress = (segment: Segment, event: GestureResponderEvent) => {
+    if (segment.task) onPeek(segment.task, event);
+    else if (segment.absenceId) {
       pressFeedback();
       setMenu({ kind: 'absence', absenceId: segment.absenceId, label: segment.label });
     }
   };
 
-  const onCardLongPress = (task: PlanningTask) => {
+  const onPeek = (task: PlanningTask, event: GestureResponderEvent) => {
     pressFeedback();
-    setMenu({ kind: 'task', task });
+    peek.current?.show(task, event.nativeEvent.pageX, event.nativeEvent.pageY);
   };
+  const onPeekEnd = () => peek.current?.hide();
 
   const ctx = data ? contextFor(data, author) : null;
   const locked = Boolean(editBlocker);
@@ -780,108 +786,6 @@ export default function PlanningScreen() {
 
   const menuSheet = (): { kicker: string; title: string; subtitle: string; accent?: string; sections: SheetSection[] } | null => {
     if (!menu || !data) return null;
-    if (menu.kind === 'task') {
-      const task = (shown ?? data).tasks.find((candidate) => candidate.id === menu.task.id) ?? menu.task;
-      const label = taskLabel(task);
-      const number = (task.project_number ?? '').trim();
-      const current = task.status ?? 'confirmed';
-      const start = parseInstant(task.start ?? '');
-      const end = parseInstant(task.end ?? '');
-      const people = Object.keys(task.assignments ?? {})
-        .map((id) => data.resources.find((resource) => resource.id === id)?.initials || id)
-        .join(' ');
-      const when = start !== null && end !== null ? `${describeInstant(start)} → ${describeInstant(end)}` : 'À planifier';
-      const dossierSection: SheetSection = {
-        title: number ? `Dossier ${number}` : undefined,
-        actions: number ? dossier.actions(number, ['folder', 'fiche', 'repertoire', 'creation']) : [],
-      };
-      const heading = {
-        kicker: number || 'Sans dossier',
-        title: (task.title ?? '').trim() || task.project_cache?.designation || label || 'Sans titre',
-        subtitle: [when, people].filter(Boolean).join(' · '),
-        accent: taskTypeOf(data.meta, task.task_type).color,
-      };
-      if (restricted) {
-        return {
-          ...heading,
-          sections: [
-            {
-              actions: [
-                {
-                  key: 'view',
-                  label: 'Voir la tâche',
-                  icon: (c) => <Eye size={20} color={c} strokeWidth={iconStroke} />,
-                  onPress: () => router.push({ pathname: '/tache', params: { id: task.id } }),
-                },
-              ],
-            },
-            dossierSection,
-          ],
-        };
-      }
-      return {
-        ...heading,
-        sections: [
-          {
-            title: 'Statut',
-            layout: 'segments',
-            actions: STATUSES.map((value) => ({
-              key: value,
-              label: STATUS_LABELS[value],
-              selected: current === value,
-              disabled: locked,
-              onPress:
-                current === value
-                  ? () => undefined
-                  : () => {
-                      selectionFeedback();
-                      return change((c) => setStatus(c, task.id, value), `Statut ${STATUS_LABELS[value]} : ${label}`)();
-                    },
-            })),
-          },
-          {
-            actions: [
-              {
-                key: 'edit',
-                label: 'Modifier la tâche',
-                icon: (c) => <PenLine size={20} color={c} strokeWidth={iconStroke} />,
-                onPress: () => router.push({ pathname: '/tache', params: { id: task.id } }),
-              },
-              isScheduled(task)
-                ? {
-                    key: 'unschedule',
-                    label: 'Renvoyer à planifier',
-                    disabled: locked,
-                    icon: (c) => <CalendarMinus size={20} color={c} strokeWidth={iconStroke} />,
-                    onPress: change((c) => unscheduleTask(c, task.id), `Remis à planifier : ${label}`),
-                  }
-                : {
-                    key: 'place',
-                    label: 'Placer sur le planning',
-                    detail: 'Choisir le jour et les personnes',
-                    disabled: locked,
-                    icon: (c) => <CalendarPlus size={20} color={c} strokeWidth={iconStroke} />,
-                    onPress: () => router.push({ pathname: '/tache', params: { id: task.id } }),
-                  },
-            ],
-          },
-          dossierSection,
-          {
-            actions: [
-              {
-                key: 'delete',
-                label: 'Supprimer la tâche',
-                detail: 'Annulable juste après',
-                destructive: true,
-                disabled: locked,
-                icon: (c) => <Trash2 size={20} color={c} strokeWidth={iconStroke} />,
-                onPress: change((c) => deleteTask(c, task.id), `Tâche supprimée : ${label}`),
-              },
-            ],
-          },
-        ],
-      };
-    }
     if (menu.kind === 'absence') {
       return {
         kicker: 'Absence',
@@ -1283,6 +1187,7 @@ export default function PlanningScreen() {
                               onCellLongPress={(rowKey, unit) => onCellLongPress(rowKey, unit, drawn)}
                               onBar={onBar}
                               onBarLongPress={onBarLongPress}
+                              onBarRelease={onPeekEnd}
                             />
                           ))}
                         </View>
@@ -1303,12 +1208,12 @@ export default function PlanningScreen() {
           />
         ) : null}
 
-        {board ? <Backlog cards={board.backlog} data={data} focus={focus} onLongPress={onCardLongPress} /> : null}
+        {board ? <Backlog cards={board.backlog} data={data} focus={focus} onPeek={onPeek} onPeekEnd={onPeekEnd} /> : null}
         {board ? (
           <Muted style={styles.hint}>
             {restricted
-              ? 'Planning en consultation (accès limité). Touchez une tâche pour la voir.'
-              : 'Touchez une tâche pour la modifier, restez appuyé pour ses actions.'}{' '}
+              ? 'Planning en consultation (accès limité). Maintenez une tâche pour un aperçu, touchez-la deux fois pour la voir.'
+              : 'Maintenez une tâche pour un aperçu, touchez-la deux fois pour l’ouvrir.'}{' '}
             Écartez deux doigts sur la grille pour l’agrandir et lire plus de détails.
           </Muted>
         ) : null}
@@ -1349,6 +1254,9 @@ export default function PlanningScreen() {
           </Text>
         </Pressable>
       )}
+
+      {/* Over everything, and through to it: the bubble of a task being held. */}
+      <TaskPeek ref={peek} data={shown ?? data} calendarFor={calendarFor} />
     </Screen>
   );
 }
@@ -1492,6 +1400,7 @@ function Track({
   onCellLongPress,
   onBar,
   onBarLongPress,
+  onBarRelease,
 }: {
   row: WeekRow;
   board: Board;
@@ -1511,7 +1420,8 @@ function Track({
   onCell: (rowKey: string, unit: number) => void;
   onCellLongPress: (rowKey: string, unit: number) => void;
   onBar: (segment: Segment, rowKey: string) => void;
-  onBarLongPress: (segment: Segment) => void;
+  onBarLongPress: (segment: Segment, event: GestureResponderEvent) => void;
+  onBarRelease: () => void;
 }) {
   const track = useRef<HostInstance>(null);
   const height = lanes * lane + LANE_GAP;
@@ -1566,6 +1476,7 @@ function Track({
           infoOf={infoOf}
           onBar={onBar}
           onBarLongPress={onBarLongPress}
+          onBarRelease={onBarRelease}
         />
       ))}
     </Pressable>
@@ -1647,14 +1558,17 @@ type BarProps = {
   /** Lines of each of its texts, from `fitBar`. */
   fit: string;
   infoOf: (task: PlanningTask) => string[];
+  /** A task touched twice, an absence touched once. */
   onBar: (segment: Segment, rowKey: string) => void;
-  onBarLongPress: (segment: Segment) => void;
+  onBarLongPress: (segment: Segment, event: GestureResponderEvent) => void;
+  /** The finger left a bar it held. */
+  onBarRelease: () => void;
 };
 
 /**
- * A bar is drawn again only when what it shows changes. Its three functions are new at
- * every render of the screen but always do the same for a given segment (open it, open
- * its menu, read its task), and a planning read again brings new segments: they are left
+ * A bar is drawn again only when what it shows changes. Its functions are new at every
+ * render of the screen but always do the same for a given segment (open it, show its
+ * bubble, read its task), and a planning read again brings new segments: they are left
  * out of the comparison.
  */
 function sameBar(a: BarProps, b: BarProps): boolean {
@@ -1688,6 +1602,7 @@ const Bar = memo(function Bar({
   infoOf,
   onBar,
   onBarLongPress,
+  onBarRelease,
 }: BarProps) {
   // Between two rests of the scroll the text slides with the edge, moved where the scroll
   // is (no round trip through React, so no lag); at rest `inset` takes over, the text is
@@ -1705,7 +1620,15 @@ const Bar = memo(function Bar({
     top: segment.lane * (barHeight + LANE_GAP) + LANE_GAP,
   } as const;
   const onPress = () => onBar(segment, rowKey);
-  const onLongPress = () => onBarLongPress(segment);
+  const onLongPress = (event: GestureResponderEvent) => onBarLongPress(segment, event);
+  // A task opens on the second of two touches: the first one alone does nothing.
+  const tapped = useRef(0);
+  const onTap = (event: GestureResponderEvent) => {
+    const now = touchTime(event);
+    const twice = now - tapped.current < DOUBLE_TAP_MS;
+    tapped.current = twice ? 0 : now;
+    if (twice) onPress();
+  };
   const height = { height: barHeight, paddingLeft: 2 + inset };
   const sliding = slide ? { transform: [{ translateX: slide }] } : undefined;
   // Lines of detail a bar has room for under its first one.
@@ -1743,10 +1666,14 @@ const Bar = memo(function Bar({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${segment.task ? taskLabel(segment.task) : segment.label}${segment.badge ? `, ${segment.badge}` : ''}${urgent ? ', urgent' : ''}${night ? `, travail de nuit ${segment.night}` : ''}`}
-      accessibilityHint="Appui long : actions de la tâche"
-      onPress={onPress}
+      accessibilityHint="Ouvre la tâche"
+      // A screen reader's own double touch arrives as one: it opens the task straight away.
+      accessibilityActions={[{ name: 'activate' }]}
+      onAccessibilityAction={onPress}
+      onPress={onTap}
       onLongPress={onLongPress}
-      delayLongPress={350}
+      onPressOut={onBarRelease}
+      delayLongPress={PEEK_AFTER_MS}
       style={[
         styles.bar,
         height,
@@ -1806,11 +1733,21 @@ type BacklogProps = {
   cards: PlanningTask[];
   data: ReturnType<typeof usePlanning>['data'];
   focus: string;
-  onLongPress: (task: PlanningTask) => void;
+  onPeek: (task: PlanningTask, event: GestureResponderEvent) => void;
+  onPeekEnd: () => void;
 };
 
-/** Not drawn again by a pinch: `onLongPress` always opens the menu of the card it is given. */
-const Backlog = memo(function Backlog({ cards, data, focus, onLongPress }: BacklogProps) {
+/** Not drawn again by a pinch: `onPeek` always shows the bubble of the card it is given. */
+const Backlog = memo(function Backlog({ cards, data, focus, onPeek, onPeekEnd }: BacklogProps) {
+  // As a bar, a card opens on the second of two touches.
+  const tapped = useRef({ id: '', at: 0 });
+  const open = (id: string) => router.push({ pathname: '/tache', params: { id } });
+  const onTap = (id: string, event: GestureResponderEvent) => {
+    const now = touchTime(event);
+    const twice = tapped.current.id === id && now - tapped.current.at < DOUBLE_TAP_MS;
+    tapped.current = twice ? { id: '', at: 0 } : { id, at: now };
+    if (twice) open(id);
+  };
   return (
     <View style={styles.backlog}>
       <View style={styles.backlogHead}>
@@ -1829,10 +1766,13 @@ const Backlog = memo(function Backlog({ cards, data, focus, onLongPress }: Backl
               key={task.id}
               accessibilityRole="button"
               accessibilityLabel={taskLabel(task)}
-              accessibilityHint="Appui long : actions de la carte"
-              onPress={() => router.push({ pathname: '/tache', params: { id: task.id } })}
-              onLongPress={() => onLongPress(task)}
-              delayLongPress={350}
+              accessibilityHint="Ouvre la carte"
+              accessibilityActions={[{ name: 'activate' }]}
+              onAccessibilityAction={() => open(task.id)}
+              onPress={(event) => onTap(task.id, event)}
+              onLongPress={(event) => onPeek(task, event)}
+              onPressOut={onPeekEnd}
+              delayLongPress={PEEK_AFTER_MS}
               style={[
                 styles.card,
                 { borderColor: color, backgroundColor: `${color}22` },

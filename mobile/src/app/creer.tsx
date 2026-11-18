@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { Check, ChevronLeft, ChevronRight, Moon } from 'lucide-react-native';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Check, ChevronLeft, ChevronRight, Clock, Moon } from 'lucide-react-native';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -16,7 +16,7 @@ import { selectionFeedback } from '@/lib/haptics';
 import { useKeyboardLift } from '@/lib/keyboard';
 import { close } from '@/lib/navigation';
 import { awayOver } from '@/lib/planning/away';
-import { calendarResolver, contextFor, createTask } from '@/lib/planning/commands';
+import { calendarResolver, contextFor, createTask, standardSpan } from '@/lib/planning/commands';
 import { describeDay, describeInstant, wheelDayLabel } from '@/lib/planning/display';
 import type { Change } from '@/lib/planning/documents';
 import { dossierCache, resolveDossierNumber } from '@/lib/planning/dossiers';
@@ -107,6 +107,11 @@ export default function CreerScreen() {
   // The end of the span last touched: the preview shows the week of that end.
   const [edge, setEdge] = useState<'start' | 'end'>('start');
   const [night, setNight] = useState(false);
+  // « Hors horaires standard »: the task may lie over the lunch hour and on Friday afternoon.
+  const [offStandard, setOffStandard] = useState(false);
+  // The span as it was when the task was let out, and what it was before: put back at once,
+  // untouched, it is given its first hours again rather than a day of ten hours laid on nine.
+  const letOut = useRef<{ shown: When; before: When | null } | null>(null);
   const [notes, setNotes] = useState('');
   const [provisional, setProvisional] = useState(false);
   const [urgent, setUrgent] = useState(false);
@@ -166,7 +171,9 @@ export default function CreerScreen() {
 
   // When: the span turned on the wheels, else the one first offered (the cell touched, or
   // the next working morning); a night is the evening of that day.
-  const calendar = useMemo(() => (data ? calendarResolver(data)(people[0] ?? null) : null), [data, people]);
+  // The hours of the first person; a task let out of them is laid and measured without their breaks.
+  const standard = useMemo(() => (data ? calendarResolver(data)(people[0] ?? null) : null), [data, people]);
+  const calendar = standard ? standard.hoursOf(offStandard && !night) : null;
   const offered = calendar ? firstWhen(calendar, today, {}, cellStart !== null ? { start: cellStart, end: cellEnd } : null) : null;
   const day: When | null = dated ? (picked ?? offered) : null;
   const span: When | null =
@@ -261,6 +268,7 @@ export default function CreerScreen() {
           notes: notes.trim(),
           origin: 'quick_entry',
           offHours: night && span !== null,
+          offStandard: offStandard && !night,
         });
       } catch (exc) {
         setError(exc instanceof Error ? exc.message : 'Création impossible.');
@@ -494,11 +502,15 @@ export default function CreerScreen() {
                 />
               </View>
             )}
+            {/* The two ways out of the working hours, side by side: one at most. */}
+            <View style={styles.hours}>
             <Pressable
               accessibilityRole="switch"
               accessibilityState={{ checked: night }}
               onPress={() => {
                 selectionFeedback();
+                // A night has its own hours: it is never « hors horaires standard » as well.
+                if (!night) setOffStandard(false);
                 setNight((current) => !current);
               }}
               style={[styles.nightToggle, night && styles.nightToggleOn]}
@@ -506,6 +518,38 @@ export default function CreerScreen() {
               <Moon size={16} color={night ? '#ffffff' : colors.accent700} strokeWidth={iconStroke} />
               <Text style={[styles.nightToggleText, night && styles.nightToggleTextOn]}>Travail de nuit</Text>
             </Pressable>
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityState={{ checked: offStandard && !night }}
+              accessibilityHint="La pause de midi et le vendredi après-midi comptent"
+              onPress={() => {
+                selectionFeedback();
+                if (!offStandard || night) {
+                  // Let out: only the switch changes, the hours shown stay.
+                  if (day && !night) {
+                    letOut.current = { shown: day, before: picked };
+                    setPicked(day);
+                  }
+                  setNight(false);
+                  setOffStandard(true);
+                } else {
+                  // Put back: the time it lasted, taken again on the usual hours.
+                  const kept = letOut.current;
+                  if (day && kept && kept.shown.start === day.start && kept.shown.end === day.end) setPicked(kept.before);
+                  else if (day && standard) {
+                    const [start, end] = standardSpan(standard, standard.withoutBreaks(), day.start, day.end);
+                    setPicked({ start, end });
+                  }
+                  letOut.current = null;
+                  setOffStandard(false);
+                }
+              }}
+              style={[styles.nightToggle, offStandard && !night && styles.nightToggleOn]}
+            >
+              <Clock size={16} color={offStandard && !night ? '#ffffff' : colors.accent700} strokeWidth={iconStroke} />
+              <Text style={[styles.nightToggleText, offStandard && !night && styles.nightToggleTextOn]}>Hors horaires standard</Text>
+            </Pressable>
+            </View>
             {data && span ? (
               <Placement
                 data={data}
@@ -531,7 +575,7 @@ export default function CreerScreen() {
           <Recap label="Qui" value={people.length ? people.map(initialsOf).join(', ') : 'Non affecté'} onPress={() => go('who')} />
           <Recap
             label="Quand"
-            value={span ? `${describeInstant(span.start)} → ${describeInstant(span.end)}${night ? ' · nuit' : ''}` : 'Sans date (À planifier)'}
+            value={span ? `${describeInstant(span.start)} → ${describeInstant(span.end)}${night ? ' · nuit' : offStandard ? ' · hors horaires standard' : ''}` : 'Sans date (À planifier)'}
             onPress={() => go('when')}
             last
           />
@@ -828,6 +872,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   nightToggleOn: { borderColor: colors.accent900, backgroundColor: colors.accent900 },
+  hours: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   nightToggleText: { fontFamily: fonts.heading, fontSize: 15, letterSpacing: 0.5, color: colors.subtle },
   nightToggleTextOn: { color: '#ffffff' },
   recap: {

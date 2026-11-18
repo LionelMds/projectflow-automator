@@ -52,6 +52,12 @@ export type PlanningTask = Envelope & {
   planner_task_id?: string;
   project_fingerprint?: string;
   off_hours?: boolean;
+  /**
+   * « Hors horaires standard »: the task is not held by the working hours inside a day. It
+   * may lie over the lunch hour and on Friday afternoon, and those hours count in its
+   * length (`WorkCalendar.withoutBreaks`). Never set together with `off_hours`.
+   */
+  off_standard?: boolean;
 };
 
 export type RecurringOff = { weekday: number; part?: DayPart; reason?: string };

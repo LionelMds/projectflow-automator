@@ -128,8 +128,19 @@ function calendarOf(ctx: CommandContext, resourceId: string | null | undefined):
   return ctx.calendarFor(!resourceId || resourceId === UNASSIGNED ? null : resourceId);
 }
 
+/** `calendar` as `task` follows it: without its breaks when « hors horaires standard ». */
+function hours(task: PlanningTask, calendar: WorkCalendar): WorkCalendar {
+  return calendar.hoursOf(Boolean(task.off_standard) && !task.off_hours);
+}
+
+/** Calendar a task is laid out and measured with: its first assignee's, as it follows it (`task_hours`). */
+export function taskHours(task: PlanningTask, calendarFor: CalendarFor): WorkCalendar {
+  return hours(task, calendarFor(Object.keys(task.assignments ?? {})[0] ?? null));
+}
+
+/** Calendar of the first assignee, the one the bar's length is measured with. */
 function taskCalendar(ctx: CommandContext, task: PlanningTask): WorkCalendar {
-  return calendarOf(ctx, Object.keys(task.assignments ?? {})[0]);
+  return hours(task, calendarOf(ctx, Object.keys(task.assignments ?? {})[0]));
 }
 
 function spanOf(task: PlanningTask): [Instant, Instant] {
@@ -247,6 +258,8 @@ export type NewTask = {
   notes?: string;
   origin?: string;
   offHours?: boolean;
+  /** « Hors horaires standard »: laid out without the breaks of the working hours; night work is never one. */
+  offStandard?: boolean;
 };
 
 /** Create a task, always the first change returned (`create_task`). */
@@ -286,6 +299,7 @@ export function createTask(ctx: CommandContext, input: NewTask): Change[] {
     origin: input.origin ?? 'grid',
     planner_task_id: '',
     off_hours: input.offHours ?? false,
+    off_standard: Boolean(input.offStandard) && !input.offHours,
   };
   const start = input.start ?? null;
   const end = input.end ?? null;
@@ -300,7 +314,8 @@ export function createTask(ctx: CommandContext, input: NewTask): Change[] {
     Object.assign(data, wallTimes(...nightSpan(start, end, minutes)));
     data.estimate_days = 0;
   } else {
-    Object.assign(data, wallTimes(...newSpan(calendarOf(ctx, people[0]), start, end, minutes, days)));
+    const calendar = calendarOf(ctx, people[0]).hoursOf(input.offStandard);
+    Object.assign(data, wallTimes(...newSpan(calendar, start, end, minutes, days)));
   }
   return [creation('task', data, ctx.author, ctx.now), ...extra];
 }
@@ -332,7 +347,7 @@ export function scheduleTask(
     minutes = task.estimate_minutes ?? 0;
     days = task.estimate_days ?? 0;
   }
-  const [begin, finish] = newSpan(calendarOf(ctx, people[0]), start, end, minutes, days);
+  const [begin, finish] = newSpan(hours(task, calendarOf(ctx, people[0])), start, end, minutes, days);
   return save(ctx, 'task', task, { ...wallTimes(begin, finish), assignments });
 }
 
@@ -382,7 +397,7 @@ export function moveTask(
     const error = nightError(begin, finish);
     if (error) throw new PlanningCommandError(error);
   } else {
-    [begin, finish] = span(calendarOf(ctx, Object.keys(assignments)[0]), newStart, minutes);
+    [begin, finish] = span(hours(task, calendarOf(ctx, Object.keys(assignments)[0])), newStart, minutes);
   }
   return save(ctx, 'task', task, { ...wallTimes(begin, finish), assignments });
 }
@@ -439,7 +454,7 @@ export function unassign(ctx: CommandContext, id: string, resourceId: string): C
   if (!task.assignments || !(resourceId in task.assignments)) return [];
   const remaining = Object.fromEntries(Object.entries(task.assignments).filter(([rid]) => rid !== resourceId));
   if (Object.keys(remaining).length || !isScheduled(task)) return save(ctx, 'task', task, { assignments: remaining });
-  return toBacklog(ctx, task, remaining, calendarOf(ctx, resourceId));
+  return toBacklog(ctx, task, remaining, hours(task, calendarOf(ctx, resourceId)));
 }
 
 /** Back to « À planifier »: the assignees stay as people foreseen. */
@@ -478,6 +493,32 @@ function toBacklog(
     backlog_rank: rank,
   });
   return [...moved, ...extra];
+}
+
+/**
+ * A span that was measured on `open` hours, laid again on the `standard` ones: the time it
+ * lasted, taken on worked time from the first worked instant after its start. Friday 13:00
+ * to 15:00 goes to Monday 06:30 to 08:30.
+ */
+export function standardSpan(standard: WorkCalendar, open: WorkCalendar, start: Instant, end: Instant): [Instant, Instant] {
+  return span(standard, start, worked(open, start, end));
+}
+
+/**
+ * Let a task out of the working hours (« Hors horaires standard ») or put it back
+ * (`set_off_standard`). Let out, it keeps its times and may then be moved, stretched or
+ * typed over the lunch hour and on Friday afternoon, which count in its length. Put back,
+ * it keeps the time it lasted (`standardSpan`). Night work has its own hours and is refused.
+ */
+export function setOffStandard(ctx: CommandContext, id: string, offStandard: boolean): Change[] {
+  const task = taskOf(ctx, id);
+  if (Boolean(task.off_standard) === offStandard) return [];
+  if (task.off_hours) throw new PlanningCommandError('Un travail de nuit a déjà ses propres horaires.');
+  if (offStandard || !isScheduled(task)) return save(ctx, 'task', task, { off_standard: offStandard });
+  const [start, end] = spanOf(task);
+  const standard = calendarOf(ctx, Object.keys(task.assignments ?? {})[0]);
+  const [begin, finish] = standardSpan(standard, taskCalendar(ctx, task), start, end);
+  return save(ctx, 'task', task, { off_standard: false, ...wallTimes(begin, finish) });
 }
 
 export function setStatus(ctx: CommandContext, id: string, status: TaskStatus): Change[] {
