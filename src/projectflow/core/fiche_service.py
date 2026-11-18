@@ -11,6 +11,7 @@ from openpyxl import load_workbook
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from projectflow.core.excel_patch import CellEdits
 from projectflow.core.models import ProjectInput
 from projectflow.core.numero import ProjectNumber
 from projectflow.exceptions import ProjectCreationError
@@ -107,6 +108,7 @@ class FicheService:
         workbook = load_workbook(fiche_path)
         try:
             worksheet = _active_worksheet(workbook)
+            edits = CellEdits(worksheet)
             worksheet["C3"] = str(project.number)
             _write_prefixed(worksheet, "D3", "Societe", project.societe)
             _write_prefixed(worksheet, "D4", "Contact", project.contact)
@@ -119,7 +121,7 @@ class FicheService:
             self._write_creation_date(worksheet, overwrite=new_fiche)
             if new_fiche:
                 _clear_inherited_atelier_date(worksheet)
-            workbook.save(fiche_path)
+            edits.save(fiche_path)
         finally:
             workbook.close()
         return fiche_path
@@ -129,8 +131,9 @@ class FicheService:
         workbook = load_workbook(fiche_path)
         try:
             worksheet = _active_worksheet(workbook)
+            edits = CellEdits(worksheet)
             self._write_atelier_date(worksheet)
-            workbook.save(fiche_path)
+            edits.save(fiche_path)
         finally:
             workbook.close()
         return fiche_path
@@ -160,6 +163,7 @@ class FicheService:
         workbook = load_workbook(target_path)
         try:
             worksheet = _active_worksheet(workbook)
+            edits = CellEdits(worksheet)
             worksheet["C3"] = str(project.number)
             _write_prefixed(worksheet, "D3", "Societe", project.societe)
             _write_prefixed(worksheet, "D4", "Contact", project.contact)
@@ -172,7 +176,7 @@ class FicheService:
             self._write_creation_date(worksheet, overwrite=fiche_created)
             if fiche_created:
                 _clear_inherited_atelier_date(worksheet)
-            workbook.save(target_path)
+            edits.save(target_path)
         finally:
             workbook.close()
         return target_path

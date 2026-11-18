@@ -8,6 +8,11 @@
   est ignoree, et une molette a crans (horizontale, inclinable ou Maj + molette) tournee ou
   maintenue plus longtemps continue une periode a la fois, a un rythme calme. Zoome, un cran
   fait defiler de 100 px, comme dans un navigateur.
+- Fiche dossier : modifier un projet ne supprime plus les photos de sa fiche. « Mettre a
+  jour le projet », « Creer » relance sur un dossier existant, la creation d'un sous-projet
+  et « Preparer la sortie » n'ecrivent plus que les cellules qu'ils changent ; photos, zones
+  de texte, mise en forme, reglages d'impression et contenu ajoute a la main restent tels
+  quels, et une fiche dont aucune information ne change n'est plus reecrite.
 
 ## 0.1.81
 
