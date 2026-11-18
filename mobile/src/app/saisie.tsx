@@ -14,7 +14,7 @@ import { useKeyboardLift } from '@/lib/keyboard';
 import { close } from '@/lib/navigation';
 import type { WorkCalendar } from '@/lib/planning/calendar';
 import { awayOver } from '@/lib/planning/away';
-import { calendarResolver, contextFor, createAbsence, createTask } from '@/lib/planning/commands';
+import { calendarResolver, contextFor, createAbsence, createTask, standardSpan } from '@/lib/planning/commands';
 import type { Change } from '@/lib/planning/documents';
 import { dossierCache } from '@/lib/planning/dossiers';
 import { describeDay, describeInstant } from '@/lib/planning/display';
@@ -154,9 +154,13 @@ export default function SaisieScreen() {
   const cellStart = params.start ? Number(params.start) : null;
   const cellEnd = params.end ? Number(params.end) : null;
 
+  // « Hors horaires standard »: the entry is then read, laid and measured on hours without
+  // breaks, so that « ven 13h-15h » stays on Friday afternoon. A night typed has its own hours.
+  const [offStandard, setOffStandard] = useState(false);
+  const usualFor = useMemo(() => (data ? calendarResolver(data) : null), [data]);
   const context = useMemo<EntryContext | null>(() => {
-    if (!data) return null;
-    const calendarFor = calendarResolver(data);
+    if (!data || !usualFor) return null;
+    const calendarFor = offStandard ? (id: string | null) => usualFor(id).withoutBreaks() : usualFor;
     const today = todayNumber();
     const anchor = params.anchor ? Number(params.anchor) : today;
     return {
@@ -173,7 +177,7 @@ export default function SaisieScreen() {
       cellEnd: cellEnd ?? null,
       calendarFor,
     };
-  }, [data, projects, cellRow, cellStart, cellEnd, params.anchor]);
+  }, [data, usualFor, offStandard, projects, cellRow, cellStart, cellEnd, params.anchor]);
 
   const entry = useMemo<ParsedEntry | null>(() => {
     if (!context || !text.trim()) return null;
@@ -290,6 +294,7 @@ export default function SaisieScreen() {
           notes: entry.notes,
           origin: 'quick_entry',
           offHours: entry.offHours,
+          offStandard: offStandard && !entry.offHours,
         });
         const shown = `${entry.projectNumber} ${title || cache?.designation || ''}`.trim() || 'une tâche';
         undoLabel = `Créé : ${shown}`;
@@ -305,6 +310,7 @@ export default function SaisieScreen() {
       if (keep) {
         setText('');
         setSkips({});
+        setOffStandard(false);
         setDone(message);
       } else {
         close('/planning');
@@ -732,6 +738,23 @@ export default function SaisieScreen() {
                   <Text style={styles.chooseAction}>Choisir le début et la fin</Text>
                 </Pressable>
               )}
+              <View style={styles.hoursRow}>
+                <Chip
+                  label="Hors horaires standard"
+                  hint="La pause de midi et le vendredi après-midi comptent"
+                  on={offStandard}
+                  disabled={Boolean(editBlocker)}
+                  onPress={() => {
+                    // Put back on the usual hours, a span turned on the wheels keeps the time it lasted.
+                    if (offStandard && override?.when && usualFor) {
+                      const usual = usualFor(entry?.resourceIds[0] ?? null);
+                      const [start, end] = standardSpan(usual, usual.withoutBreaks(), override.when.start, override.when.end);
+                      setPicked({ when: { start, end }, basis });
+                    }
+                    setOffStandard((current) => !current);
+                  }}
+                />
+              </View>
             </View>
           ) : null}
 
@@ -997,6 +1020,7 @@ const styles = StyleSheet.create({
     borderTopColor: colors.line,
     backgroundColor: colors.bg,
   },
+  hoursRow: { flexDirection: 'row', marginTop: 8 },
   whenBlock: { gap: 2, padding: 12, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface },
   whenHead: { flexDirection: 'row', alignItems: 'center', minHeight: 28 },
   whenLink: { minHeight: 28, justifyContent: 'center', paddingLeft: 12 },

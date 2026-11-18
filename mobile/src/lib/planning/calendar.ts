@@ -33,6 +33,8 @@ export const FULL_DAY: readonly WorkPeriod[] = [
 export const FRIDAY: readonly WorkPeriod[] = [[6 * 60 + 30, 12 * 60]];
 export const DEFAULT_WORK_WEEK: WorkWeek = { 0: FULL_DAY, 1: FULL_DAY, 2: FULL_DAY, 3: FULL_DAY, 4: FRIDAY };
 export const SNAP_MINUTES = 30;
+/** Where a day without breaks is cut in two half days. */
+export const NOON_MINUTE = 12 * 60;
 export const CANTONS: readonly string[] = ['GE', 'VD'];
 /** A search for a worked instant stops after ten years without one. */
 export const MAX_SEARCH_DAYS = 3660;
@@ -103,6 +105,43 @@ export function normalizeCanton(text: string): string {
   return canton;
 }
 
+/**
+ * `week` without its blocked hours: no lunch break, no shorter day (`continuous_week`).
+ *
+ * Every worked weekday runs from the earliest start to the latest end of the week, as two
+ * half days that touch at noon (one period when noon is outside). The usual hours
+ * (06:30-12:00 and 13:00-16:30, Friday until 12:00) give Monday to Friday 06:30-12:00 and
+ * 12:00-16:30. Weekdays without hours stay not worked.
+ */
+export function continuousWeek(week: WorkWeek): Record<number, readonly WorkPeriod[]> {
+  const worked = Object.entries(week)
+    .map(([key, periods]): [number, readonly WorkPeriod[]] => [Number(key), periods ?? []])
+    .filter(([day, periods]) => periods.length > 0 && Number.isInteger(day) && day >= 0 && day < DAYS_PER_WEEK)
+    .sort((a, b) => a[0] - b[0]);
+  if (!worked.length) return {};
+  const low = Math.min(...worked.flatMap(([, periods]) => periods.map(([start]) => Math.trunc(Number(start)))));
+  const high = Math.max(...worked.flatMap(([, periods]) => periods.map(([, end]) => Math.trunc(Number(end)))));
+  const day: readonly WorkPeriod[] =
+    low < NOON_MINUTE && NOON_MINUTE < high
+      ? [
+          [low, NOON_MINUTE],
+          [NOON_MINUTE, high],
+        ]
+      : [[low, high]];
+  return Object.fromEntries(worked.map(([weekday]) => [weekday, day]));
+}
+
+function sameWeek(a: WorkWeek, b: WorkWeek): boolean {
+  const text = (week: WorkWeek) =>
+    JSON.stringify(
+      Object.keys(week)
+        .map(Number)
+        .sort((x, y) => x - y)
+        .map((day) => [day, week[day]]),
+    );
+  return text(a) === text(b);
+}
+
 /** Round to the nearest `step` on the wall clock, halves up, inside the same day. */
 export function snap(value: Instant, step: number = SNAP_MINUTES): Instant {
   const minutes = minuteOfDay(value);
@@ -150,6 +189,7 @@ export class WorkCalendar {
   private readonly cantonCodes: readonly string[];
   private readonly closures: ReadonlySet<number>;
   private readonly holidays = new Map<number, Map<number, Holiday>>();
+  private open: WorkCalendar | null = null;
 
   constructor({ week = DEFAULT_WORK_WEEK, cantons = ['GE'], closures = [] }: WorkCalendarOptions = {}) {
     this.weekPeriods = new Map();
@@ -170,6 +210,25 @@ export class WorkCalendar {
 
   get cantons(): readonly string[] {
     return this.cantonCodes;
+  }
+
+  /**
+   * The same canton, holidays and closures with no blocked hour inside a day
+   * (`without_breaks`): the calendar of a task « hors horaires standard », which may start,
+   * end and count its time over the lunch hour and on Friday afternoon. Always the same
+   * object, and this calendar itself when its hours have no break.
+   */
+  withoutBreaks(): WorkCalendar {
+    if (this.open === null) {
+      const week = continuousWeek(this.week);
+      this.open = sameWeek(week, this.week) ? this : new WorkCalendar({ week, cantons: this.cantonCodes, closures: this.closures });
+    }
+    return this.open;
+  }
+
+  /** The calendar of a task: `withoutBreaks` when « hors horaires standard » (`hours_of`). */
+  hoursOf(offStandard: boolean | undefined): WorkCalendar {
+    return offStandard ? this.withoutBreaks() : this;
   }
 
   /** Weekdays with worked periods (Monday to Friday by default). */

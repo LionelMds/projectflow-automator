@@ -81,6 +81,7 @@ export function searchText(data: PlanningData, task: PlanningTask): string {
       ...(deadline !== null ? dayWords(deadline) : []),
       task.urgent ? 'urgent' : '',
       task.off_hours ? 'nuit' : '',
+      task.off_standard && !task.off_hours ? 'hors horaires standard' : '',
     ]
       .filter(Boolean)
       .join(' \n '),

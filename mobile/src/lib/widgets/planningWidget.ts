@@ -113,7 +113,13 @@ const BOUNDS = new Set([DAY_START, NOON, AFTERNOON, DAY_END]);
 function whenText(task: PlanningTask, day: number, span: { from: number; to: number; night: boolean }): string {
   let text: string;
   if (span.night) text = 'Nuit';
-  else if (!BOUNDS.has(span.from) || !BOUNDS.has(span.to)) text = `${hhmm(span.from)}–${hhmm(span.to)}`;
+  else if (task.off_standard) {
+    // « Hors horaires standard »: its half days touch at noon, and 13:00 is an hour like another.
+    if (span.from === DAY_START && span.to === DAY_END) text = 'Journée';
+    else if (span.from === DAY_START && span.to === NOON) text = 'Matin';
+    else if (span.from === NOON && span.to === DAY_END) text = 'Après-midi';
+    else text = `${hhmm(span.from)}–${hhmm(span.to)}`;
+  } else if (!BOUNDS.has(span.from) || !BOUNDS.has(span.to)) text = `${hhmm(span.from)}–${hhmm(span.to)}`;
   else if (span.from < NOON && span.to > AFTERNOON) text = 'Journée';
   else if (span.from < NOON) text = 'Matin';
   else text = 'Après-midi';

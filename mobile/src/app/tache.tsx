@@ -9,6 +9,7 @@ import { Button } from '@/components/Button';
 import { Notice } from '@/components/Notice';
 import { Segmented } from '@/components/Segmented';
 import { Caps, Kicker, Muted } from '@/components/Text';
+import { Chip } from '@/components/Chip';
 import { WhenPicker } from '@/components/WhenPicker';
 import { useDossierActions } from '@/lib/dossierActions';
 import { allowedActions } from '@/lib/restriction/restriction';
@@ -21,6 +22,7 @@ import {
   deleteTask,
   resizeTask,
   scheduleTask,
+  setOffStandard,
   setStatus,
   unassign,
   unscheduleTask,
@@ -108,7 +110,9 @@ export default function TacheScreen() {
   const start = parseInstant(task.start ?? '');
   const end = parseInstant(task.end ?? '');
   const assignedIds = Object.keys(task.assignments ?? {});
-  const calendar = ctx.calendarFor(assignedIds[0] ?? null);
+  // « Hors horaires standard »: its wheels, its length and its notes follow hours without breaks.
+  const offStandard = Boolean(task.off_standard) && !task.off_hours;
+  const calendar = ctx.calendarFor(assignedIds[0] ?? null).hoursOf(offStandard);
   const type = taskTypeOf(data.meta, task.task_type);
   const people = data.resources.filter((resource) => !resource.deleted_at && resource.active !== false);
   const number = (task.project_number ?? '').trim();
@@ -369,6 +373,28 @@ export default function TacheScreen() {
                 />
               </>
             )}
+            {task.off_hours ? null : (
+              <View style={styles.hoursRow}>
+                <Chip
+                  label="Hors horaires standard"
+                  hint="La pause de midi et le vendredi après-midi comptent"
+                  on={offStandard}
+                  disabled={locked || busy}
+                  onPress={() => {
+                    selectionFeedback();
+                    void run(
+                      () => setOffStandard(ctx, task.id, !offStandard),
+                      `${offStandard ? 'Horaires standard' : 'Hors horaires standard'} : ${label}`,
+                      () => {
+                        // The hours being chosen were counted on the other calendar.
+                        setDraft(null);
+                        setCardPicked(null);
+                      },
+                    );
+                  }}
+                />
+              </View>
+            )}
             {scheduled ? (
               <LinkButton label="Renvoyer à planifier" disabled={locked || busy} onPress={() => void run(() => unscheduleTask(ctx, task.id), `Remis à planifier : ${label}`)} />
             ) : null}
@@ -600,6 +626,7 @@ const styles = StyleSheet.create({
   pressed: { backgroundColor: colors.accent100 },
   disabled: { opacity: 0.45 },
   draft: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8 },
+  hoursRow: { flexDirection: 'row', marginTop: 8 },
   card: { padding: 14, gap: 10, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface },
   cardTitle: { color: colors.muted },
   strong: { fontFamily: fonts.bodySemiBold, fontSize: 16, color: colors.text },
