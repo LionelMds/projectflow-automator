@@ -11,7 +11,14 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QFont, QMouseEvent, QPainter, QPainterPath, QPaintEvent
+from PySide6.QtGui import (
+    QFont,
+    QMouseEvent,
+    QPainter,
+    QPainterPath,
+    QPaintEvent,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from projectflow.core.planning.timescale import (
@@ -44,6 +51,8 @@ MONTH_LONG_LABEL_WIDTH = 44.0
 HOUR_LABEL_MIN_WIDTH = 34.0
 """Hours are labelled only when an hour is at least this wide."""
 TODAY_SUFFIX = "aujourd'hui"
+PAN_THRESHOLD = 6
+"""Pixels a pressed header travels before it drags the strip of pages instead of a click."""
 
 
 def _sticky(painter: QPainter, text: str, left: float, right: float, x0: float) -> None:
@@ -69,8 +78,7 @@ def _group_label(model: GridModel, group: ColumnGroup) -> str:
     return f"{group.label} · {month_label(first)}"
 
 
-def _day_title(model: GridModel) -> str:
-    day = model.timescale.first_day
+def _day_title(model: GridModel, day: date) -> str:
     parts = [f"{day_label(day)}.{day.year}"]
     holiday = model.holidays.get(day)
     if holiday is not None:
@@ -88,15 +96,21 @@ def _paint_top_band(
     painter.setFont(heading_font(14))
     divider = make_pen(theme.color("text", 0.30))
     if model.view == "day":
-        painter.setPen(theme.color("accent-800" if model.today_index is not None else "text"))
-        _sticky(painter, _day_title(model), 0.0, model.timescale.width, x0)
+        # One title a day: on the strip of pages the days follow each other.
+        for column in model.timescale.visible_columns(x0, x0 + width):
+            painter.setPen(theme.color("accent-800" if column.day == model.today else "text"))
+            _sticky(painter, _day_title(model, column.day), column.x, column.right, x0)
+            if column.x > 0 and (column.index > 0 or model.strip is not None):
+                painter.setPen(divider)
+                x = round(column.x) + 0.5
+                painter.drawLine(QLineF(x, 0, x, HEADER_HEIGHT))
         return
     for group in _groups(model):
         if group.x + group.width < x0 or group.x > x0 + width:
             continue
         painter.setPen(theme.color("text"))
         _sticky(painter, _group_label(model, group), group.x, group.x + group.width, x0)
-        if group.columns.start > 0:
+        if group.columns.start > 0 or (model.strip is not None and group.x > 0):
             painter.setPen(divider)
             x = round(group.x) + 0.5
             painter.drawLine(QLineF(x, 0, x, HEADER_HEIGHT))
@@ -216,7 +230,7 @@ def _paint_day_cells(
     line_pen = make_pen(theme.color("text", 0.14))
     for column in columns:
         _paint_cell_ground(painter, model, theme, column, printing=printing)
-        if column.index > 0:
+        if column.index > 0 or (model.strip is not None and column.x > 0):
             painter.setPen(line_pen)
             x = round(column.x) + 0.5
             painter.drawLine(QLineF(x, BAND_HEIGHT, x, HEADER_HEIGHT))
@@ -262,9 +276,8 @@ def _paint_hours(
         area = QRectF(left, BAND_HEIGHT, right - left, band)
         painter.fillRect(area, theme.color("text", 0.03))
         painter.drawLines(hatch_lines(area))
-    first = scale.first_minute
-    last = first + scale.display_minutes
-    hour_width = scale.day_width * MINUTES_PER_HOUR / scale.display_minutes
+    first, last = scale.window_of(column.day)
+    hour_width = scale.day_width * MINUTES_PER_HOUR / (last - first)
     painter.setFont(heading_font(12, QFont.Weight.Medium))
     minute = first
     while minute < last:
@@ -349,15 +362,23 @@ class TimeHeader(QWidget):
     """Header widget above the body.
 
     A click on a day gives ``day_clicked(date)``, on the week band ``week_clicked(date)``
-    with the Monday of that week.
+    with the Monday of that week. Dragged sideways it drags the strip of pages instead
+    (``pan_started``, ``pan_moved``, ``pan_ended`` with the widget x), and the wheel over
+    it scrolls in time (``wheel_scrolled`` with the angle and pixel deltas).
     """
 
     day_clicked = Signal(object)
     week_clicked = Signal(object)
+    pan_started = Signal(float)
+    pan_moved = Signal(float)
+    pan_ended = Signal()
+    wheel_scrolled = Signal(int, int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.model: GridModel | None = None
+        self._press: QPointF | None = None
+        self._dragging = False
         self.x0 = 0.0
         self.content_width = 0.0
         self.setFixedHeight(HEADER_HEIGHT)
@@ -372,7 +393,17 @@ class TimeHeader(QWidget):
         return self.model.timescale.column_at(x + self.x0).day
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        day = self.day_at(event.position().x())
+        x = event.position().x()
+        if self._press is not None:
+            if not self._dragging and abs(x - self._press.x()) >= PAN_THRESHOLD:
+                self._dragging = True
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                self.pan_started.emit(self._press.x())
+            if self._dragging:
+                self.pan_moved.emit(x)
+                event.accept()
+                return
+        day = self.day_at(x)
         self.setToolTip(header_tooltip(self.model, day) if self.model and day else "")
         super().mouseMoveEvent(event)
 
@@ -401,12 +432,36 @@ class TimeHeader(QWidget):
         if self.model is None or event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
-        position: QPointF = event.position()
-        day = self.day_at(position.x())
-        if day is None:
+        # The click is told at the release: a press may begin a drag of the strip.
+        self._press = QPointF(event.position())
+        self._dragging = False
+        event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        press, self._press = self._press, None
+        if press is None or event.button() != Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(event)
             return
-        if position.y() < BAND_HEIGHT and self.model.view != "day":
+        event.accept()
+        if self._dragging:
+            self._dragging = False
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.pan_ended.emit()
+            return
+        day = self.day_at(press.x())
+        if self.model is None or day is None:
+            return
+        if press.y() < BAND_HEIGHT and self.model.view != "day":
             self.week_clicked.emit(day - timedelta(days=day.weekday()))
         else:
             self.day_clicked.emit(day)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        """Any wheel over the days scrolls in time."""
+        angle = event.angleDelta()
+        sideways = abs(angle.x()) > abs(angle.y())
+        delta = angle.x() if sideways else angle.y()
+        pixels = event.pixelDelta().x() if sideways else event.pixelDelta().y()
+        if delta or pixels:
+            self.wheel_scrolled.emit(delta, pixels)
         event.accept()

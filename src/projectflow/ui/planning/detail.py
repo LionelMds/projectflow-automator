@@ -141,6 +141,12 @@ NIGHT_TOOLTIP = (
     "Nuit du lundi au jeudi soir : heures exactes de 18:00 à 06:30, durée réelle, "
     "8 h de repos avant et après"
 )
+OFF_STANDARD_TEXT = "Hors horaires standard"
+OFF_STANDARD_TOOLTIP = (
+    "La tâche n'est plus retenue par les horaires de travail : elle se place et s'étire aussi "
+    "entre 12:00 et 13:00 et le vendredi après-midi, et ces heures comptent dans sa durée. "
+    "Relâché, elle revient sur les horaires standard."
+)
 URGENT_TEXT = "! Urgent"
 MIXED = "—"
 NO_DEADLINE = "Aucune"
@@ -831,7 +837,15 @@ class DetailPanel(QWidget):
         self.night_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.night_button.clicked.connect(self._commit_night)
         self.rest_label = label("", "small", wrap=True)
-        self.night_block = _stack(self.night_button, self.rest_label)
+        self.off_standard_button = button(OFF_STANDARD_TEXT, "chip")
+        self.off_standard_button.setCheckable(True)
+        self.off_standard_button.setProperty("panel", "true")
+        self.off_standard_button.setToolTip(OFF_STANDARD_TOOLTIP)
+        self.off_standard_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.off_standard_button.clicked.connect(self._commit_off_standard)
+        self.night_block = _stack(self.night_button, self.rest_label, self.off_standard_button)
 
         for picker in (self.start_picker, self.end_picker, self.deadline_picker):
             picker.changed.connect(self._on_picker_rolled)
@@ -956,7 +970,7 @@ class DetailPanel(QWidget):
         self._mode = "task"
         self._task = task
         self._snapshot = snapshot
-        self._calendar = calendar
+        self._calendar = calendar.hours_of(off_standard=task.off_standard)
         self._project = project
         self._read_only = read_only
         self._now = now
@@ -1072,6 +1086,7 @@ class DetailPanel(QWidget):
             self.urgent_button.setText(URGENT_TEXT)
             self.urgent_button.setChecked(task.urgent)
             self.night_button.setChecked(task.off_hours)
+            self.off_standard_button.setChecked(task.off_standard)
             night = task.off_hours and task.start is not None and task.end is not None
             self.rest_label.setVisible(night)
             if night and task.start is not None and task.end is not None:
@@ -1352,6 +1367,9 @@ class DetailPanel(QWidget):
             *self._person_buttons.values(),
         ):
             widget.setEnabled(editable)
+        # Night work has its own hours: the two switches never go together.
+        night = self._task is not None and self._task.off_hours
+        self.off_standard_button.setEnabled(editable and not night)
         if not editable:
             self.clear_deadline_button.hide()
 
@@ -1611,6 +1629,10 @@ class DetailPanel(QWidget):
     def _commit_night(self, checked: bool) -> None:  # noqa: FBT001
         if self._mode == "task":
             self._commit_value("off_hours", bool(checked))
+
+    def _commit_off_standard(self, checked: bool) -> None:  # noqa: FBT001
+        if self._mode == "task":
+            self._commit_value("off_standard", bool(checked))
 
     def _commit_start(self) -> None:
         task = self._task

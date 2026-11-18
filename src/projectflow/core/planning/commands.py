@@ -200,6 +200,7 @@ def create_task(
     notes: str = "",
     origin: TaskOrigin = "grid",
     off_hours: bool = False,
+    off_standard: bool = False,
 ) -> Changes:
     """Create a task, always the first change returned.
 
@@ -209,6 +210,8 @@ def create_task(
     ``estimate_minutes`` of work (one worked day when 0). ``estimate_days`` is rounded
     to the half day as ``format_days`` shows it (halves up, ½ j at least). A night task
     (``off_hours``) keeps its exact times and lasts real time (8 h without estimate).
+    A task « hors horaires standard » (``off_standard``) is laid out without the breaks
+    of the working hours; night work is never one.
     """
     people = _checked_resource_ids(ctx, resource_ids)
     _check_task_type(ctx, task_type)
@@ -228,6 +231,7 @@ def create_task(
         "origin": origin,
         "assignments": {resource_id: {} for resource_id in people},
         "off_hours": off_hours,
+        "off_standard": off_standard and not off_hours,
     }
     extra: list[DocumentChange] = []
     if start is None:
@@ -239,7 +243,7 @@ def create_task(
         data["start"], data["end"] = _night_span(start, end, estimate_minutes)
         data["estimate_days"] = 0.0
     else:
-        calendar = _calendar(ctx, people[0] if people else None)
+        calendar = _calendar(ctx, people[0] if people else None).hours_of(off_standard=off_standard)
         data["start"], data["end"] = _new_span(calendar, start, end, estimate_minutes, days)
     task = _validated(PlanningTask, data)
     return (DocumentChange.creation(task.stamped(ctx.author, now=ctx.now)), *extra)
@@ -268,7 +272,7 @@ def schedule_task(
         elapsed = task.end - task.start if task.start is not None and task.end is not None else 0
         begin, finish = _night_span(start, end, elapsed or task.estimate_minutes)
         return _save(ctx, task, start=begin, end=finish, assignments=assignments)
-    calendar = _calendar(ctx, next(iter(assignments), None))
+    calendar = _hours(task, _calendar(ctx, next(iter(assignments), None)))
     if task.start is not None and task.end is not None:
         minutes = _worked(_task_calendar(ctx, task), task.start, task.end)
         days = 0.0
@@ -316,7 +320,8 @@ def move_task(
         finish = begin + (end - start)
         _check_night(begin, finish)
     else:
-        begin, finish = _span(_calendar(ctx, next(iter(assignments), None)), new_start, minutes)
+        layout = _hours(task, _calendar(ctx, next(iter(assignments), None)))
+        begin, finish = _span(layout, new_start, minutes)
     return _save(ctx, task, start=begin, end=finish, assignments=assignments)
 
 
@@ -366,7 +371,9 @@ def unassign(ctx: CommandContext, task_id: str, resource_id: str) -> Changes:
     remaining = {rid: dict(value) for rid, value in task.assignments.items() if rid != resource_id}
     if remaining or task.start is None or task.end is None:
         return _save(ctx, task, assignments=remaining)
-    return _to_backlog(ctx, task, assignments=remaining, calendar=_calendar(ctx, resource_id))
+    return _to_backlog(
+        ctx, task, assignments=remaining, calendar=_hours(task, _calendar(ctx, resource_id))
+    )
 
 
 def unschedule_task(ctx: CommandContext, task_id: str) -> Changes:
@@ -404,7 +411,7 @@ def duplicate_task(
     if task.status == "done":
         data["status"] = "confirmed"
     extra: list[DocumentChange] = []
-    calendar = _calendar(ctx, people[0] if people else None)
+    calendar = _hours(task, _calendar(ctx, people[0] if people else None))
     if task.off_hours and task.start is not None and task.end is not None:
         if new_start is None:
             evening = night_day(task.start)
@@ -580,15 +587,41 @@ def set_night(ctx: CommandContext, task_id: str, night: bool) -> Changes:  # noq
     task = _task(ctx, task_id)
     if task.off_hours == night:
         return ()
+    # Night work has its own hours: it is never « hors horaires standard » as well.
+    standard = {"off_standard": False} if night else {}
     if task.start is None or task.end is None:
         days = 0.0 if night else task.estimate_days
-        return _save(ctx, task, off_hours=night, estimate_days=days)
+        return _save(ctx, task, off_hours=night, estimate_days=days, **standard)
     if night:
         begin, finish = default_night(wall_date(task.start))
         _check_night(begin, finish)
-        return _save(ctx, task, off_hours=True, start=begin, end=finish, estimate_days=0.0)
+        return _save(
+            ctx, task, off_hours=True, start=begin, end=finish, estimate_days=0.0, **standard
+        )
     begin, finish = _span(_task_calendar(ctx, task), task.start, task.end - task.start)
     return _save(ctx, task, off_hours=False, start=begin, end=finish)
+
+
+def set_off_standard(ctx: CommandContext, task_id: str, off_standard: bool) -> Changes:  # noqa: FBT001
+    """Let a task out of the working hours (« Hors horaires standard ») or put it back.
+
+    Let out, it keeps its times and may then be moved, stretched or typed over the lunch
+    hour and on Friday afternoon, which count in its length. Put back, it keeps the time
+    it lasted and takes it again on worked time from the first worked instant after its
+    start: a task of Friday 13:00 to 15:00 goes to Monday 06:30 to 08:30. Night work has
+    its own hours and is refused.
+    """
+    task = _task(ctx, task_id)
+    if task.off_standard == off_standard:
+        return ()
+    if task.off_hours:
+        raise PlanningCommandError("Un travail de nuit a deja ses propres horaires.")
+    if off_standard or task.start is None or task.end is None:
+        return _save(ctx, task, off_standard=off_standard)
+    minutes = _worked(_task_calendar(ctx, task), task.start, task.end)
+    standard = _calendar(ctx, next(iter(task.assignments), None))
+    begin, finish = _span(standard, task.start, minutes)
+    return _save(ctx, task, off_standard=False, start=begin, end=finish)
 
 
 def task_days(calendar: WorkCalendar, task: PlanningTask) -> float:
@@ -996,9 +1029,19 @@ def _calendar(ctx: CommandContext, resource_id: str | None) -> WorkCalendar:
     return ctx.calendar_for(None if resource_id in (None, UNASSIGNED) else resource_id)
 
 
+def _hours(task: PlanningTask, calendar: WorkCalendar) -> WorkCalendar:
+    """``calendar`` as ``task`` follows it: without its breaks when « hors horaires standard »."""
+    return calendar.hours_of(off_standard=task.off_standard)
+
+
+def task_hours(task: PlanningTask, calendar_for: CalendarFor) -> WorkCalendar:
+    """Calendar a task is laid out and measured with: its first assignee's, as it follows it."""
+    return _hours(task, calendar_for(next(iter(task.assignments), None)))
+
+
 def _task_calendar(ctx: CommandContext, task: PlanningTask) -> WorkCalendar:
     """Calendar of the first assignee, the one the bar's length is measured with."""
-    return _calendar(ctx, next(iter(task.assignments), None))
+    return _hours(task, _calendar(ctx, next(iter(task.assignments), None)))
 
 
 def _duration(minutes: int) -> int:

@@ -23,7 +23,6 @@ from test_planning_controller import (  # type: ignore[import-not-found]
 from projectflow.core.planning.models import task_label
 from projectflow.core.planning.poste_config import PlanningPosteConfig
 from projectflow.core.repertoire_service import RepertoireRow, RepertoireSnapshot
-from projectflow.ui.planning.grid import EDGE_PUSH, WHEEL_NOTCH
 from projectflow.ui.planning.grid_items import text_growth
 from projectflow.ui.planning.grid_model import (
     MAX_LANE_HEIGHT,
@@ -149,22 +148,6 @@ def test_the_lines_buttons_step_the_rows_of_the_view(qtbot: Any) -> None:
     assert tab.taller_rows_button.isEnabled()
     tab.set_row_height(MIN_LANE_HEIGHT)
     assert not tab.lower_rows_button.isEnabled()
-
-
-def test_the_sideways_wheel_past_the_end_shows_the_next_period(qtbot: Any) -> None:
-    tab = PlanningTab()
-    qtbot.addWidget(tab)
-    steps: list[int] = []
-    tab.grid.period_step_requested.connect(steps.append)
-    for _ in range(EDGE_PUSH // WHEEL_NOTCH - 1):
-        tab.grid.scroll_sideways(-WHEEL_NOTCH)  # towards the future, no room to scroll
-    assert steps == []
-    tab.grid.scroll_sideways(-WHEEL_NOTCH)
-    assert steps == [1]
-    tab.grid.scroll_sideways(WHEEL_NOTCH)  # the other way starts again from zero
-    tab.grid.scroll_sideways(WHEEL_NOTCH)
-    tab.grid.scroll_sideways(WHEEL_NOTCH)
-    assert steps == [1, -1]
 
 
 @pytest.mark.asyncio

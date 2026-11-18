@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Planning : nouveau bouton « Hors horaires standard » dans le « Detail », a cote de
+  « Travail de nuit ». Une tache ainsi marquee n'est plus retenue par les horaires : elle se
+  place, s'etire et se saisit aussi entre 12:00 et 13:00 et le vendredi apres-midi, et ces
+  heures comptent dans sa duree. Relache, le bouton la remet sur les horaires standard en
+  gardant sa duree. Les autres taches gardent les horaires habituels ; le week-end, les jours
+  feries et les fermetures restent exclus pour toutes.
+- Planning : le temps defile en continu. Jours, semaines ou mois sont des pages cote a cote
+  (un an en arriere, deux en avant) : molette horizontale, pave tactile, Maj + molette ou
+  glisser la ligne des jours (ou la grille au bouton du milieu). Tant qu'une periode tient a
+  l'ecran, le defilement s'aimante sur son bord gauche et un geste avance d'une periode ;
+  zoomee (Ctrl + molette, autour du curseur), elle defile librement. Le titre nomme la
+  periode au milieu de l'ecran ; les fleches et « Aujourd'hui » font glisser une periode
+  voisine et affichent directement une periode lointaine. Remplace le changement de periode
+  « en poussant la molette au bout » ; la barre de defilement horizontale disparait.
+- Planning : un clic sur « Jour », « Semaine » ou « Mois » (ou Ctrl+1/2/3) recadre la vue,
+  meme celle deja affichee : colonnes a 100 % et periode calee sur son bord gauche.
+
 ## 0.1.80
 
 - Planning : onglet « Detail » refait. De haut en bas : le numero de projet en grand

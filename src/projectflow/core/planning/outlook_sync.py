@@ -218,7 +218,9 @@ def task_events(
             location=location,
             tentative=tentative,
         )
-        for begin, finish in day_segments(task.start, task.end, calendar)
+        for begin, finish in day_segments(
+            task.start, task.end, calendar.hours_of(off_standard=task.off_standard)
+        )
     ]
 
 

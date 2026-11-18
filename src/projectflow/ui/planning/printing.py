@@ -123,7 +123,11 @@ def _logical_width(device: QPagedPaintDevice) -> float:
 
 
 def printable_model(model: GridModel, width: float) -> GridModel:
-    """``model`` with its shown days filling ``width`` next to the row column."""
+    """``model`` with its shown days filling ``width`` next to the row column.
+
+    Of the pages the grid draws side by side, only the one it names is printed.
+    """
+    model = model.single_page()
     columns = max(len(model.timescale.columns), 1)
     return model.with_day_width(max((width - ROW_COLUMN_WIDTH) / columns, 1.0))
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from typing import TYPE_CHECKING, Literal
 
 from PySide6.QtCore import QElapsedTimer, QLineF, QPointF, QRect, QRectF, QSizeF, Qt, QTimer
@@ -418,12 +419,12 @@ def _off_rects(
     """Areas not worked, each with whether it is a holiday or a closure (whole day)."""
     scale = model.timescale
     lunch = scale.day_width >= LUNCH_HATCH_MIN_DAY_WIDTH
-    day_end = scale.first_minute + scale.display_minutes
     days = model.days_of(row_id)
     rects: list[tuple[QRectF, bool]] = []
     for column in scale.visible_columns(rect.left(), rect.right()):
         info = days[column.index]
         base = day_start(column.day)
+        day_end = scale.window_of(column.day)[1]
         day_off = info.holiday is not None or info.closed
         for low, high in info.off:
             if info.workday and not lunch and high < day_end:
@@ -519,15 +520,15 @@ def _paint_row_bands(
 
 def _paint_hours(painter: QPainter, model: GridModel, rect: QRectF, style: GridStyle) -> None:
     scale = model.timescale
-    first_minute = scale.first_minute
     step = HALF_HOUR if model.view == "day" else MINUTES_PER_HOUR
     hours: list[QLineF] = []
     halves: list[QLineF] = []
     top, bottom = rect.top(), rect.bottom()
     for column in scale.visible_columns(rect.left(), rect.right()):
         base = day_start(column.day)
+        first_minute, last_minute = scale.window_of(column.day)
         minute = first_minute + (step - first_minute % step) % step
-        while minute < first_minute + scale.display_minutes:
+        while minute < last_minute:
             x = round(scale.x_of(base + minute)) + 0.5
             if minute > first_minute:
                 target = hours if minute % MINUTES_PER_HOUR == 0 else halves
@@ -545,16 +546,28 @@ def _paint_day_lines(painter: QPainter, model: GridModel, rect: QRectF, style: G
     weeks: list[QLineF] = []
     top, bottom = rect.top(), rect.bottom()
     for column in scale.visible_columns(rect.left() - 1, rect.right() + 1):
-        if column.index == 0:
-            continue
         x = round(column.x) + 0.5
+        if column.index == 0:
+            # On the strip of pages the first drawn day closes the page before it.
+            if model.strip is not None and column.x > 0:
+                weeks.append(QLineF(x, top, x, bottom))
+            continue
         previous = scale.columns[column.index - 1].day
-        new_week = column.day.isocalendar()[:2] != previous.isocalendar()[:2]
-        (weeks if new_week else days).append(QLineF(x, top, x, bottom))
+        strong = _closes_week_or_page(model, previous, column.day)
+        (weeks if strong else days).append(QLineF(x, top, x, bottom))
     painter.setPen(style.day_pen)
     painter.drawLines(days)
     painter.setPen(style.week_pen)
     painter.drawLines(weeks)
+
+
+def _closes_week_or_page(model: GridModel, previous: date, day: date) -> bool:
+    """Whether the line before ``day`` ends a week, or a page of the strip of pages."""
+    if day.isocalendar()[:2] != previous.isocalendar()[:2]:
+        return True
+    if model.strip is None:
+        return False
+    return model.view == "day" or (model.view == "month" and day.month != previous.month)
 
 
 def absence_rect(model: GridModel, block: AbsenceBlock, row: RowLayout) -> QRectF:
@@ -1351,7 +1364,9 @@ class BarItem(QGraphicsObject):
     def zone_at(self, x: float) -> BarZone:
         """Grab zone under the local ``x``: an end (6 px, a third of a short bar) or the body."""
         model = self.board.model
-        if self.bar.night and (model is None or not model.night_axis):
+        if self.bar.night and (
+            model is None or not model.night_shown(self.bar.start, self.bar.end)
+        ):
             # A night over a whole column has no edge to drag: its hours are not there.
             return "body"
         edge = min(EDGE_ZONE, self.width / 3)
@@ -1641,7 +1656,7 @@ class PlanningScene(QGraphicsScene):
         for key in stale:
             self.removeItem(self.items_by_key.pop(key))
         self.items_by_task = by_task
-        self.setSceneRect(QRectF(0, 0, model.timescale.width, max(model.rows.height, 1)))
+        self.setSceneRect(QRectF(0, 0, model.scene_width, max(model.rows.height, 1)))
         self._place_band()
         self.place_all()
         self.invalidate(self.sceneRect(), QGraphicsScene.SceneLayer.BackgroundLayer)
@@ -1752,7 +1767,7 @@ class PlanningScene(QGraphicsScene):
         if self.model is None or row is None or self.pin_offset <= 0:
             self.band.setVisible(False)
             return
-        self.band.set_band(self.model.timescale.width, float(row.height))
+        self.band.set_band(self.model.scene_width, float(row.height))
         self.band.setPos(0, row.top + self.pin_offset)
         self.band.setVisible(True)
         self.band.update()

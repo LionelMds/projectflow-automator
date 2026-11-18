@@ -1364,6 +1364,7 @@ class PlanningController:
             collapsed_teams=self._config.collapsed_teams,
             project_exists=self._project_exists,
             zoom=tab.zoom,
+            origin=tab.origin,
         )
         tab.set_model(model)
         tab.backlog.set_snapshot(snapshot, today=today)
@@ -2189,7 +2190,7 @@ class PlanningController:
         if session is None:
             return
         snapshot = session.service.snapshot
-        calendar = calendar_resolver(snapshot)(next(iter(task.assignments), None))
+        calendar = commands.task_hours(task, calendar_resolver(snapshot))
         self._tab.detail.set_task(
             task,
             snapshot,
@@ -2246,6 +2247,16 @@ class PlanningController:
             changes = self._execute(
                 f"{verb} {self._names(targets)}",
                 chain(step(commands.set_night, target, night) for target in targets),
+            )
+            if changes is None:
+                self._refresh_from_service()
+            return
+        if name == "off_standard":
+            free = bool(value)
+            verb = "Sortir des horaires standard" if free else "Remettre aux horaires standard"
+            changes = self._execute(
+                f"{verb} {self._names(targets)}",
+                chain(step(commands.set_off_standard, target, free) for target in targets),
             )
             if changes is None:
                 self._refresh_from_service()
@@ -2558,9 +2569,7 @@ class PlanningController:
                 )
             )
         menu.addSeparator()
-        menu.addAction("Détail\tEntrée").triggered.connect(
-            lambda: self._open_detail(task_id)
-        )
+        menu.addAction("Détail\tEntrée").triggered.connect(lambda: self._open_detail(task_id))
         duplicate = menu.addAction("Dupliquer")
         duplicate.setEnabled(editable)
         duplicate.triggered.connect(lambda: self._on_card_action(task_id, "duplicate"))
@@ -2884,7 +2893,7 @@ class PlanningController:
         head = " ".join(part for part in (task.project_number, task.project_cache.client) if part)
         parts = [head, task.display_title]
         if task.start is not None and task.end is not None:
-            calendar = calendar_resolver(snapshot)(next(iter(task.assignments), None))
+            calendar = commands.task_hours(task, calendar_resolver(snapshot))
             parts.append(span_label(calendar, task.start, task.end))
         people = [self._who(rid) for rid in task.assignments]
         parts.append(", ".join(people) if people else "Non affecté")
@@ -2938,7 +2947,7 @@ class PlanningController:
     def _hover_info(self, task: PlanningTask, snapshot: PlanningSnapshot) -> HoverInfo:
         meta = snapshot.meta
         calendar_for = calendar_resolver(snapshot)
-        calendar = calendar_for(next(iter(task.assignments), None))
+        calendar = commands.task_hours(task, calendar_for)
         dark = current_theme().is_dark
         kind = meta.task_type(task.task_type)
         project = self._project_info(task)
@@ -2976,7 +2985,7 @@ class PlanningController:
                 segments.append(
                     (other.start, other.end, other_kind.color_dark if dark else other_kind.color)
                 )
-                other_calendar = calendar_for(next(iter(other.assignments), None))
+                other_calendar = commands.task_hours(other, calendar_for)
                 minutes_total += (
                     other.end - other.start
                     if other.off_hours
@@ -3482,7 +3491,7 @@ def _resize_end(ctx: CommandContext, task_id: str, minutes: int) -> Changes:
         return ()
     if task.off_hours:
         return commands.resize_task(ctx, task_id, end=task.end + minutes)
-    calendar = ctx.calendar_for(next(iter(task.assignments), None))
+    calendar = commands.task_hours(task, ctx.calendar_for)
     return commands.resize_task(ctx, task_id, end=calendar.add_work(task.end, minutes))
 
 

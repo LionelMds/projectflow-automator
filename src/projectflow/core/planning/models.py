@@ -419,6 +419,10 @@ class PlanningTask(PlanningDocument):
     off_hours: bool = False
     """Night work (« travail de nuit »): exact wall times, real elapsed duration, no
     working calendar (see ``night``)."""
+    off_standard: bool = False
+    """« Hors horaires standard »: the task is not held by the working hours inside a day.
+    It may lie over the lunch hour and on Friday afternoon, and those hours count in its
+    length (``WorkCalendar.without_breaks``). Never set together with ``off_hours``."""
 
     @model_validator(mode="after")
     def _check_dates(self) -> Self:

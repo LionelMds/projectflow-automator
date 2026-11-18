@@ -345,6 +345,13 @@ Horaires : lundi à jeudi 06:30–12:00 et 13:00–16:30, vendredi 06:30–12:00
 et le dimanche ne sont jamais affichés ; le vendredi après-midi et les jours fériés sont
 hachurés. La pause de midi reste visible sans hachures et n'est jamais comptée.
 
+Une tâche qui doit se faire en dehors de ces horaires (entre 12:00 et 13:00, le vendredi
+après-midi) se règle dans `Détail` avec le bouton `Hors horaires standard` : elle n'est alors
+plus retenue par les horaires, se place et s'étire sur ces plages, et ces heures comptent dans
+sa durée (une journée entière vaut 10 h). Le week-end, les jours fériés et les fermetures
+restent exclus ; avant 06:30 et après 16:30, c'est le `Travail de nuit`. Relâché, le bouton
+remet la tâche sur les horaires standard en gardant sa durée.
+
 ### Stockage du planning
 
 `Paramètres > Planning > Stockage du planning` propose deux choix :
@@ -373,9 +380,20 @@ consultation seule et se synchronise de nouveau dès le retour du réseau.
 
 ### Vues et navigation
 
-- `Jour`, `Semaine` (par défaut) et `Mois`, ou `Ctrl+1`, `Ctrl+2`, `Ctrl+3`.
+- `Jour`, `Semaine` (par défaut) et `Mois`, ou `Ctrl+1`, `Ctrl+2`, `Ctrl+3`. Un clic sur l'un
+  de ces boutons, même celui de la vue affichée, recadre la vue : colonnes à 100 % et période
+  calée sur son bord gauche.
+- Le temps défile en continu, d'une période à la suivante : molette horizontale, pavé tactile,
+  `Maj` + molette, glisser la ligne des jours (ou la grille avec le bouton du milieu). Tant
+  qu'une période tient à l'écran, le défilement s'aimante sur son bord gauche et un geste
+  avance d'une période ; le titre nomme celle qui est au milieu de l'écran. La ligne des jours
+  (des heures en vue Jour) reste en haut et défile avec la grille.
+- `Ctrl` + molette zoome les colonnes de la vue (gardé par vue) autour du curseur. Au-delà de
+  100 %, une période est plus large que l'écran : le défilement devient libre et passe d'une
+  période à l'autre sans arrêt. Revenu à 100 %, la période la plus proche glisse en place.
 - `‹` `›` ou `PgPréc` / `PgSuiv` changent de période ; `Aujourd'hui` ou `Ctrl+T` y revient ; un
-  clic sur le libellé de la période ouvre un calendrier avec les numéros de semaine.
+  clic sur le libellé de la période ouvre un calendrier avec les numéros de semaine. Une
+  période voisine glisse en place, une période lointaine s'affiche directement.
 - Les barres s'aimantent à la demi-heure en vue Jour et Semaine. En vue Mois, un déplacement
   s'aimante à la demi-journée, mais la durée se règle à la demi-heure dans toutes les vues
   (bord de la barre étiré à la souris, ou `Maj+←/→`).

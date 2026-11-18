@@ -6,6 +6,11 @@ rows (« Non affecté » first, team headers, people and subcontractors), one ``
 per task and row with its colours, texts and badges, the absences of each row and the
 days off of each column. Bars only hold wall-clock instants; pixels come from the
 ``TimeScale``, so a new viewport width only needs ``GridModel.refit``.
+
+On screen the periods are pages of one strip (``core.planning.strip``): given an
+``origin``, the model draws the page of its anchor and the two pages next to it, at their
+place on the strip. The rows are laid out over those three pages together, so a row is
+as high as the page stacking the most bars and the rows line up from a page to the next.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from typing import Literal
 
 from projectflow.core.planning.calendar import WorkCalendar, cantonal_holidays
 from projectflow.core.planning.changes import PlanningSnapshot
-from projectflow.core.planning.commands import CalendarFor, calendar_resolver
+from projectflow.core.planning.commands import CalendarFor, calendar_resolver, task_hours
 from projectflow.core.planning.conflicts import Finding, findings_by_bar, resource_load
 from projectflow.core.planning.layout import (
     UNASSIGNED_LABEL,
@@ -50,6 +55,7 @@ from projectflow.core.planning.night import (
     night_hours,
     rest_spans,
 )
+from projectflow.core.planning.strip import Strip, lay_strip, restrip
 from projectflow.core.planning.timescale import (
     TimeScale,
     ViewKind,
@@ -341,11 +347,19 @@ class GridModel:
     )
     zoom: float = 1.0
     """Width of the columns against the width that fits the viewport (1: no scrolling)."""
+    strip: Strip | None = None
+    """Strip of pages the axis is placed on; None for a single period (print, PDF)."""
+    page: int = 0
+    """Index of the anchor's page in ``strip``; ``first_day``..``last_day`` is that page."""
 
     @property
     def night_axis(self) -> bool:
         """Whether the axis draws the whole 24 hours: night bars sit at their real place."""
         return self.timescale.full_day
+
+    def night_shown(self, start: WallTime, end: WallTime) -> bool:
+        """Whether a night from ``start`` to ``end`` is drawn at its real hours."""
+        return night_shown(self.timescale, start, end)
 
     def display_span(
         self, start: WallTime, end: WallTime, *, night: bool = False
@@ -355,9 +369,44 @@ class GridModel:
         The 06:30-16:30 axis has no room for a night: it takes the whole column of the
         day it belongs to (``night.night_day``), its hours written on the bar.
         """
-        if not night or self.night_axis:
+        if not night or self.night_shown(start, end):
             return start, end
         return column_span(self.timescale, night_day(start))
+
+    @property
+    def scene_width(self) -> float:
+        """Width the body scrolls over: the whole strip, else the drawn columns."""
+        return self.strip.total if self.strip is not None else self.timescale.width
+
+    @property
+    def page_days(self) -> tuple[date, date]:
+        """First and last shown day of the page of the anchor."""
+        days = shown_days(self.timescale.calendar, self.first_day, self.last_day)
+        if not days:
+            return self.timescale.first_day, self.timescale.last_day
+        return days[0], days[-1]
+
+    @property
+    def page_span(self) -> tuple[WallTime, WallTime]:
+        """Drawn instants of the page of the anchor, ``(start, end)``."""
+        first, last = self.page_days
+        scale = self.timescale
+        return (
+            day_start(first) + scale.window_of(first)[0],
+            day_start(last) + scale.window_of(last)[1],
+        )
+
+    @property
+    def page_bars(self) -> tuple[BarData, ...]:
+        """Bars drawn on the page of the anchor (the neighbour pages left out)."""
+        if self.strip is None:
+            return self.bars
+        low, high = self.page_span
+        return tuple(
+            bar
+            for bar in self.bars
+            if _on_span(*self.display_span(bar.start, bar.end, night=bar.night), low, high)
+        )
 
     def resting_during(
         self, row_id: str, start: WallTime, end: WallTime, *, task_id: str = ""
@@ -397,9 +446,14 @@ class GridModel:
         return self.calendar_for(row_id if row_kind(row_id) == "resource" else None)
 
     def task_calendar(self, task_id: str) -> WorkCalendar:
-        """Calendar a task's length is measured with: its first assignee's, as in the commands."""
+        """Calendar a task's length is measured with: its first assignee's, as in the commands.
+
+        Without its breaks for a task « hors horaires standard ».
+        """
         task = self.snapshot.tasks.get(task_id)
-        return self.calendar_for(next(iter(task.assignments), None) if task is not None else None)
+        if task is None:
+            return self.calendar_for(None)
+        return task_hours(task, self.calendar_for)
 
     def days_of(self, row_id: str) -> tuple[DayInfo, ...]:
         """Days off of every column for the calendar of ``row_id``."""
@@ -473,20 +527,24 @@ class GridModel:
 
     @property
     def now_visible(self) -> bool:
-        if self.timescale.index_of(wall_date(self.now)) is None:
+        today = wall_date(self.now)
+        if self.timescale.index_of(today) is None:
             return False
         minute = minute_of_day(self.now)
-        low, high = self.timescale.window
+        low, high = self.timescale.window_of(today)
         return low <= minute <= high
 
     @property
     def period_label(self) -> str:
-        return period_label(self.view, self.timescale.first_day, self.timescale.last_day)
+        return period_label(self.view, *self.page_days)
 
     # Geometry ---------------------------------------------------------
 
     def refit(self, viewport_width: float) -> GridModel:
         """Return the same model with the axis fitted to a new viewport width."""
+        if self.strip is not None:
+            width = max(viewport_width, MIN_VIEWPORT_WIDTH)
+            return replace(self.on_strip(restrip(self.strip, viewport=width)), viewport_width=width)
         width = fitted_day_width(
             self.view,
             viewport_width,
@@ -502,14 +560,66 @@ class GridModel:
     def with_day_width(self, day_width: float) -> GridModel:
         if day_width == self.timescale.day_width:
             return self
+        old = self.timescale
         scale = TimeScale(
-            self.timescale.calendar,
-            self.first_day,
-            self.last_day,
+            old.calendar,
+            old.first_day,
+            old.last_day,
             day_width,
-            window=self.timescale.window,
+            window=old.window,
+            origin=old.left,
+            windows=old.own_windows,
         )
         return replace(self, timescale=scale)
+
+    def single_page(self) -> GridModel:
+        """Return the page of the anchor alone, off the strip: what a print shows."""
+        if self.strip is None:
+            return self
+        first, last = self.page_days
+        old = self.timescale
+        own = {day: window for day, window in old.own_windows.items() if first <= day <= last}
+        scale = TimeScale(old.calendar, first, last, old.day_width, window=old.window, windows=own)
+        low, high = scale.start, scale.end
+        bars = tuple(
+            replace(bar, cut_left=span[0] < low, cut_right=span[1] > high)
+            for bar in self.bars
+            if _on_span(*(span := _display(scale, bar)), low, high)
+        )
+        absences = tuple(
+            block for block in self.absences if _on_span(block.start, block.end, low, high)
+        )
+        rests = tuple(block for block in self.rests if _on_span(block.start, block.end, low, high))
+        return replace(
+            self,
+            timescale=scale,
+            bars=bars,
+            absences=absences,
+            days=day_infos(scale, old.calendar, today=self.today, closures=self.closures),
+            bars_by_row=MappingProxyType(_group(bars, lambda bar: bar.row_id)),
+            bars_by_task=MappingProxyType(_group(bars, lambda bar: bar.task_id)),
+            bars_by_key=MappingProxyType({bar.key: bar for bar in bars}),
+            absences_by_row=MappingProxyType(_group_absences(absences)),
+            day_cache={},
+            rests=rests,
+            rests_by_row=MappingProxyType(_group_rests(rests)),
+            strip=None,
+            page=0,
+        )
+
+    def on_strip(self, strip: Strip) -> GridModel:
+        """Return the same pages placed on ``strip`` (another viewport width or zoom)."""
+        old = self.timescale
+        scale = TimeScale(
+            old.calendar,
+            old.first_day,
+            old.last_day,
+            strip.day_width,
+            window=old.window,
+            origin=strip.left_of(strip.drawn(self.page)[0]),
+            windows=old.own_windows,
+        )
+        return replace(self, timescale=scale, strip=strip, zoom=strip.zoom)
 
 
 # --------------------------------------------------------------- helpers ----
@@ -640,9 +750,9 @@ def day_infos(
     scale: TimeScale, calendar: WorkCalendar, *, today: date, closures: Mapping[date, str]
 ) -> tuple[DayInfo, ...]:
     """Days off of every column of ``scale`` for ``calendar``."""
-    low, high = scale.window
     infos: list[DayInfo] = []
     for column in scale.columns_for(calendar):
+        low, high = scale.window_of(column.day)
         base = day_start(column.day)
         periods = tuple((start - base, end - base) for start, end in column.periods)
         infos.append(
@@ -746,11 +856,11 @@ def _bar_data(task: PlanningTask, row_id: str, lane: int, context: _BarContext) 
     unassigned = row_id == UNASSIGNED_ROW_ID
     findings = context.findings.get((task.id, None if unassigned else row_id), [])
     people = _people(task, context.resources)
-    calendar = context.calendar_for(next(iter(task.assignments), None))
+    calendar = task_hours(task, context.calendar_for)
     cache = task.project_cache
     night = task.off_hours
     display = (start, end)
-    if night and not context.scale.full_day:
+    if night and not night_shown(context.scale, start, end):
         display = column_span(context.scale, night_day(start))
     return BarData(
         task_id=task.id,
@@ -784,9 +894,24 @@ def _bar_data(task: PlanningTask, row_id: str, lane: int, context: _BarContext) 
 
 def column_span(scale: TimeScale, day: date) -> tuple[WallTime, WallTime]:
     """Drawn instants of the column of ``day``: the whole drawn day."""
-    low, high = scale.window
+    low, high = scale.window_of(day)
     base = day_start(day)
     return base + low, base + high
+
+
+def night_shown(scale: TimeScale, start: WallTime, end: WallTime) -> bool:
+    """Whether the axis draws the 24 hours of a day the night ``start``..``end`` lies on.
+
+    Its bar then sits at its real hours; elsewhere it fills the column of its evening.
+    """
+    days = {wall_date(start), wall_date(max(end - 1, start))}
+    if not any(scale.index_of(day) is not None for day in days):
+        return scale.full_day
+    return any(scale.index_of(day) is not None and scale.full_day_on(day) for day in days)
+
+
+def _on_span(start: WallTime, end: WallTime, low: WallTime, high: WallTime) -> bool:
+    return start < high and end > low
 
 
 def _part_span(
@@ -812,13 +937,13 @@ def _absence_blocks(
     if absence.part == "day":
         spans = [
             (
-                _part_span(first, "day", scale.window, calendar)[0],
-                _part_span(last, "day", scale.window, calendar)[1],
+                _part_span(first, "day", scale.window_of(first), calendar)[0],
+                _part_span(last, "day", scale.window_of(last), calendar)[1],
             )
         ]
     else:
         spans = [
-            _part_span(day, absence.part, scale.window, calendar)
+            _part_span(day, absence.part, scale.window_of(day), calendar)
             for day in shown_days(axis, first, last)
         ]
     return [
@@ -844,7 +969,7 @@ def _recurring_blocks(
         for column in scale.columns:
             if column.day.weekday() != off.weekday:
                 continue
-            start, end = _part_span(column.day, off.part, scale.window, calendar)
+            start, end = _part_span(column.day, off.part, scale.window_of(column.day), calendar)
             blocks.append(
                 AbsenceBlock(
                     row_id=resource.id,
@@ -878,13 +1003,11 @@ def _absences(
 def _resource_label(
     resource: Resource,
     snapshot: PlanningSnapshot,
-    scale: TimeScale,
+    days: tuple[date, date],
     calendar: WorkCalendar,
 ) -> RowLabel:
     # ``snapshot`` only holds the tasks of this row in the range: the load stays cheap.
-    planned, available = resource_load(
-        snapshot, resource.id, scale.first_day, scale.last_day, calendar
-    )
+    planned, available = resource_load(snapshot, resource.id, days[0], days[1], calendar)
     return RowLabel(
         row_id=resource.id,
         kind="resource",
@@ -907,7 +1030,7 @@ def _labels(
     ids: Sequence[str],
     resources: Sequence[Resource],
     collapsed: Collection[str],
-    scale: TimeScale,
+    days: tuple[date, date],
     calendar_for: CalendarFor,
     unassigned_count: int,
     tasks_by_row: Mapping[str, Sequence[PlanningTask]],
@@ -940,7 +1063,7 @@ def _labels(
             )
         else:
             own = replace(snapshot, tasks={task.id: task for task in tasks_by_row.get(row_id, ())})
-            labels[row_id] = _resource_label(by_id[row_id], own, scale, calendar_for(row_id))
+            labels[row_id] = _resource_label(by_id[row_id], own, days, calendar_for(row_id))
     return labels
 
 
@@ -1008,6 +1131,7 @@ def build_grid_model(
     project_exists: ProjectExists | None = None,
     show_night: bool = False,
     zoom: float = 1.0,
+    origin: date | None = None,
 ) -> GridModel:
     """Build what the grid draws for ``view`` around ``anchor``.
 
@@ -1015,19 +1139,41 @@ def build_grid_model(
     affecté »); a collapsed team keeps its header. Archived people come back while they
     hold a task in the range. The day view draws the 24 hours when the day holds night
     work (or with ``show_night``); elsewhere a night fills the column of its evening.
+
+    With ``origin`` the periods are pages of the strip laid out around that day: the model
+    draws the page of ``anchor`` and its two neighbours at their place on the strip (laid
+    out again around ``anchor`` when it does not reach that far). Without it, the model
+    is the single period of ``anchor`` fitted to the viewport, as printed.
     """
     calendar_for = calendar_resolver(snapshot)
     axis = calendar_for(None)
     first, last = view_range(anchor, view, axis.workdays)
-    columns = len(shown_days(axis, first, last))
-    night_axis = view == "day" and (show_night or _has_night(snapshot, first))
-    day_window = NIGHT_WINDOW if night_axis else None
-    probe = TimeScale(axis, first, last, 1.0, window=day_window)
-    width = fitted_day_width(
-        view, viewport_width, columns, probe.display_minutes, night=night_axis, zoom=zoom
-    )
-    scale = TimeScale(axis, first, last, width, window=day_window)
+    strip: Strip | None = None
+    page = 0
+    if origin is not None:
+        strip, page, scale = _strip_axis(
+            snapshot,
+            axis,
+            view=view,
+            anchor=anchor,
+            origin=origin,
+            viewport_width=viewport_width,
+            zoom=zoom,
+            show_night=show_night,
+        )
+    else:
+        columns = len(shown_days(axis, first, last))
+        night_axis = view == "day" and (show_night or _has_night(snapshot, first))
+        day_window = NIGHT_WINDOW if night_axis else None
+        probe = TimeScale(axis, first, last, 1.0, window=day_window)
+        width = fitted_day_width(
+            view, viewport_width, columns, probe.display_minutes, night=night_axis, zoom=zoom
+        )
+        scale = TimeScale(axis, first, last, width, window=day_window)
     window = (scale.start, scale.end)
+    page_days = shown_days(axis, first, last) or [scale.first_day, scale.last_day]
+    page_low = day_start(page_days[0]) + scale.window_of(page_days[0])[0]
+    page_high = day_start(page_days[-1]) + scale.window_of(page_days[-1])[1]
     resources = row_resources(snapshot, window=window)
     hidden = set(hidden_resource_ids)
     visible = [resource for resource in resources if resource.id not in hidden]
@@ -1036,8 +1182,7 @@ def build_grid_model(
     spans: dict[str, list[TaskSpan]] = spans_by_row(
         tasks, shown={resource.id for resource in resources}
     )
-    if not night_axis:
-        spans = _night_columns(spans, snapshot, scale)
+    spans = _night_columns(spans, snapshot, scale)
     ids = _visible_row_ids(visible, collapsed)
     rows = _shrink_empty_unassigned(layout_rows(ids, spans, density=density, window=window), spans)
     laid_out = frozenset(row.resource_id for row in rows if row.kind == "resource")
@@ -1047,7 +1192,11 @@ def build_grid_model(
         calendar_for=calendar_for,
         scale=scale,
         findings=findings_by_bar(
-            _nearby(snapshot, tasks), first, last, calendar_for, project_exists
+            _nearby(snapshot, tasks),
+            scale.first_day,
+            scale.last_day,
+            calendar_for,
+            project_exists,
         ),
         resources=snapshot.resources,
         laid_out=laid_out,
@@ -1068,6 +1217,11 @@ def build_grid_model(
     cantons = {canton for resource in visible for canton in calendar_for(resource.id).cantons}
     cantons.update(axis.cantons)
     by_row = _group(bars, lambda bar: bar.row_id)
+    waiting = [
+        bar
+        for bar in by_row.get(UNASSIGNED_ROW_ID, ())
+        if _on_span(*_display(scale, bar), page_low, page_high)
+    ]
     return GridModel(
         snapshot=snapshot,
         view=view,
@@ -1082,10 +1236,10 @@ def build_grid_model(
                 ids=ids,
                 resources=visible,
                 collapsed=collapsed,
-                scale=scale,
+                days=(page_days[0], page_days[-1]),
                 calendar_for=calendar_for,
-                unassigned_count=len(by_row.get(UNASSIGNED_ROW_ID, ())),
-                tasks_by_row=_by_assignee(tasks),
+                unassigned_count=len(waiting),
+                tasks_by_row=_by_assignee(_overlapping(tasks, page_low, page_high)),
             )
         ),
         bars=bars,
@@ -1106,7 +1260,66 @@ def build_grid_model(
         rests=rests,
         rests_by_row=MappingProxyType(_group_rests(rests)),
         zoom=clamp_zoom(zoom),
+        strip=strip,
+        page=page,
     )
+
+
+def _display(scale: TimeScale, bar: BarData) -> tuple[WallTime, WallTime]:
+    """Instants ``bar`` is drawn between on ``scale`` (a night over its evening's column)."""
+    if bar.night and not night_shown(scale, bar.start, bar.end):
+        return column_span(scale, night_day(bar.start))
+    return bar.start, bar.end
+
+
+def _strip_axis(
+    snapshot: PlanningSnapshot,
+    axis: WorkCalendar,
+    *,
+    view: ViewKind,
+    anchor: date,
+    origin: date,
+    viewport_width: float,
+    zoom: float,
+    show_night: bool,
+) -> tuple[Strip, int, TimeScale]:
+    """Strip of pages, page of ``anchor`` and the axis of the three pages drawn.
+
+    In the day view a day holding night work draws its 24 hours, in the width of any day:
+    every page keeps its own axis, whatever its neighbours hold.
+    """
+    width = max(viewport_width, MIN_VIEWPORT_WIDTH)
+    minutes = axis.day_end_minute - axis.day_start_minute
+
+    def laid(around: date) -> Strip:
+        return lay_strip(
+            view,
+            around,
+            viewport=width,
+            zoom=clamp_zoom(zoom),
+            weekdays=axis.workdays,
+            day_minutes=minutes,
+        )
+
+    strip = laid(origin)
+    page = strip.index_of(anchor)
+    if page is None:
+        strip = laid(anchor)
+        page = strip.index_of(anchor) or 0
+    drawn = strip.drawn(page)
+    first = strip.pages[drawn[0]].first_day
+    last = strip.pages[drawn[-1]].last_day
+    nights: dict[date, tuple[int, int]] = {}
+    if view == "day":
+        nights = {
+            day: NIGHT_WINDOW
+            for day in shown_days(axis, first, last)
+            if show_night or _has_night(snapshot, day)
+        }
+    scale = TimeScale(
+        axis, first, last, strip.day_width, origin=strip.left_of(drawn[0]), windows=nights
+    )
+    return strip, page, scale
 
 
 def _night_tasks(snapshot: PlanningSnapshot, low: WallTime, high: WallTime) -> list[PlanningTask]:
@@ -1127,7 +1340,7 @@ def _night_columns(
 
     def placed(span: TaskSpan) -> TaskSpan:
         task = snapshot.tasks.get(span.task_id)
-        if task is None or not task.off_hours:
+        if task is None or not task.off_hours or night_shown(scale, span.start, span.end):
             return span
         start, end = column_span(scale, night_day(span.start))
         return TaskSpan(task_id=span.task_id, start=start, end=end)

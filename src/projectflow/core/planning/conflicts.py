@@ -102,7 +102,8 @@ def findings_by_bar(
     for task in visible:
         shared = _task_findings(task, project_exists)
         if not task.assignments:
-            findings = [*_non_worked_findings(task, None, calendar_for(None)), *shared]
+            hours = calendar_for(None).hours_of(off_standard=task.off_standard)
+            findings = [*_non_worked_findings(task, None, hours), *shared]
             if findings:
                 result[(task.id, None)] = findings
             continue
@@ -153,7 +154,7 @@ def _planned_minutes(
     """Load of ``task`` in ``[start, end)``: worked minutes, or real ones for night work."""
     if task.off_hours:
         return max(end - start, 0)
-    return calendar.work_between(start, end)
+    return calendar.hours_of(off_standard=task.off_standard).work_between(start, end)
 
 
 def format_duration(minutes: int) -> str:
@@ -216,7 +217,9 @@ class _Rows:
         rest = [] if subcontractor else _rest_findings(task, resource_id, self._tasks[resource_id])
         return [
             *_absence_findings(task, resource_id, offs, calendar),
-            *_non_worked_findings(task, resource_id, calendar),
+            *_non_worked_findings(
+                task, resource_id, calendar.hours_of(off_standard=task.off_standard)
+            ),
             *overload,
             *rest,
         ]
@@ -335,7 +338,8 @@ def _overloaded_days(
     for task in tasks:
         start = max(_start(task), low)
         end = min(_end(task), high)
-        for day, minutes in _daily_minutes(start, end, calendar):
+        hours = calendar.hours_of(off_standard=task.off_standard)
+        for day, minutes in _daily_minutes(start, end, hours):
             load[day] += minutes
     return {
         day: (planned, calendar.worked_minutes(day))

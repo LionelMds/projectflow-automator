@@ -2,16 +2,18 @@
 
 Only the calendar's working weekdays are shown (Monday to Friday): Saturday and Sunday
 never appear, while holidays and closures stay on the axis, flagged as not worked. Every
-shown day spans the same display minutes, from the earliest worked minute of the week to
-the latest (06:30-16:30), so the lunch break and Friday afternoon are drawn but not worked
-and Friday evening is directly followed by Monday morning. Nothing here imports Qt.
+shown day spans the same width and draws the minutes from the earliest worked minute of
+the week to the latest (06:30-16:30), so the lunch break and Friday afternoon are drawn but
+not worked and Friday evening is directly followed by Monday morning. A day holding night
+work may draw its 24 hours instead, in the same width. The axis may begin anywhere on the
+strip of pages (``origin``). Nothing here imports Qt.
 """
 
 from __future__ import annotations
 
 import bisect
 import math
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
@@ -275,7 +277,9 @@ class TimeScale:
 
     The columns' days off (``workday``, ``holiday``, ``periods``, ``closed``) follow the
     axis calendar; a row of another canton paints ``columns_for(row_calendar)`` and snaps
-    with its own calendar.
+    with its own calendar. The first column begins at ``origin``, its place on the strip
+    of pages; ``windows`` gives the days drawing other minutes than the others (the 24
+    hours of a night).
     """
 
     __slots__ = (
@@ -286,8 +290,10 @@ class TimeScale:
         "_first_minute",
         "_index",
         "_ordinals",
+        "_origin",
         "_row_columns",
         "_span",
+        "_windows",
     )
 
     def __init__(
@@ -298,8 +304,13 @@ class TimeScale:
         day_width: float,
         *,
         window: tuple[int, int] | None = None,
+        origin: float = 0.0,
+        windows: Mapping[date, tuple[int, int]] | None = None,
     ) -> None:
-        """``window`` replaces the drawn minutes of a day (``(0, 1440)``: the whole night)."""
+        """``window`` replaces the drawn minutes of a day (``(0, 1440)``: the whole night).
+
+        ``windows`` does so for single days; ``origin`` is the x of the first column.
+        """
         if not day_width > 0:
             raise ValueError("Largeur de jour invalide.")
         days = shown_days(calendar, first_day, last_day)
@@ -308,10 +319,19 @@ class TimeScale:
         low, high = window or (calendar.day_start_minute, calendar.day_end_minute)
         if not 0 <= low < high <= MINUTES_PER_DAY:
             raise ValueError("Fenetre de journee invalide.")
+        own = {day: windows[day] for day in days if windows and day in windows}
+        own = {day: span for day, span in own.items() if span != (low, high)}
+        if any(not 0 <= first < last <= MINUTES_PER_DAY for first, last in own.values()):
+            raise ValueError("Fenetre de journee invalide.")
         self._calendar = calendar
         self._day_width = float(day_width)
+        self._origin = float(origin)
         self._first_minute = low
         self._span = high - low
+        # None while every day draws the same minutes: the mapping then stays a plain ratio.
+        self._windows: tuple[tuple[int, int], ...] | None = (
+            tuple(own.get(day, (low, high)) for day in days) if own else None
+        )
         self._ordinals = tuple(day.toordinal() for day in days)
         self._index = {day: index for index, day in enumerate(days)}
         # Day edges computed once, so lookups by x agree with the drawn columns.
@@ -334,7 +354,7 @@ class TimeScale:
         )
 
     def _x(self, position: int) -> float:
-        return position * self._day_width / self._span
+        return self._origin + position * self._day_width / self._span
 
     # Properties -------------------------------------------------------
 
@@ -375,7 +395,9 @@ class TimeScale:
 
     @property
     def full_day(self) -> bool:
-        """Whether the axis draws the whole 24 hours (the day view of a night)."""
+        """Whether every column draws the whole 24 hours (the day view of a night)."""
+        if self._windows is not None:
+            return all(window == (0, MINUTES_PER_DAY) for window in self._windows)
         return self._first_minute == 0 and self._span == MINUTES_PER_DAY
 
     @property
@@ -384,17 +406,49 @@ class TimeScale:
 
     @property
     def width(self) -> float:
+        """Width of the drawn columns."""
+        return self._edges[-1] - self._edges[0]
+
+    @property
+    def left(self) -> float:
+        """X of the first column: the place of the axis on the strip of pages."""
+        return self._edges[0]
+
+    @property
+    def right(self) -> float:
         return self._edges[-1]
 
     @property
     def start(self) -> WallTime:
         """First drawn instant, the left edge."""
-        return day_start(self.first_day) + self._first_minute
+        return day_start(self.first_day) + self.window_of(self.first_day)[0]
 
     @property
     def end(self) -> WallTime:
         """Last drawn instant, the right edge."""
-        return day_start(self.last_day) + self._first_minute + self._span
+        return day_start(self.last_day) + self.window_of(self.last_day)[1]
+
+    @property
+    def own_windows(self) -> dict[date, tuple[int, int]]:
+        """Days drawing other minutes than the usual ones, with those minutes."""
+        if self._windows is None:
+            return {}
+        return {
+            column.day: window
+            for column, window in zip(self._columns, self._windows, strict=True)
+            if window != self.window
+        }
+
+    def window_of(self, day: date) -> tuple[int, int]:
+        """Drawn minutes of ``day``, ``(first, last)``; the usual ones off the axis."""
+        index = self._index.get(day)
+        if index is None or self._windows is None:
+            return self.window
+        return self._windows[index]
+
+    def full_day_on(self, day: date) -> bool:
+        """Whether the column of ``day`` draws its 24 hours (a night shown as it is)."""
+        return self.window_of(day) == (0, MINUTES_PER_DAY)
 
     # Mapping ----------------------------------------------------------
 
@@ -430,6 +484,12 @@ class TimeScale:
         index = self._index.get(day)
         if index is None:
             return self._edges[bisect.bisect_left(self._ordinals, day.toordinal())]
+        if self._windows is not None:
+            low, high = self._windows[index]
+            offset = min(max(minute_of_day(value) - low, 0), high - low)
+            if offset >= high - low:
+                return self._edges[index + 1]
+            return self._edges[index] + offset * self._day_width / (high - low)
         offset = min(max(minute_of_day(value) - self._first_minute, 0), self._span)
         return self._x(index * self._span + offset)
 
@@ -442,12 +502,33 @@ class TimeScale:
         A day boundary reads as the next morning, or as the previous evening when ``end``
         (an end dropped on the line between Monday and Tuesday is Monday 16:30).
         """
+        if self._windows is not None:
+            return self._time_at_own(x - self._origin, end=end)
         last = len(self._columns) * self._span
-        position = min(max(math.floor(x * self._span / self._day_width + 0.5), 0), last)
+        ratio = (x - self._origin) * self._span / self._day_width
+        position = min(max(math.floor(ratio + 0.5), 0), last)
         index, offset = divmod(position, self._span)
         if index == len(self._columns) or (end and offset == 0 and index > 0):
             index, offset = index - 1, self._span
         return day_start(self._columns[index].day) + self._first_minute + offset
+
+    def _time_at_own(self, x: float, *, end: bool) -> WallTime:
+        """``time_at`` where days draw different minutes; ``x`` counts from the first column."""
+        windows = self._windows or ()
+        count = len(self._columns)
+        index = min(max(math.floor(x / self._day_width), 0), count - 1)
+        low, high = windows[index]
+        inside = (x - index * self._day_width) * (high - low) / self._day_width
+        offset = min(max(math.floor(inside + 0.5), 0), high - low)
+        if offset == high - low and index + 1 < count and not end:
+            # The line between two days reads as the next morning.
+            index, offset = index + 1, 0
+            low, high = windows[index]
+        elif offset == 0 and index > 0 and end:
+            index -= 1
+            low, high = windows[index]
+            offset = high - low
+        return day_start(self._columns[index].day) + low + offset
 
     def column_at(self, x: float) -> DayColumn:
         """Column under ``x``, clamped to the first and last column."""

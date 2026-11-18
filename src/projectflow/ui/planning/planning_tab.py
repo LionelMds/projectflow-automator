@@ -124,9 +124,9 @@ from projectflow.ui.widgets.industry import (
 
 VIEW_LABELS: Final[Mapping[ViewKind, str]] = {"day": "Jour", "week": "Semaine", "month": "Mois"}
 VIEW_TOOLTIPS: Final[Mapping[ViewKind, str]] = {
-    "day": "Vue jour (Ctrl+1)",
-    "week": "Vue semaine (Ctrl+2)",
-    "month": "Vue mois (Ctrl+3)",
+    "day": "Vue jour (Ctrl+1) ; un clic recadre la vue à 100 %",
+    "week": "Vue semaine (Ctrl+2) ; un clic recadre la vue à 100 %",
+    "month": "Vue mois (Ctrl+3) ; un clic recadre la vue à 100 %",
 }
 COLOR_LABELS: Final[Mapping[ColorBy, str]] = {"type": "Type", "dossier": "Dossier"}
 DENSITY_LABELS: Final[Mapping[str, str]] = {
@@ -215,9 +215,11 @@ SHORTCUT_SECTIONS: Final[tuple[tuple[str, tuple[tuple[str, str], ...]], ...]] = 
     (
         "Naviguer",
         (
-            ("Ctrl+1 / 2 / 3", "Jour, Semaine, Mois"),
+            ("Ctrl+1 / 2 / 3", "Jour, Semaine, Mois (recadre la vue)"),
             ("Ctrl+T", "Aujourd'hui"),
             ("PgPréc / PgSuiv", "Période précédente, suivante"),
+            ("Maj+molette", "Défiler dans le temps"),
+            ("Ctrl+molette", "Zoomer les colonnes"),
             ("Ctrl+F", f"Filtrer {FILTERED}"),
             ("Ctrl+B", "Replier ou déplier le panneau"),
             ("Ctrl+P", "Imprimer (A3)"),
@@ -705,6 +707,10 @@ class PlanningTab(QWidget):
         self._today = date.today()
         self._view: ViewKind = "week"
         self._anchor = self._today
+        self._origin = self._today
+        """Day the strip of pages is laid out around (kept until a date leaves the strip)."""
+        self._asked = True
+        """The next model answers a request: the grid moves to its page (see ``_change``)."""
         self._density = "normal"
         self._row_heights: dict[ViewKind, int] = {}
         self._zooms: dict[ViewKind, float] = {}
@@ -977,9 +983,9 @@ class PlanningTab(QWidget):
             ("quick_entry", ("Ctrl+K",), self.focus_quick_entry),
             ("undo", ("Ctrl+Z",), self.undo_requested.emit),
             ("redo", ("Ctrl+Y", "Ctrl+Shift+Z"), self.redo_requested.emit),
-            ("day", ("Ctrl+1",), lambda: self.set_view("day")),
-            ("week", ("Ctrl+2",), lambda: self.set_view("week")),
-            ("month", ("Ctrl+3",), lambda: self.set_view("month")),
+            ("day", ("Ctrl+1",), lambda: self.show_view("day")),
+            ("week", ("Ctrl+2",), lambda: self.show_view("week")),
+            ("month", ("Ctrl+3",), lambda: self.show_view("month")),
             ("today", ("Ctrl+T",), self.go_today),
             ("previous", ("PgUp",), lambda: self.step(-1)),
             ("next", ("PgDown",), lambda: self.step(1)),
@@ -1026,7 +1032,7 @@ class PlanningTab(QWidget):
         self.grid.week_clicked.connect(lambda day: self.set_view("week", anchor=day))
         self.grid.zoom_requested.connect(self._on_zoom_wheel)
         self.grid.row_height_requested.connect(self._on_row_height_wheel)
-        self.grid.period_step_requested.connect(self._step_from_edge)
+        self.grid.page_changed.connect(self._on_page_scrolled)
         self.side.width_changed.connect(self._place_toasts)
         self.side.collapsed_changed.connect(self._on_panel_collapsed)
         self.backlog.set_color_by(self._color_by)
@@ -1047,6 +1053,11 @@ class PlanningTab(QWidget):
     @property
     def today(self) -> date:
         return self._today
+
+    @property
+    def origin(self) -> date:
+        """Day the strip of pages is laid out around."""
+        return self._origin
 
     @property
     def density(self) -> str:
@@ -1128,7 +1139,8 @@ class PlanningTab(QWidget):
         self.zoom_slider.setToolTip(
             native_keys(
                 "Largeur des colonnes de cette vue (aussi Ctrl + molette sur le planning) ; "
-                "au-delà de 100 %, le planning défile de côté (Maj + molette)"
+                "au-delà de 100 %, le planning défile librement (Maj + molette, ou glisser "
+                "la ligne des jours)"
             )
         )
         for slider in (self.row_height_slider, self.zoom_slider):
@@ -1183,10 +1195,13 @@ class PlanningTab(QWidget):
     def _on_row_height_wheel(self, notches: int) -> None:
         self.set_row_height(self.row_height + ROW_HEIGHT_STEP * notches)
 
-    def _step_from_edge(self, step: int) -> None:
-        """Show the period past the end the sideways wheel went beyond."""
-        self.grid.land_on_edge(step)
-        self.step(step)
+    def _on_page_scrolled(self, day: object) -> None:
+        """Name the page the grid scrolled onto, without moving the grid.
+
+        A request still waiting for its model wins: the scroll it interrupts is not told.
+        """
+        if isinstance(day, date) and not self._asked:
+            self._change(self._view, day, asked=False)
 
     @property
     def color_by(self) -> ColorBy:
@@ -1232,6 +1247,7 @@ class PlanningTab(QWidget):
         if view is not None and view in VIEW_KINDS:
             self._view = view
             self._anchor = self._normalized(self._anchor)
+            self._asked = True
         if density is not None and density in DENSITY_LABELS:
             self._density = density
         if color_by is not None and color_by in COLOR_LABELS:
@@ -1244,6 +1260,7 @@ class PlanningTab(QWidget):
         self._today = today
         if show:
             self._anchor = self._normalized(today)
+            self._asked = True
             self._sync_toolbar()
 
     def set_view(self, view: ViewKind, *, anchor: date | None = None) -> None:
@@ -1254,6 +1271,18 @@ class PlanningTab(QWidget):
             first, last = self.period_range()
             anchor = self._today if first <= self._today <= last else self._anchor
         self._change(view, anchor)
+
+    def show_view(self, view: ViewKind) -> None:
+        """Show ``view`` as it opens: its columns back to 100 %, its period in place.
+
+        What a click on « Jour », « Semaine » or « Mois » does, on the view already shown
+        too; the height of the rows is left as chosen.
+        """
+        if view not in VIEW_KINDS:
+            return
+        if self._zooms.pop(view, None) is not None:
+            self.display_size_changed.emit()
+        self.set_view(view)
 
     def set_anchor(self, day: object) -> None:
         if isinstance(day, date):
@@ -1292,12 +1321,20 @@ class PlanningTab(QWidget):
             return shown_day(day, WEEKDAYS)
         return day.replace(day=1)
 
-    def _change(self, view: ViewKind, anchor: date) -> None:
+    def _change(self, view: ViewKind, anchor: date, *, asked: bool = True) -> None:
+        """Show ``anchor`` in ``view``.
+
+        ``asked`` marks a request (the arrows, « Aujourd'hui », a date, a view, a link to a
+        dossier or a day): the grid moves to that page, even when it is the one already
+        named. A page the grid scrolled onto by itself is not: moving the grid to it
+        would pull it back under the scroll.
+        """
         old = (self._view, self._anchor)
         self._view = view
         self._anchor = self._normalized(anchor)
+        self._asked = self._asked or asked
         self._sync_toolbar()
-        if (self._view, self._anchor) != old:
+        if asked or (self._view, self._anchor) != old:
             self.view_changed.emit()
 
     def _sync_toolbar(self) -> None:
@@ -1313,7 +1350,7 @@ class PlanningTab(QWidget):
         self._fit_toolbar()
 
     def _on_view_clicked(self, index: int) -> None:
-        self.set_view(VIEW_KINDS[index])
+        self.show_view(VIEW_KINDS[index])
 
     def _on_color_clicked(self, index: int) -> None:
         self.set_color_by(tuple(COLOR_LABELS)[index])
@@ -1328,7 +1365,11 @@ class PlanningTab(QWidget):
 
     def set_model(self, model: GridModel) -> None:
         """Show ``model`` in the grid; the filter and the status bar follow it."""
-        self.grid.set_model(model)
+        asked, self._asked = self._asked, False
+        if model.strip is not None:
+            # A date beyond the strip had it laid out again around that date.
+            self._origin = model.strip.origin
+        self.grid.set_model(model, asked=asked)
         self.apply_filter()
         self._update_status()
 
@@ -1543,7 +1584,8 @@ class PlanningTab(QWidget):
             return ""
         people = sum(1 for row in model.rows if row.kind == "resource")
         return (
-            f"{period_text(self._view, self._anchor)} · {people} lignes · {len(model.bars)} barres"
+            f"{period_text(self._view, self._anchor)} · {people} lignes · "
+            f"{len(model.page_bars)} barres"
         )
 
     def _deletes_all(self, bars: Sequence[tuple[str, str]]) -> bool:

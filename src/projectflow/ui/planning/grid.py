@@ -12,6 +12,13 @@ Previews use the same calendars as the commands: worked minutes measured on the 
 first assignee, the new span laid out on the first assignee after the move. A drag moves
 the pressed bar (and its siblings in time); moving a whole selection with the mouse is
 left for a later lot, the arrow keys already shift every selected bar at once.
+
+Time scrolls sideways over one strip of pages (``core.planning.strip``): the body is as
+wide as the strip and the model draws the page on screen and its two neighbours. The
+grid slides from page to page and comes to rest on a page edge while a page fits the
+viewport, and scrolls freely once the zoom made a page wider. It tells which page lies
+under the middle of the viewport (``page_changed``) and moves to a page only when asked
+to (``set_model(..., asked=True)``): a model that merely follows the scroll never moves it.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ from typing import Literal
 
 from PySide6.QtCore import (
     QByteArray,
+    QEasingCurve,
     QEvent,
     QMimeData,
     QPoint,
@@ -32,6 +40,7 @@ from PySide6.QtCore import (
     QRectF,
     Qt,
     QTimer,
+    QVariantAnimation,
     Signal,
 )
 from PySide6.QtGui import (
@@ -48,6 +57,7 @@ from PySide6.QtGui import (
     QPainter,
     QPixmap,
     QResizeEvent,
+    QShowEvent,
     QWheelEvent,
 )
 from PySide6.QtWidgets import QFrame, QGraphicsView, QGridLayout, QWidget
@@ -68,6 +78,7 @@ from projectflow.core.planning.night import (
     night_label,
     night_start_at,
 )
+from projectflow.core.planning.strip import Strip
 from projectflow.core.planning.timescale import (
     ViewKind,
     day_label,
@@ -105,8 +116,17 @@ AUTOSCROLL_ZONE = 24
 AUTOSCROLL_STEP = 16
 AUTOSCROLL_MS = 30
 WHEEL_NOTCH = 120
-EDGE_PUSH = 3 * WHEEL_NOTCH
-"""Sideways wheel pushed this far against the end of the period: show the next one."""
+SLIDE_MS = 260
+"""Time a page takes to slide into place."""
+SCROLL_MS = 160
+"""Time a wheel notch takes to scroll a strip that runs freely."""
+WHEEL_SHARE = 0.2
+"""Share of the viewport a wheel notch scrolls on a strip that runs freely."""
+WHEEL_MIN_STEP = 60
+FINE_WHEEL_TURN = WHEEL_NOTCH // 2
+"""Angle a touchpad must add up to (half a notch) to turn the page."""
+WHEEL_IDLE_MS = 180
+"""Without a wheel event for this long, the gesture is over: the next one turns again."""
 FIT_TOLERANCE = 0.5
 SCROLL_LEAD = 3
 """``scroll_to`` puts the instant at a third of the view width."""
@@ -250,7 +270,8 @@ def move_calendars(
     copy), or on the shared default calendar when nobody is left.
     """
     people = _people_after(task, from_row, to_row, mode)
-    return model.task_calendar(task.id), model.calendar_for(people[0] if people else None)
+    layout = model.calendar_for(people[0] if people else None)
+    return model.task_calendar(task.id), layout.hours_of(off_standard=task.off_standard)
 
 
 def _next_edge(calendar: WorkCalendar, value: WallTime, *, ends: bool) -> WallTime:
@@ -920,7 +941,9 @@ class PlanningView(QGraphicsView):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # The strip of pages is years wide: a scroll bar would be a hair. Time scrolls
+        # with the wheel, the touchpad, a drag of the header or of the middle button.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate)
@@ -945,6 +968,11 @@ class PlanningView(QGraphicsView):
         return self.mapToScene(position.toPoint())
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self.grid.pan_start(event.position().x())
+            self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
@@ -962,6 +990,10 @@ class PlanningView(QGraphicsView):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         position = event.position()
+        if self.grid.panning:
+            self.grid.pan_move(position.x())
+            event.accept()
+            return
         point = self.scene_point(position)
         if self.gestures.state is Gesture.IDLE:
             self.gestures.hover(point, event.globalPosition().toPoint())
@@ -970,6 +1002,11 @@ class PlanningView(QGraphicsView):
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.MiddleButton and self.grid.panning:
+            self.grid.pan_end()
+            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+            event.accept()
+            return
         if event.button() != Qt.MouseButton.LeftButton:
             super().mouseReleaseEvent(event)
             return
@@ -1011,8 +1048,8 @@ class PlanningView(QGraphicsView):
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
         """Ctrl: zoom the columns; Shift or a sideways wheel: scroll in time.
 
-        Pushed on against the start or the end of the period, the sideways wheel shows
-        the previous or the next period, so that time scrolls on from view to view.
+        Time runs on from page to page: the wheel turns one page while a page fits the
+        viewport, and scrolls freely across the pages once the zoom made them wider.
         """
         angle = event.angleDelta()
         modifiers = event.modifiers()
@@ -1033,6 +1070,11 @@ class PlanningView(QGraphicsView):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
+        self.grid.viewport_resized()
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+        """Fit the model given before the grid was on screen, and show its page."""
+        super().showEvent(event)
         self.grid.viewport_resized()
 
     # Drops from « À planifier » ---------------------------------------
@@ -1134,8 +1176,10 @@ class PlanningGrid(QWidget):
     """Ctrl + wheel: wider (+1 a notch) or narrower (-1) columns, about this viewport x."""
     row_height_requested = Signal(int)
     """Ctrl + wheel on the names: taller (+1 a notch) or lower (-1) rows."""
-    period_step_requested = Signal(int)
-    """The sideways wheel went past the start (-1) or the end (+1) of the period."""
+    page_changed = Signal(object)
+    """``date`` naming the page now under the middle of the viewport, reached by scrolling.
+
+    Never emitted for a page the grid was asked to show."""
     day_clicked = Signal(object)
     week_clicked = Signal(object)
 
@@ -1149,11 +1193,24 @@ class PlanningGrid(QWidget):
         self.drop_enabled = True
         self._read_only_reason = ""
         self._deferred: GridModel | None = None
-        self._edge_push = 0
-        self._keep_x: tuple[float, float] | None = None
-        """Share of the scene width and viewport x to keep together at the next model."""
-        self._land_edge = 0
-        """-1: show the end of the next model (came from its right), +1: its start."""
+        self._strip: Strip | None = None
+        """Strip of the model shown: what a scroll position is counted on."""
+        self._page: int | None = None
+        """Page the owner of the grid knows to be under the middle of the viewport."""
+        self._asked = False
+        """The next model shown answers a request: the grid moves to its page."""
+        self._keep_x: float | None = None
+        """Viewport x whose instant stays in place at the next model (a zoom)."""
+        self._quiet = False
+        """Scrolling is not reported: a model is being placed, or an asked slide runs."""
+        self._slide_to: int | None = None
+        self._slide_asked = False
+        self._wheel_sum = 0
+        self._wheel_turned = False
+        self._pan: tuple[float, int, int] | None = None
+        """Viewport x, scroll and page where a drag of the strip began."""
+        self.slide_ms = SLIDE_MS
+        """Time of a slide; 0 moves at once (tests)."""
         self._follow: dict[BarKey, BarKey] = {}
         self._visible_range: tuple[date, date] | None = None
         self._export_grab = 0
@@ -1185,6 +1242,14 @@ class PlanningGrid(QWidget):
         self._autoscroll.setInterval(AUTOSCROLL_MS)
         self._autoscroll.timeout.connect(self._autoscroll_tick)
         self._scroll_delta = QPoint()
+        self._slide = QVariantAnimation(self)
+        self._slide.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._slide.valueChanged.connect(self._on_slide_step)
+        self._slide.finished.connect(self._on_slide_finished)
+        self._wheel_idle = QTimer(self)
+        self._wheel_idle.setSingleShot(True)
+        self._wheel_idle.setInterval(WHEEL_IDLE_MS)
+        self._wheel_idle.timeout.connect(self._wheel_gesture_ended)
         self._wire()
 
     def _wire(self) -> None:
@@ -1199,31 +1264,52 @@ class PlanningGrid(QWidget):
         self.rows.height_requested.connect(self.row_height_requested)
         self.header.day_clicked.connect(self.day_clicked)
         self.header.week_clicked.connect(self.week_clicked)
+        self.header.pan_started.connect(self.pan_start)
+        self.header.pan_moved.connect(self.pan_move)
+        self.header.pan_ended.connect(self.pan_end)
+        self.header.wheel_scrolled.connect(self.scroll_sideways)
         theme_notifier().changed.connect(self._on_theme_changed)
 
     # Model ------------------------------------------------------------
 
-    def set_model(self, model: GridModel) -> None:
+    def set_model(self, model: GridModel, *, asked: bool = False) -> None:
         """Show ``model``, refitted to the viewport; scroll and selection stay when possible.
 
+        ``asked`` tells that the page of the model was asked for (the arrows, « Aujourd'hui »,
+        a date picked, another view, a link to a dossier or a day): the grid then moves to
+        it, sliding when it is next to the page on screen. Without it the scroll is left
+        alone, which is what a model built to follow the scroll needs.
+
         From the press of a gesture to its end the model waits, so the bars never jump
-        under the pointer and the pressed row stays known.
+        under the pointer and the pressed row stays known. So does it while a page slides
+        into place by itself: the page it slides to is already drawn.
         """
-        if self.gestures.state is not Gesture.IDLE:
+        self._asked = self._asked or asked
+        if self.gestures.state is not Gesture.IDLE or (self.sliding and not self._asked):
             self._deferred = model
             return
         self._deferred = None
         width = self.viewport_width()
         if self.view.isVisible() and abs(model.viewport_width - width) > FIT_TOLERANCE:
             model = model.refit(width)
+        before = (self.model, self.scroll_x)
         self.model = model
+        self._strip = model.strip
+        # The model is built for the page its owner names: that page is known to it.
+        self._page = model.page if model.strip is not None else None
         self.serial += 1
-        self.scene.set_model(model)
-        self.header.set_model(model)
-        self.rows.set_model(model)
-        self.corner.set_count(sum(1 for row in model.rows if row.kind == "resource"))
-        self._keep_selection(model)
-        self._place_horizontally(model)
+        # Reading the scroll while the new strip is not placed yet would name a page of
+        # the strip before: nothing is reported until the model is in place.
+        self._quiet = True
+        try:
+            self.scene.set_model(model)
+            self.header.set_model(model)
+            self.rows.set_model(model)
+            self.corner.set_count(sum(1 for row in model.rows if row.kind == "resource"))
+            self._keep_selection(model)
+            self._place_horizontally(model, *before)
+        finally:
+            self._quiet = self._slide_asked
         self._sync_scroll()
 
     def apply_deferred(self) -> None:
@@ -1231,6 +1317,8 @@ class PlanningGrid(QWidget):
         model = self._deferred
         if model is not None and self.gestures.state is Gesture.IDLE:
             self.set_model(model)
+        if self.gestures.state is Gesture.IDLE:
+            self.settle()
 
     def follow(self, old: BarKey, new: BarKey) -> None:
         """Keep ``old`` selected as ``new`` once the next model moved it to another row."""
@@ -1290,9 +1378,14 @@ class PlanningGrid(QWidget):
         model = self.model
         if model is None:
             return
-        x = model.timescale.x_of(value)
-        bar = self.view.horizontalScrollBar()
-        bar.setValue(round(x - self.view.viewport().width() / SCROLL_LEAD))
+        strip = self._strip
+        scale = model.timescale
+        # A page that fits the viewport shows the instant as it rests; a wider one is
+        # scrolled to it, as long as the instant is on a drawn page.
+        if strip is None or (not strip.fits and scale.index_of(wall_date(value)) is not None):
+            self._stop_slide()
+            x = scale.x_of(value) - self.view.viewport().width() / SCROLL_LEAD
+            self._scroll_to_x(x if strip is None else strip.clamp(x))
         row = model.rows.get(row_id) if row_id else None
         if row is not None:
             vertical = self.view.verticalScrollBar()
@@ -1604,14 +1697,15 @@ class PlanningGrid(QWidget):
         model = self.model
         if model is None:
             return Preview(0, 0, row_id, valid=False)
-        calendar = model.calendar_of(row_id)
+        calendar = model.calendar_of(row_id).hours_of(off_standard=task.off_standard)
         pointer = model.timescale.time_at(x)
         if task.off_hours:
             elapsed = (
                 task.end - task.start if task.start is not None and task.end is not None else 0
             )
-            if not model.night_axis:
-                pointer = model.timescale.column_at(x).day.toordinal() * MINUTES_PER_DAY
+            day = model.timescale.column_at(x).day
+            if not model.timescale.full_day_on(day):
+                pointer = day.toordinal() * MINUTES_PER_DAY
             start, end = fitted_night(night_start_at(pointer), elapsed or task.estimate_minutes)
             return night_preview(model, start, end, row_id, mode="move", task_id=task.id)
         start = calendar.working_start(snap_start(calendar, pointer, model.view))
@@ -1788,6 +1882,22 @@ class PlanningGrid(QWidget):
         self.scene.set_pin_offset(y0)
         self.scene.set_sticky_left(x0)
         self._emit_visible_range()
+        self._report_page()
+
+    def _report_page(self) -> None:
+        """Tell which page lies under the middle of the viewport once scrolling changed it.
+
+        It reads the strip of the model shown, never one kept from before: with the
+        pages of another view, a change of view would be answered by a page of the old
+        one, and so on for ever.
+        """
+        strip = self._strip
+        if strip is None or self._quiet:
+            return
+        index = strip.middle_page(self.scroll_x)
+        if index != self._page:
+            self._page = index
+            self.page_changed.emit(strip.anchor_of(index))
 
     def _emit_visible_range(self) -> None:
         model = self.model
@@ -1802,48 +1912,231 @@ class PlanningGrid(QWidget):
             self._visible_range = visible
             self.visible_range_changed.emit(*visible)
 
+    @property
+    def scroll_x(self) -> int:
+        """Position of the left edge of the viewport on the strip."""
+        return self.view.horizontalScrollBar().value()
+
+    @property
+    def sliding(self) -> bool:
+        """Whether the strip is being animated to a position."""
+        return self._slide_to is not None
+
+    @property
+    def panning(self) -> bool:
+        return self._pan is not None
+
     def keep_point(self, viewport_x: float) -> None:
         """At the next model (a zoom), keep the instant under ``viewport_x`` where it is."""
-        model = self.model
-        if model is None:
-            return
-        width = max(model.timescale.width, 1.0)
-        x = self.view.horizontalScrollBar().value() + viewport_x
-        self._keep_x = (min(max(x / width, 0.0), 1.0), viewport_x)
+        if self.model is not None:
+            self._keep_x = float(viewport_x)
 
-    def land_on_edge(self, step: int) -> None:
-        """Show the near end of the next model: the period after (+1) or before (-1)."""
-        self._land_edge = step
-        self._keep_x = None
+    def _scroll_to_x(self, x: float) -> None:
+        self.view.horizontalScrollBar().setValue(round(x))
+
+    # Placing a model --------------------------------------------------
+
+    def _place_horizontally(self, model: GridModel, old: GridModel | None, scroll: int) -> None:
+        """Put the scroll where ``model`` belongs; ``old`` was shown, scrolled to ``scroll``.
+
+        An asked page and a strip laid out anew (another view, another origin, the first
+        model: the grid may be created after the data) show the page of the model. The
+        same strip at another width or zoom keeps what was under the pointer. Anything
+        else leaves the scroll where it is.
+        """
+        asked, self._asked = self._asked, False
+        focus, self._keep_x = self._keep_x, None
+        strip = model.strip
+        if strip is None:
+            if focus is not None and old is not None and old.timescale.width > 0:
+                share = (scroll + focus) / old.timescale.width
+                self._scroll_to_x(share * model.timescale.width - focus)
+            return
+        before = old.strip if old is not None else None
+        same = (
+            before is not None
+            and before.scope == strip.scope
+            and len(before.pages) == len(strip.pages)
+        )
+        if asked or before is None or not same:
+            slide = asked and same and before is not None and before.day_width == strip.day_width
+            self._show_page(model, slide=slide)
+        elif (before.day_width, before.viewport) != (strip.day_width, strip.viewport):
+            self._stop_slide()
+            self._scroll_to_x(strip.moved_from(before, float(scroll), focus or 0.0))
+            # Back to where a page fits the viewport: the nearest one slides into place.
+            self.settle()
+
+    def _show_page(self, model: GridModel, *, slide: bool) -> None:
+        """Show the page of ``model``: slid to when it is next door, else at once."""
+        strip = model.strip
+        if strip is None:
+            return
+        target = self._page_scroll(model)
+        current = self.scroll_x
+        near = abs(model.page - strip.middle_page(current)) <= 1
+        if slide and near and target != current:
+            self._start_slide(target, asked=True)
+        else:
+            self._stop_slide()
+            self._scroll_to_x(target)
+
+    def _page_scroll(self, model: GridModel) -> int:
+        """Scroll showing the page of ``model`` as it opens.
+
+        A page that fits rests on its left edge. A wider one too, unless it holds today:
+        it then opens with today one column in from the left, never past its own end.
+        """
+        strip = model.strip
+        if strip is None:
+            return 0
+        rest = strip.rest(model.page)
+        column = model.timescale.column_of(model.today)
+        if strip.fits or column is None or strip.page_at(column.x) != model.page:
+            return rest
+        last = strip.left_of(model.page) + strip.width_of(model.page) - strip.viewport
+        return round(strip.clamp(max(rest, min(column.x - column.width, last))))
+
+    # Sliding ----------------------------------------------------------
+
+    def _start_slide(
+        self, target: int, *, asked: bool = False, duration: int | None = None
+    ) -> None:
+        """Animate the scroll to ``target``; an asked slide is not reported page by page."""
+        bar = self.view.horizontalScrollBar()
+        target = min(max(target, bar.minimum()), bar.maximum())
+        self._slide.stop()
+        time = self.slide_ms if duration is None else min(duration, self.slide_ms)
+        if target == bar.value() or time <= 0 or not self.view.isVisible():
+            self._slide_to, self._slide_asked, self._quiet = None, False, False
+            bar.setValue(target)
+            self._after_slide()
+            return
+        self._slide_to, self._slide_asked = target, asked
+        self._quiet = asked
+        self._slide.setDuration(time)
+        self._slide.setStartValue(bar.value())
+        self._slide.setEndValue(target)
+        self._slide.start()
+
+    def _stop_slide(self) -> None:
+        """Leave the strip where the animation got to."""
+        if self._slide_to is None:
+            return
+        self._slide_to, self._slide_asked = None, False
+        self._slide.stop()
+        self._quiet = False
+
+    def _on_slide_step(self, value: object) -> None:
+        if self._slide_to is not None and isinstance(value, int | float):
+            self.view.horizontalScrollBar().setValue(round(value))
+
+    def _on_slide_finished(self) -> None:
+        if self._slide_to is None:
+            return
+        target, self._slide_to, self._slide_asked = self._slide_to, None, False
+        self._quiet = False
+        self.view.horizontalScrollBar().setValue(target)
+        self._after_slide()
+
+    def _after_slide(self) -> None:
+        self._report_page()
+        self.apply_deferred()
+
+    def settle(self) -> None:
+        """Slide to the nearest page edge when pages hold the scroll and it is between two."""
+        strip = self._strip
+        if strip is None or not strip.fits or self.sliding or self.panning:
+            return
+        if self.gestures.state is not Gesture.IDLE:
+            return
+        rest = strip.nearest_rest(float(self.scroll_x))
+        if rest != self.scroll_x:
+            self._start_slide(rest)
+
+    def turn_page(self, steps: int) -> None:
+        """Slide ``steps`` pages on from the page on screen (or from the one slid to)."""
+        strip = self._strip
+        if strip is None or not steps:
+            return
+        base = self._slide_to if self._slide_to is not None else self.scroll_x
+        index = strip.clamp_index(strip.middle_page(float(base)) + steps)
+        self._start_slide(strip.rest(index))
+
+    # Wheel and drag ---------------------------------------------------
 
     def scroll_sideways(self, delta: int, pixels: int = 0) -> None:
-        """Scroll in time by a wheel ``delta`` (or ``pixels``); past an end, change period."""
-        bar = self.view.horizontalScrollBar()
-        step = pixels or round(delta / WHEEL_NOTCH * bar.singleStep() * 3)
-        if not step:
-            return
-        before = bar.value()
-        bar.setValue(before - step)
-        if bar.value() != before:
-            self._edge_push = 0
-            return
-        direction = 1 if step < 0 else -1
-        if self._edge_push and (self._edge_push > 0) != (direction > 0):
-            self._edge_push = 0
-        self._edge_push += direction * (abs(delta) or WHEEL_NOTCH)
-        if abs(self._edge_push) >= EDGE_PUSH:
-            self._edge_push = 0
-            self.period_step_requested.emit(direction)
+        """Scroll in time by a wheel ``delta`` (or the ``pixels`` of a touchpad).
 
-    def _place_horizontally(self, model: GridModel) -> None:
+        While a page fits the viewport a gesture turns one page: a notch of the wheel, or
+        the touchpad once it added up to half a notch, after which the rest of the gesture
+        (its inertia) is ignored. On wider pages the strip scrolls freely, a notch
+        animated, a touchpad followed as it is.
+        """
+        amount = pixels or delta
+        if not amount:
+            return
+        strip = self._strip
         bar = self.view.horizontalScrollBar()
-        if self._land_edge:
-            bar.setValue(bar.minimum() if self._land_edge > 0 else bar.maximum())
-            self._land_edge = 0
-        elif self._keep_x is not None:
-            share, viewport_x = self._keep_x
-            bar.setValue(round(share * model.timescale.width - viewport_x))
-        self._keep_x = None
+        if strip is None:
+            step = pixels or round(delta / WHEEL_NOTCH * bar.singleStep() * 3)
+            bar.setValue(bar.value() - step)
+            return
+        notch = not pixels and abs(delta) >= WHEEL_NOTCH and abs(delta) % WHEEL_NOTCH == 0
+        if not strip.fits:
+            self._wheel_freely(strip, delta, pixels, notch=notch)
+            return
+        self._wheel_idle.start()
+        direction = -1 if amount > 0 else 1
+        if notch:
+            self._wheel_sum = 0
+            self.turn_page(direction)
+            return
+        if self._wheel_turned:
+            return
+        self._wheel_sum += amount
+        if abs(self._wheel_sum) >= FINE_WHEEL_TURN:
+            self._wheel_sum = 0
+            self._wheel_turned = True
+            self.turn_page(direction)
+
+    def _wheel_freely(self, strip: Strip, delta: int, pixels: int, *, notch: bool) -> None:
+        bar = self.view.horizontalScrollBar()
+        if not notch:
+            self._stop_slide()
+            step = pixels or round(delta / WHEEL_NOTCH * WHEEL_MIN_STEP)
+            bar.setValue(bar.value() - step)
+            return
+        step = round(delta / WHEEL_NOTCH * max(strip.viewport * WHEEL_SHARE, WHEEL_MIN_STEP))
+        base = self._slide_to if self._slide_to is not None else bar.value()
+        self._start_slide(round(strip.clamp(base - step)), duration=SCROLL_MS)
+
+    def _wheel_gesture_ended(self) -> None:
+        self._wheel_sum = 0
+        self._wheel_turned = False
+
+    def pan_start(self, x: float) -> None:
+        """Begin dragging the strip from the viewport ``x`` (header, middle button)."""
+        strip = self._strip
+        if strip is None:
+            return
+        self._stop_slide()
+        self._pan = (float(x), self.scroll_x, strip.middle_page(float(self.scroll_x)))
+
+    def pan_move(self, x: float) -> None:
+        if self._pan is None:
+            return
+        press, scroll, _page = self._pan
+        self._scroll_to_x(scroll - (x - press))
+
+    def pan_end(self) -> None:
+        """Let the strip go: while pages hold the scroll, it goes one page at most."""
+        pan, self._pan = self._pan, None
+        strip = self._strip
+        if pan is None or strip is None or not strip.fits:
+            return
+        index = strip.gesture_rest(pan[2], float(self.scroll_x))
+        self._start_slide(strip.rest(index))
 
     def _scroll_rows(self, delta: int) -> None:
         bar = self.view.verticalScrollBar()
@@ -1929,7 +2222,7 @@ def night_move(
     evening only, column by column.
     """
     scale = model.timescale
-    if model.night_axis:
+    if model.night_shown(start, end):
         begin = snap(scale.time_at(scale.x_of(start) + x - press_x))
         return begin, begin + (end - start)
     evening = night_day(start)
@@ -1968,7 +2261,7 @@ def card_end(
     (``estimate_days``), else its worked minutes (one worked day without estimate).
     """
     if task.start is not None and task.end is not None:
-        source = model.calendar_for(next(iter(task.assignments), None))
+        source = model.task_calendar(task.id)
         minutes = max(source.work_between(task.start, task.end), MIN_TASK_MINUTES)
         return calendar.add_work(start, _rounded(minutes))
     if task.estimate_days > 0:

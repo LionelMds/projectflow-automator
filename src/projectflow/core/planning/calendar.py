@@ -4,6 +4,11 @@ Monday to Thursday are worked 06:30-12:00 and 13:00-16:30, Friday 06:30-12:00 (4
 per week); Saturday and Sunday are never worked. All instants are wall-clock minutes
 (``walltime``); durations are worked minutes, so the lunch break, Friday afternoon, the
 weekend and holidays never count.
+
+A task marked « hors horaires standard » is not held by those hours: it is laid out and
+measured on ``WorkCalendar.without_breaks``, where every worked weekday runs from the
+earliest start to the latest end of the week (06:30-16:30), lunch hour and Friday
+afternoon included. Weekends, holidays and closures stay not worked for it too.
 """
 
 from __future__ import annotations
@@ -29,6 +34,8 @@ WorkWeek = Mapping[int, tuple[WorkPeriod, ...]]
 FULL_DAY: tuple[WorkPeriod, ...] = ((6 * 60 + 30, 12 * 60), (13 * 60, 16 * 60 + 30))
 FRIDAY: tuple[WorkPeriod, ...] = ((6 * 60 + 30, 12 * 60),)
 DEFAULT_WORK_WEEK: WorkWeek = {0: FULL_DAY, 1: FULL_DAY, 2: FULL_DAY, 3: FULL_DAY, 4: FRIDAY}
+NOON_MINUTE = 12 * 60
+"""Where a day without break splits into its two half days."""
 SNAP_MINUTES = 30
 CANTONS = ("GE", "VD")
 # A search for a worked instant stops after ten years without one.
@@ -105,6 +112,29 @@ def normalize_canton(text: str) -> str:
     return canton
 
 
+def continuous_week(week: WorkWeek) -> dict[int, tuple[WorkPeriod, ...]]:
+    """``week`` without its blocked hours: no lunch break, no shorter day.
+
+    Every worked weekday runs from the earliest start to the latest end of the week, as
+    two half days that touch at noon (one period when noon is outside). The usual hours
+    (06:30-12:00 and 13:00-16:30, Friday until 12:00) give Monday to Friday 06:30-12:00
+    and 12:00-16:30. Weekdays without hours stay not worked.
+    """
+    worked = {
+        int(weekday): periods
+        for weekday, periods in week.items()
+        if periods and 0 <= int(weekday) < DAYS_PER_WEEK
+    }
+    if not worked:
+        return {}
+    low = min(int(start) for periods in worked.values() for start, _end in periods)
+    high = max(int(end) for periods in worked.values() for _start, end in periods)
+    day: tuple[WorkPeriod, ...] = (
+        ((low, NOON_MINUTE), (NOON_MINUTE, high)) if low < NOON_MINUTE < high else ((low, high),)
+    )
+    return dict.fromkeys(sorted(worked), day)
+
+
 def snap(value: WallTime, step: int = SNAP_MINUTES) -> WallTime:
     """Round to the nearest ``step`` on the wall clock, halves up, inside the same day."""
     minutes = minute_of_day(value)
@@ -135,7 +165,7 @@ def _same_day_days(first: int, last: int, count: int) -> float:
 class WorkCalendar:
     """Worked periods of one canton, with company closures."""
 
-    __slots__ = ("_cantons", "_closures", "_holidays", "_week")
+    __slots__ = ("_cantons", "_closures", "_holidays", "_open", "_week")
 
     def __init__(
         self,
@@ -155,10 +185,31 @@ class WorkCalendar:
         self._cantons = tuple(normalize_canton(canton) for canton in cantons)
         self._closures = frozenset(closures)
         self._holidays: dict[int, dict[date, Holiday]] = {}
+        self._open: WorkCalendar | None = None
 
     @property
     def week(self) -> Mapping[int, tuple[WorkPeriod, ...]]:
         return dict(self._week)
+
+    def without_breaks(self) -> WorkCalendar:
+        """Give the same canton, holidays and closures with no blocked hour inside a day.
+
+        The calendar of a task « hors horaires standard » (``continuous_week``): it may
+        start, end and count its time over the lunch hour and on Friday afternoon. Always
+        the same object, and this calendar itself when its hours have no break.
+        """
+        if self._open is None:
+            week = continuous_week(self._week)
+            self._open = (
+                self
+                if week == self._week
+                else WorkCalendar(week=week, cantons=self._cantons, closures=self._closures)
+            )
+        return self._open
+
+    def hours_of(self, *, off_standard: bool) -> WorkCalendar:
+        """Give the calendar of a task: ``without_breaks`` when « hors horaires standard »."""
+        return self.without_breaks() if off_standard else self
 
     @property
     def cantons(self) -> tuple[str, ...]:
