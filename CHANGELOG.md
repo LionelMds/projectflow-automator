@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Planning : le defilement dans le temps est moins sensible. Une periode resiste avant de
+  tourner : il faut deux crans de molette (ou l'equivalent au pave tactile) ; en dessous, elle
+  cede un peu puis revient. Elle tourne une seule fois par geste, l'inertie du pave tactile
+  est ignoree, et une molette a crans (horizontale, inclinable ou Maj + molette) tournee ou
+  maintenue plus longtemps continue une periode a la fois, a un rythme calme. Zoome, un cran
+  fait defiler de 100 px, comme dans un navigateur.
+
 ## 0.1.81
 
 - Planning : nouveau bouton « Hors horaires standard » dans le « Detail », a cote de

@@ -388,6 +388,10 @@ consultation seule et se synchronise de nouveau dès le retour du réseau.
   qu'une période tient à l'écran, le défilement s'aimante sur son bord gauche et un geste
   avance d'une période ; le titre nomme celle qui est au milieu de l'écran. La ligne des jours
   (des heures en vue Jour) reste en haut et défile avec la grille.
+- La période résiste avant de tourner : il faut deux crans de molette (ou l'équivalent au pavé
+  tactile) ; en dessous, elle cède un peu puis revient. Elle tourne une seule fois par geste,
+  l'inertie du pavé tactile est ignorée. Une molette à crans tournée ou maintenue plus
+  longtemps continue, une période à la fois, à un rythme calme.
 - `Ctrl` + molette zoome les colonnes de la vue (gardé par vue) autour du curseur. Au-delà de
   100 %, une période est plus large que l'écran : le défilement devient libre et passe d'une
   période à l'autre sans arrêt. Revenu à 100 %, la période la plus proche glisse en place.
