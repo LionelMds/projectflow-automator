@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Creation projet : nouveau champ « Référence », a cote de « Sous-projet », pour indiquer un
+  ancien dossier (par exemple `2024-4493`). La fiche l'affiche en A4 (« Réf. : 2024-4493 »)
+  avec un lien qui ouvre le dossier de cet ancien projet ; le lien est relatif a la fiche et
+  fonctionne donc sur chaque poste. « Charger » relit la reference, un champ vide ne retire
+  pas celle deja inscrite, et le journal signale un dossier de reference introuvable.
+  « Dupliquer » pre-remplit la reference avec le numero du projet duplique. Seule la cellule
+  A4 est ecrite : photos, zones de texte et mise en forme de la fiche restent intactes.
 - Planning : le defilement dans le temps est moins sensible. Une periode resiste avant de
   tourner : il faut deux crans de molette (ou l'equivalent au pave tactile) ; en dessous, elle
   cede un peu puis revient. Elle tourne une seule fois par geste, l'inertie du pave tactile

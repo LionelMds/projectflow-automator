@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,7 +14,13 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from projectflow.core.excel_patch import CellEdits
 from projectflow.core.models import ProjectInput
-from projectflow.core.numero import ProjectNumber
+from projectflow.core.numero import (
+    ProjectNumber,
+    canonical_project_number,
+    is_project_number,
+    parse_project_number,
+    project_folder_name,
+)
 from projectflow.exceptions import ProjectCreationError
 
 FICHE_SUFFIX: Final[str] = " - Fiche dossier clients.xlsx"
@@ -26,6 +33,12 @@ ATELIER_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 ATELIER_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}\s*$")
+REFERENCE_CELL: Final[str] = "A4"
+REFERENCE_PREFIX: Final[str] = "Réf."
+REFERENCE_RE = re.compile(
+    "^\\s*r[eé]f(?:[eé]rence)?\\s*\\.?\\s*:?\\s*(?P<number>.+?)\\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +50,7 @@ class FicheData:
     localisation: str = ""
     gere_par: str = ""
     user_initials: str = ""
+    reference: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +132,7 @@ class FicheService:
                 worksheet["C6"] = project.gere_par.strip()
             if user_initials.strip():
                 worksheet["C9"] = user_initials.strip()
+            _write_reference(worksheet, edits, fiche_path, project_dir, project.reference_number)
             self._write_creation_date(worksheet, overwrite=new_fiche)
             if new_fiche:
                 _clear_inherited_atelier_date(worksheet)
@@ -173,6 +188,7 @@ class FicheService:
                 worksheet["C6"] = project.gere_par.strip()
             if user_initials.strip():
                 worksheet["C9"] = user_initials.strip()
+            _write_reference(worksheet, edits, target_path, project_dir, project.reference_number)
             self._write_creation_date(worksheet, overwrite=fiche_created)
             if fiche_created:
                 _clear_inherited_atelier_date(worksheet)
@@ -193,6 +209,7 @@ class FicheService:
                 localisation=_strip_prefix(_cell_text(worksheet["D6"].value)),
                 gere_par=_cell_text(worksheet["C6"].value),
                 user_initials=_cell_text(worksheet["C9"].value),
+                reference=_reference_text(worksheet[REFERENCE_CELL].value),
             )
         finally:
             workbook.close()
@@ -221,6 +238,52 @@ def _clear_inherited_atelier_date(worksheet: Worksheet) -> None:
     prefix = ATELIER_DATE_RE.sub("", current).rstrip()
     if ATELIER_DATE_RE.search(current) and ATELIER_PREFIX_RE.fullmatch(prefix):
         cell.value = prefix
+
+
+def _write_reference(
+    worksheet: Worksheet,
+    edits: CellEdits,
+    fiche_path: Path,
+    project_dir: Path,
+    reference: ProjectNumber | None,
+) -> None:
+    """Name the older dossier in A4 and link the cell to its folder.
+
+    Without a reference, A4 keeps its text. Only a link already there is rebuilt: a
+    sub-project fiche copied from its parent can sit one folder deeper, where the
+    copied link would point one level too high. An empty reference never clears A4.
+    """
+    cell = worksheet[REFERENCE_CELL]
+    if reference is None:
+        existing = _reference_text(cell.value)
+        if not existing or cell.hyperlink is None:
+            return
+        reference = parse_project_number(existing)
+    else:
+        cell.value = f"{REFERENCE_PREFIX} : {reference}"
+    edits.set_hyperlink(
+        REFERENCE_CELL,
+        _reference_link(fiche_path, project_dir, reference),
+        tooltip=f"Ouvrir le dossier {project_folder_name(reference)}",
+    )
+
+
+def _reference_link(fiche_path: Path, project_dir: Path, reference: ProjectNumber) -> str:
+    """Path from the fiche to the referenced folder, relative so it holds on every poste.
+
+    The projects root is synchronised under a different absolute path on each machine
+    (user name, macOS); dossiers always sit at ``<root>/<year>/<number>``.
+    """
+    reference_dir = project_dir.parent.parent / str(reference.year) / project_folder_name(reference)
+    return Path(os.path.relpath(reference_dir, fiche_path.parent)).as_posix()
+
+
+def _reference_text(value: object) -> str:
+    """Return the dossier number named in A4, or "" when the cell holds anything else."""
+    text = _cell_text(value)
+    match = REFERENCE_RE.fullmatch(text)
+    number = canonical_project_number(match["number"] if match else text)
+    return number if is_project_number(number) else ""
 
 
 def standard_fiche_path(project_dir: Path, number: ProjectNumber) -> Path:

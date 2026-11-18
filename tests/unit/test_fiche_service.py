@@ -324,3 +324,128 @@ def test_read_fiche_releases_file_handle_for_move(tmp_path: Path) -> None:
     fiche_path.rename(moved_path)
 
     assert moved_path.exists()
+
+
+def _blank_fiche(path: Path, **cells: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    for coordinate, value in cells.items():
+        workbook.active[coordinate] = value
+    workbook.save(path)
+    workbook.close()
+
+
+def test_fill_fiche_writes_reference_in_a4_with_relative_link(tmp_path: Path) -> None:
+    project_dir = tmp_path / "Clients" / "2026" / "2026-5271"
+    _blank_fiche(project_dir / "modele fiche.xlsx")
+    project = ProjectInput(
+        number=parse_project_number("2026-5271"),
+        reference_number=parse_project_number("2024-4493"),
+    )
+
+    fiche_path = FicheService().fill_fiche(project_dir, project)
+
+    workbook = load_workbook(fiche_path)
+    cell = workbook.active["A4"]
+    assert cell.value == "Réf. : 2024-4493"
+    assert cell.hyperlink.target == "../../2024/2024-4493"
+    assert cell.hyperlink.ref == "A4"
+    assert cell.font.underline == "single"
+    workbook.close()
+    assert (fiche_path.parent / cell.hyperlink.target).resolve() == (
+        tmp_path / "Clients" / "2024" / "2024-4493"
+    )
+    assert FicheService().read_fiche(fiche_path).reference == "2024-4493"
+
+
+def test_fill_fiche_links_a_subproject_reference_to_its_parent_folder(tmp_path: Path) -> None:
+    project_dir = tmp_path / "Clients" / "2026" / "2026-5271"
+    _blank_fiche(project_dir / "modele fiche.xlsx")
+    project = ProjectInput(
+        number=parse_project_number("2026-5271"),
+        reference_number=parse_project_number("2024-4493-2"),
+    )
+
+    fiche_path = FicheService().fill_fiche(project_dir, project)
+
+    workbook = load_workbook(fiche_path)
+    assert workbook.active["A4"].value == "Réf. : 2024-4493-2"
+    assert workbook.active["A4"].hyperlink.target == "../../2024/2024-4493"
+    workbook.close()
+
+
+def test_fill_fiche_without_reference_keeps_the_existing_one(tmp_path: Path) -> None:
+    project_dir = tmp_path / "Clients" / "2026" / "2026-5271"
+    _blank_fiche(project_dir / "modele fiche.xlsx")
+    number = parse_project_number("2026-5271")
+    service = FicheService()
+    service.fill_fiche(
+        project_dir,
+        ProjectInput(number=number, reference_number=parse_project_number("2024-4493")),
+    )
+
+    fiche_path = service.fill_fiche(project_dir, ProjectInput(number=number, designation="Paroi"))
+
+    workbook = load_workbook(fiche_path)
+    assert workbook.active["A4"].value == "Réf. : 2024-4493"
+    assert workbook.active["A4"].hyperlink.target == "../../2024/2024-4493"
+    workbook.close()
+
+
+@pytest.mark.parametrize("content", [None, "Voir plan atelier"])
+def test_fill_fiche_without_reference_leaves_a4_alone(tmp_path: Path, content: str | None) -> None:
+    _blank_fiche(tmp_path / "modele fiche.xlsx", A4=content)
+
+    fiche_path = FicheService().fill_fiche(
+        tmp_path,
+        ProjectInput(number=parse_project_number("2026-5271")),
+    )
+
+    workbook = load_workbook(fiche_path)
+    assert workbook.active["A4"].value == content
+    assert workbook.active["A4"].hyperlink is None
+    workbook.close()
+    assert FicheService().read_fiche(fiche_path).reference == ""
+
+
+def test_subproject_fiche_copied_one_folder_deeper_rebuilds_the_reference_link(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "Clients" / "2026" / "2026-5271"
+    parent = parse_project_number("2026-5271")
+    _blank_fiche(standard_fiche_path(project_dir, parent))
+    service = FicheService()
+    service.fill_fiche(
+        project_dir,
+        ProjectInput(number=parent, reference_number=parse_project_number("2024-4493")),
+    )
+    (project_dir / "2026-5271-2").mkdir()
+
+    fiche_path = service.fill_subproject_fiche(
+        project_dir,
+        ProjectInput(number=parse_project_number("2026-5271-2")),
+    )
+
+    assert fiche_path.parent == project_dir / "2026-5271-2"
+    workbook = load_workbook(fiche_path)
+    assert workbook.active["A4"].value == "Réf. : 2024-4493"
+    assert workbook.active["A4"].hyperlink.target == "../../../2024/2024-4493"
+    workbook.close()
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("Réf. : 2024-4493", "2024-4493"),
+        ("référence 2024 - 4493", "2024-4493"),
+        ("REF: 2024-4493-2", "2024-4493-2"),
+        ("2024-4493", "2024-4493"),
+        ("Réf. : à définir", ""),
+        ("Référence :", ""),
+    ],
+)
+def test_read_fiche_reads_the_reference_number(tmp_path: Path, content: str, expected: str) -> None:
+    path = tmp_path / "fiche.xlsx"
+    _blank_fiche(path, A4=content)
+
+    assert FicheService().read_fiche(path).reference == expected

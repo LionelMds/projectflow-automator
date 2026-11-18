@@ -316,3 +316,127 @@ def test_edit_that_cannot_be_saved_in_place_is_refused(tmp_path: Path, edit: str
 
     workbook.close()
     assert path.read_bytes() == original
+
+
+SHEET_RELATIONS_PART = "xl/worksheets/_rels/sheet1.xml.rels"
+
+
+def _link(path: Path, reference: str, target: str, tooltip: str = "") -> bool:
+    workbook = load_workbook(path)
+    try:
+        edits = CellEdits(workbook.active)
+        edits.set_hyperlink(reference, target, tooltip=tooltip)
+        return edits.save(path)
+    finally:
+        workbook.close()
+
+
+def test_linking_a_cell_adds_the_link_its_target_and_the_link_font(tmp_path: Path) -> None:
+    path = tmp_path / "classeur.xlsx"
+    _workbook(path)
+    before = _parts(path)
+
+    assert _link(path, "A1", "../2024/2024-4493", "Ouvrir le dossier") is True
+
+    after = _parts(path)
+    assert SHEET_RELATIONS_PART not in before
+    assert set(after) - set(before) == {SHEET_RELATIONS_PART}
+    changed = {name for name in before if after[name] != before[name]}
+    assert changed == {SHEET_PART, STYLES_PART}
+    relations = after[SHEET_RELATIONS_PART].decode()
+    assert 'Target="../2024/2024-4493" TargetMode="External"' in relations
+    worksheet = _sheet(path)
+    assert worksheet["A1"].value == "Titre"
+    assert worksheet["A1"].hyperlink.target == "../2024/2024-4493"
+    assert worksheet["A1"].hyperlink.tooltip == "Ouvrir le dossier"
+    assert worksheet["A1"].font.underline == "single"
+    assert worksheet["A1"].font.color.rgb == "FF0563C1"
+    # The link look is added to the font the cell had; the other cells keep theirs.
+    assert worksheet["A1"].font.bold
+    assert worksheet["A5"].font.underline is None
+    assert worksheet["A5"].hyperlink is None
+    assert worksheet["B3"].value == "=A3*2"
+
+
+def test_linking_again_to_the_same_target_saves_nothing(tmp_path: Path) -> None:
+    path = tmp_path / "classeur.xlsx"
+    _workbook(path)
+    _link(path, "A1", "../2024/2024-4493", "Ouvrir le dossier")
+    linked = path.read_bytes()
+
+    assert _link(path, "A1", "../2024/2024-4493", "Ouvrir le dossier") is False
+
+    assert path.read_bytes() == linked
+
+
+def test_relinking_a_cell_moves_its_target_without_piling_up_links(tmp_path: Path) -> None:
+    path = tmp_path / "classeur.xlsx"
+    _workbook(path)
+    _link(path, "A1", "../2024/2024-4493")
+    _link(path, "A5", "https://example.com/a?b=1&c=2")
+    styles = _parts(path)[STYLES_PART]
+
+    assert _link(path, "A1", "../../2024/2024-4493") is True
+
+    parts = _parts(path)
+    assert parts[SHEET_PART].decode().count("<hyperlink ") == 2
+    assert parts[SHEET_RELATIONS_PART].decode().count("<Relationship ") == 2
+    assert parts[STYLES_PART] == styles
+    worksheet = _sheet(path)
+    assert worksheet["A1"].hyperlink.target == "../../2024/2024-4493"
+    assert worksheet["A5"].hyperlink.target == "https://example.com/a?b=1&c=2"
+
+
+@pytest.mark.filterwarnings("ignore:Unknown extension")
+def test_links_are_placed_where_the_sheet_schema_expects_them(tmp_path: Path) -> None:
+    path = tmp_path / "classeur.xlsx"
+    _workbook(path)
+    parts = _parts(path)
+    sheet = parts[SHEET_PART].decode()
+    assert "<pageMargins" in sheet
+    parts[SHEET_PART] = sheet.replace(
+        "<pageMargins",
+        '<conditionalFormatting sqref="A3"><cfRule type="expression" priority="1">'
+        '<formula>A3&gt;1</formula><extLst><ext uri="x"/></extLst></cfRule>'
+        "</conditionalFormatting><pageMargins",
+    ).encode()
+    _rewrite(path, parts)
+
+    _link(path, "A1", "../2024/2024-4493")
+
+    sheet = _parts(path)[SHEET_PART].decode()
+    assert (
+        sheet.index("</conditionalFormatting>")
+        < sheet.index("<hyperlinks>")
+        < sheet.index("<pageMargins")
+    )
+    assert _sheet(path)["A1"].hyperlink.target == "../2024/2024-4493"
+
+
+def test_sheet_written_with_a_namespace_prefix_is_linked(tmp_path: Path) -> None:
+    path = tmp_path / "classeur.xlsx"
+    _workbook(path)
+    parts = _parts(path)
+    sheet = parts[SHEET_PART].decode()
+    sheet = re.sub(r"<(/?)(?![?!])", r"<\1x:", sheet).replace(
+        f'xmlns="{MAIN_NS}"',
+        f'xmlns:x="{MAIN_NS}"',
+    )
+    parts[SHEET_PART] = sheet.encode()
+    _rewrite(path, parts)
+
+    _link(path, "A5", "../2024/2024-4493")
+
+    assert _sheet(path)["A5"].hyperlink.target == "../2024/2024-4493"
+    assert _sheet(path)["A5"].value == "Derniere ligne"
+
+
+def test_linking_an_empty_cell_is_refused_and_leaves_the_file_untouched(tmp_path: Path) -> None:
+    path = tmp_path / "classeur.xlsx"
+    _workbook(path)
+    original = path.read_bytes()
+
+    with pytest.raises(ValueError, match="B7"):
+        _link(path, "B7", "../2024/2024-4493")
+
+    assert path.read_bytes() == original

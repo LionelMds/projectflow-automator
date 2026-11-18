@@ -26,6 +26,11 @@
   groupe parent, sans utiliser une ligne disponible de projet principal.
 - La ligne repertoire d'un sous-projet contient uniquement les valeurs saisies par l'utilisateur ;
   elle n'herite d'aucune cellule du projet parent, seulement du format d'une ligne disponible.
+- Saisir `2024-4493` dans `Référence` : la fiche affiche `Réf. : 2024-4493` en A4 et un clic
+  sur la cellule ouvre le dossier `2024/2024-4493`. `Charger` remet le numero dans le champ ;
+  une reference qui n'est pas un numero de dossier est refusee avant toute ecriture.
+- `Dupliquer` sur `2026-4994` prepare le formulaire sur le numero suivant avec `2026-4994`
+  dans `Référence`.
 - `Mettre a jour` demande une confirmation et reapplique les integrations selectionnees sans
   doublon : Outlook pour les projets principaux, Planner pour les projets principaux et
   sous-projets.

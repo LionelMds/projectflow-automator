@@ -315,6 +315,7 @@ async def test_controller_duplicates_selected_project_into_next_available_number
     worksheet["D3"] = "Societe : Balz Metal SA"
     worksheet["D4"] = "Contact : Lionel"
     worksheet["D5"] = "Projet : Escalier type"
+    worksheet["A4"] = "Réf. : 2024-4493"
     workbook.save(project_dir / "2026-4994 - Fiche dossier clients.xlsx")
     workbook.close()
     controller = ProjectFlowController(
@@ -334,6 +335,7 @@ async def test_controller_duplicates_selected_project_into_next_available_number
     assert data.societe == "Balz Metal SA"
     assert data.contact == "Lionel"
     assert data.designation == "Escalier type"
+    assert data.reference == "2026-4994"
 
 
 def _menu_actions(window: MainWindow, row: int, column: int = 0) -> dict[str, Any]:
@@ -1003,6 +1005,90 @@ async def test_controller_create_sortie_dossier_logs_success(
     output_dir = next((project_dir / "Sorties dossier").iterdir())
     assert opened == [output_dir]
     assert "Dossier de sortie ouvert" in window.sortie_tab.logs.text()
+
+
+@pytest.mark.asyncio
+async def test_controller_create_project_passes_the_reference(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    (config.paths.racine_projets / "2024" / "2024-4493").mkdir(parents=True)
+    window.creation_tab.reference_edit.setText(" 2024 - 4493 ")
+
+    await controller.create_project()
+    await asyncio.sleep(0)
+
+    project = services.project_service.created[0][0]
+    assert str(project.reference_number) == "2024-4493"
+    assert "introuvable" not in window.creation_tab.logs.toPlainText()
+
+
+@pytest.mark.asyncio
+async def test_controller_warns_when_the_reference_folder_is_missing(
+    qtbot: Any,
+    tmp_path: Path,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    window.creation_tab.reference_edit.setText("2024-4493")
+
+    await controller.update_project()
+
+    assert str(services.project_service.updated[0].reference_number) == "2024-4493"
+    assert "Référence 2024-4493 : dossier introuvable" in window.creation_tab.logs.toPlainText()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reference", ["ancien escalier", "4493", "2026-4995"])
+async def test_controller_refuses_an_invalid_reference(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reference: str,
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.critical", lambda *_args: None)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    window.creation_tab.reference_edit.setText(reference)
+
+    await controller.create_project()
+
+    assert services.project_service.created == []
+    assert "référence doit" in window.creation_tab.logs.toPlainText()
+
+
+def test_controller_load_project_reads_the_reference(qtbot: Any, tmp_path: Path) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    project_dir = config.paths.racine_projets / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    workbook = Workbook()
+    workbook.active["C3"] = "2026-4995"
+    workbook.active["A4"] = "Réf. : 2024-4493"
+    workbook.save(project_dir / "2026-4995 - Fiche dossier clients.xlsx")
+    workbook.close()
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.load_project()
+
+    assert window.creation_tab.data().reference == "2024-4493"
 
 
 def test_update_prompt_includes_release_notes() -> None:

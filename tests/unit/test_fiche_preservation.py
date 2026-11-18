@@ -288,3 +288,52 @@ def test_dating_a_dossier_output_keeps_the_photo(tmp_path: Path) -> None:
     workbook = load_workbook(fiche_path)
     assert workbook["Fiche"]["E2"].value == "fiche d'atelier le 15.07.2026"
     workbook.close()
+
+
+@pytest.mark.usefixtures("without_pillow")
+def test_reference_link_is_added_without_losing_the_photo(tmp_path: Path) -> None:
+    project_dir = tmp_path / "Clients" / "2026" / "2026-4995"
+    project_dir.mkdir(parents=True)
+    fiche_path = project_dir / "2026-4995 - Fiche dossier clients.xlsx"
+    _write_fiche_with_photo(fiche_path)
+    before = _parts(fiche_path)
+    project = ProjectInput(
+        number=parse_project_number("2026-4995"),
+        reference_number=parse_project_number("2024-4493"),
+    )
+    service = FicheService(today=lambda: date(2026, 5, 6))
+
+    service.fill_fiche(project_dir, project)
+
+    after = _parts(fiche_path)
+    relations_part = "xl/worksheets/_rels/sheet1.xml.rels"
+    assert list(after) == list(before)
+    assert {name for name in before if after[name] != before[name]} == {
+        SHEET_PART,
+        relations_part,
+        "xl/styles.xml",
+    }
+    sheet = after[SHEET_PART].decode()
+    assert sheet.index("<hyperlinks>") < sheet.index("<drawing ")
+    relations = after[relations_part].decode()
+    assert 'Id="rId1"' in relations
+    assert "../drawings/drawing1.xml" in relations
+    assert 'Id="rId2"' in relations
+    assert 'Target="../../2024/2024-4493" TargetMode="External"' in relations
+    workbook = load_workbook(fiche_path)
+    worksheet = workbook["Fiche"]
+    assert worksheet["A4"].value == "Réf. : 2024-4493"
+    assert worksheet["A4"].hyperlink.target == "../../2024/2024-4493"
+    assert worksheet["A4"].font.underline == "single"
+    assert worksheet["D3"].value == "Societe : Balz"
+    assert worksheet["D3"].font.bold
+    assert worksheet["D3"].font.underline is None
+    assert worksheet["F12"].font.italic
+    assert [str(merged) for merged in worksheet.merged_cells.ranges] == ["A11:E11"]
+    workbook.close()
+
+    # Saving the same reference again has nothing to write.
+    linked = fiche_path.read_bytes()
+    service.fill_fiche(project_dir, project)
+    service.fill_fiche(project_dir, ProjectInput(number=parse_project_number("2026-4995")))
+    assert fiche_path.read_bytes() == linked

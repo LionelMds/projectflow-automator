@@ -59,6 +59,7 @@ class CreationFormData:
     planner: PlannerTaskFormData = field(default_factory=PlannerTaskFormData)
     add_solidworks: bool = False
     add_autocad: bool = False
+    reference: str = ""
 
 
 class CreationTab(QWidget):
@@ -98,6 +99,7 @@ class CreationTab(QWidget):
             planner=self.planner_widget.data(),
             add_solidworks=add_solidworks,
             add_autocad=add_autocad,
+            reference=self.reference_edit.text().strip(),
         )
 
     def set_project_identity(self, *, year: str, project_id: str, subproject_id: str = "") -> None:
@@ -116,6 +118,7 @@ class CreationTab(QWidget):
             project_id=data.project_id,
             subproject_id=data.subproject_id,
         )
+        self.reference_edit.setText(data.reference)
         self.designation_edit.setText(data.designation)
         self.societe_edit.setText(data.societe)
         self.contact_edit.setText(data.contact)
@@ -132,6 +135,7 @@ class CreationTab(QWidget):
         for edit in [
             self.project_id_edit,
             self.subproject_edit,
+            self.reference_edit,
             self.designation_edit,
             self.societe_edit,
             self.contact_edit,
@@ -275,8 +279,17 @@ class CreationTab(QWidget):
         row.addWidget(caption_field("Année", self.year_combo))
         row.addWidget(caption_field("Numéro", self.project_id_edit), 1)
         subproject = caption_field("Sous-projet", self.subproject_edit)
-        subproject.setFixedWidth(140)
+        subproject.setFixedWidth(120)
         row.addWidget(subproject)
+        self.reference_edit = QLineEdit()
+        self.reference_edit.setPlaceholderText("2024-4493")
+        self.reference_edit.setToolTip(
+            "Ancien dossier servant de référence, par exemple 2024-4493. "
+            "Il est inscrit en A4 de la fiche avec un lien vers son dossier.",
+        )
+        reference = caption_field("Référence", self.reference_edit)
+        reference.setFixedWidth(140)
+        row.addWidget(reference)
         row.addWidget(self.next_button, 0, Qt.AlignmentFlag.AlignBottom)
         section.box.addLayout(row)
         self.designation_edit = QLineEdit()

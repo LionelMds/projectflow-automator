@@ -878,6 +878,7 @@ class ProjectFlowController:
         self._window.creation_tab.reset_cad_options()
         self._save_config_if_available()
         self._log_creation_result(result, existing_update=existing_update)
+        self._log_missing_reference(project)
         self._log_creation_integrations(result)
         await self._print_saved_fiche(result, project.number)
         self._open_project_folder(result)
@@ -910,6 +911,7 @@ class ProjectFlowController:
         self._window.creation_tab.reset_cad_options()
         self._save_config_if_available()
         self._log(f"+ Projet mis a jour: {result.fiche_path or result.project_dir}")
+        self._log_missing_reference(project)
         self._log_creation_integrations(result)
         await self._print_saved_fiche(result, project.number)
 
@@ -1273,6 +1275,8 @@ class ProjectFlowController:
             project_id=target.project_id,
             subproject_id="",
         )
+        # The copy refers to the dossier it was made from, not to that dossier's own reference.
+        self._window.creation_tab.reference_edit.setText(str(source_number))
         self._window.show_creation_tab()
         self._log(f"+ Projet {source_number} dupliqué dans le formulaire sous le numéro {target}")
 
@@ -1505,6 +1509,7 @@ class ProjectFlowController:
         self._window.creation_tab.contact_edit.setText(data.contact)
         self._window.creation_tab.localisation_edit.setText(data.localisation)
         self._window.creation_tab.gere_par_edit.setText(data.gere_par)
+        self._window.creation_tab.reference_edit.setText(data.reference)
         self._window.creation_tab.set_user_initials(self._config.user.initials)
         if data.number and data.number != str(number):
             self._log(f"! C3 contient {data.number}, attendu {number}")
@@ -2158,7 +2163,23 @@ class ProjectFlowController:
             ),
             add_solidworks=data.add_solidworks,
             add_autocad=data.add_autocad,
+            reference_number=_reference_number(data.reference, number),
         )
+
+    def _log_missing_reference(self, project: ProjectInput) -> None:
+        """Warn when the referenced dossier has no folder: its A4 link opens nothing."""
+        reference = project.reference_number
+        if reference is None:
+            return
+        try:
+            found = self._project_dir(reference).exists()
+        except (ValueError, OSError):
+            return
+        if not found:
+            self._log(
+                f"! Référence {reference} : dossier introuvable sous la racine projets, "
+                "le lien en A4 de la fiche ne s'ouvrira pas."
+            )
 
     def _number_from_form(self) -> str:
         data = self._window.creation_tab.data()
@@ -2229,6 +2250,7 @@ class ProjectFlowController:
                 (project.contact, data.contact),
                 (project.localisation, data.localisation),
                 (project.gere_par, data.gere_par),
+                (str(project.reference_number or ""), data.reference),
             ]
         )
 
@@ -2445,6 +2467,21 @@ def _cad_summary(result: ProjectCreationResult) -> str:
     if result.cad_warnings or result.cad_error:
         summary += " Details dans le journal."
     return summary
+
+
+def _reference_number(text: str, number: ProjectNumber) -> ProjectNumber | None:
+    """Return the older dossier typed in « Référence », or None when the field is empty."""
+    if not text.strip():
+        return None
+    try:
+        reference = parse_project_number(text)
+    except ProjectFlowError as exc:
+        raise ValueError(
+            "La référence doit être un numéro de dossier, par exemple 2024-4493.",
+        ) from exc
+    if reference == number:
+        raise ValueError("La référence doit désigner un autre dossier que celui du formulaire.")
+    return reference
 
 
 def _non_empty_changed(current: str, existing: str) -> bool:

@@ -218,6 +218,7 @@ def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # ty
     tab.year_combo.setCurrentText("2026")
     tab.project_id_edit.setText("4995")
     tab.subproject_edit.setText("2")
+    tab.reference_edit.setText("2024-4493")
     tab.designation_edit.setText("Escalier")
     tab.societe_edit.setText("Balz")
     tab.contact_edit.setText("Lionel")
@@ -231,6 +232,7 @@ def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # ty
     assert tab.year_combo.currentText() == "2026"
     assert tab.project_id_edit.text() == ""
     assert tab.subproject_edit.text() == ""
+    assert tab.reference_edit.text() == ""
     assert tab.designation_edit.text() == ""
     assert tab.societe_edit.text() == ""
     assert tab.contact_edit.text() == ""
@@ -255,12 +257,15 @@ def test_creation_tab_can_apply_form_data(qtbot) -> None:  # type: ignore[no-unt
             contact="Lionel",
             localisation="Geneve",
             gere_par="Lionel Martin",
+            reference="2024-4493",
         ),
     )
 
     assert tab.year_combo.currentText() == "2027"
     assert tab.project_id_edit.text() == "6001"
     assert tab.subproject_edit.text() == "2"
+    assert tab.reference_edit.text() == "2024-4493"
+    assert tab.data().reference == "2024-4493"
     assert tab.designation_edit.text() == "Escalier rapide"
     assert tab.societe_edit.text() == "Balz"
     assert tab.contact_edit.text() == "Lionel"

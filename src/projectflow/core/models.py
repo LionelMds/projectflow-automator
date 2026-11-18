@@ -25,6 +25,8 @@ class ProjectInput:
     planner: PlannerTaskInput = field(default_factory=PlannerTaskInput)
     add_solidworks: bool = False
     add_autocad: bool = False
+    # An older dossier this one refers to, written and linked in A4 of the fiche.
+    reference_number: ProjectNumber | None = None
 
     @property
     def is_subproject(self) -> bool:

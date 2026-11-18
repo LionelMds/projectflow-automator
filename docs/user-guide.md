@@ -588,6 +588,22 @@ La ligne du sous-projet est inseree dans le groupe du projet parent. Elle ne con
 ligne disponible reservee aux projets principaux. Elle reprend la mise en forme d'une ligne
 disponible, mais ses valeurs viennent uniquement du formulaire.
 
+## Mettre un ancien dossier en reference
+
+Le champ `Référence`, a cote de `Sous-projet`, recoit le numero d'un ancien dossier, par
+exemple `2024-4493`. A la creation ou a la mise a jour, ProjectFlow inscrit `Réf. : 2024-4493`
+en A4 de la fiche, sous le numero de chantier, avec un lien qui ouvre le dossier de cet ancien
+projet. Le lien est relatif a la fiche (`../../2024/2024-4493`) : il fonctionne sur chaque poste
+ou le dossier des projets est synchronise, quel que soit son emplacement.
+
+`Charger` relit la reference depuis A4. Un champ laisse vide ne retire pas une reference deja
+inscrite : pour la supprimer, vider A4 dans Excel. Si le dossier de l'ancien projet est
+introuvable, le journal le signale et la fiche est quand meme ecrite.
+
+`Dupliquer` pre-remplit `Référence` avec le numero du projet duplique : le nouveau dossier
+renvoie ainsi a celui dont il est issu. Le champ reste modifiable, et peut etre vide avant de
+creer.
+
 ## Mettre a jour
 
 Le bouton `Mettre a jour` reecrit la fiche et la ligne du repertoire apres confirmation. Il ne
