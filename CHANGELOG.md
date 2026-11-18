@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.82
+
 - Creation projet : nouveau champ « Référence », a cote de « Sous-projet », pour indiquer un
   ancien dossier (par exemple `2024-4493`). La fiche l'affiche en A4 (« Réf. : 2024-4493 »)
   avec un lien qui ouvre le dossier de cet ancien projet ; le lien est relatif a la fiche et
