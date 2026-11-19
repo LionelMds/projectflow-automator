@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.83
+
 - Planning : le defilement horizontal est libre dans les vues Jour, Semaine et Mois. Plus de
   resistance ni d'aimantation en bout de periode : la molette (horizontale ou Maj + molette)
   fait glisser le temps de 100 px par cran, le pave tactile au pixel, et glisser la ligne des
