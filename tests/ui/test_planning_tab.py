@@ -149,7 +149,10 @@ def test_layout_assembles_the_planning_widgets(tab: PlanningTab) -> None:
     assert grid_item.widget() is tab.grid
     assert side_item.widget() is tab.side
     assert tab.backlog is tab.side.backlog
-    assert tab.detail is tab.side.detail
+    assert tab.detail is tab.detail_window.panel
+    assert tab.detail_window.parentWidget() is tab
+    assert not tab.detail_open()
+    assert tab.calendar is tab.side.calendar
     assert tab.toasts.parentWidget() is tab
     assert tab.editor.parentWidget() is tab
     assert tab.hover.parentWidget() is tab

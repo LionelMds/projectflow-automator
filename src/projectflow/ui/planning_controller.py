@@ -1120,7 +1120,7 @@ class PlanningController:
         side = tab.side
         side.width_changed.connect(self._on_panel_width)
         side.collapsed_changed.connect(self._on_panel_collapsed)
-        side.face_changed.connect(self._on_face_changed)
+        tab.detail_window.opened_changed.connect(self._on_detail_opened)
 
         quick = tab.quick
         quick.set_context_provider(self.entry_context)
@@ -1507,7 +1507,9 @@ class PlanningController:
         if detail.mode() == "task":
             task = snapshot.tasks.get(detail.task_id())
             if task is None or task.deleted:
+                # Nothing left to show: the window goes with its task.
                 detail.clear()
+                self._tab.close_detail()
             else:
                 self._show_task(task)
         elif detail.mode() == "multi":
@@ -1870,14 +1872,13 @@ class PlanningController:
     def _on_detail_requested(self, task_id: str, _row_id: str) -> None:
         self._open_detail(task_id)
 
-    def _on_bar_clicked(self, task_id: str, row_id: str, _modifiers: object) -> None:
-        side = self._tab.side
-        if side.face() == "detail" and not side.is_collapsed() and len(self._selected_ids()) <= 1:
-            self._on_detail_requested(task_id, row_id)
+    def _on_bar_clicked(self, task_id: str, _row_id: str, _modifiers: object) -> None:
+        # The window « Détail » left open follows the bar clicked.
+        if self._tab.detail_open() and len(self._selected_ids()) <= 1:
+            self._show_clicked(task_id)
 
     def _on_selection_changed(self, _bars: object) -> None:
-        side = self._tab.side
-        if side.face() == "detail" and not side.is_collapsed() and self._selected_ids():
+        if self._tab.detail_open() and self._selected_ids():
             self._show_selection_detail()
 
     def _on_drag_started(self, task_id: str) -> None:
@@ -2100,7 +2101,6 @@ class PlanningController:
         """Bring a task just created into view: its bar flashes, or its card is selected."""
         tab = self._tab
         if task.start is None:
-            tab.side.show_backlog()
             tab.side.set_collapsed(False)
             self._card_after = task.id
             return
@@ -2183,7 +2183,13 @@ class PlanningController:
         if task is None:
             return
         self._show_task(task)
-        self._tab.side.show_detail()
+        self._tab.open_detail()
+
+    def _show_clicked(self, task_id: str) -> None:
+        """Show a task in the window already open, which stays behind the planning."""
+        task = self._task(task_id)
+        if task is not None:
+            self._show_task(task)
 
     def _show_task(self, task: PlanningTask) -> None:
         session = self._session
@@ -2402,8 +2408,8 @@ class PlanningController:
             self._config.panel_open = not collapsed
             self._save_config()
 
-    def _on_face_changed(self, face: str) -> None:
-        if face == "detail" and self._tab.detail.mode() == "empty" and self._selected_ids():
+    def _on_detail_opened(self, opened: bool) -> None:  # noqa: FBT001
+        if opened and self._tab.detail.mode() == "empty" and self._selected_ids():
             self._show_selection_detail()
 
     # -- toolbar --------------------------------------------------------------

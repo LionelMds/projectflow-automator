@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Planning : le defilement horizontal est libre dans les vues Jour, Semaine et Mois. Plus de
+  resistance ni d'aimantation en bout de periode : la molette (horizontale ou Maj + molette)
+  fait glisser le temps de 100 px par cran, le pave tactile au pixel, et glisser la ligne des
+  jours laisse le planning la ou on le lache, d'une periode a la suivante sans arret. La
+  periode affichee dans la barre d'outils suit ce qui est a l'ecran. Les fleches,
+  « Aujourd'hui » et les calendriers ramenent toujours au debut de la periode choisie.
+- Planning : un mini calendrier en bas du panneau de droite, sous « A planifier ». Il
+  entoure aujourd'hui, surligne la periode affichee et la suit pendant le defilement ; un
+  clic sur un jour (ou sur un numero de semaine) y amene le planning. Les fleches et la
+  molette feuillettent les mois, un clic sur le titre revient au mois affiche.
+- Planning : « Detail » quitte le panneau de droite pour une fenetre independante, non
+  bloquante, qui reste au-dessus du planning et suit la barre ou la carte selectionnee tant
+  qu'elle est ouverte (double-clic, Entree ou clic droit > Detail pour l'ouvrir ; Echap ou
+  « Fermer » pour la refermer, ce qui enregistre la saisie en cours). En tete : numero de
+  projet, sous-designation et statut ; dessous, trois colonnes « Quoi » (type, notes),
+  « Quand » (debut, fin, echeance, urgent, nuit) et « Qui » ; en pied, « Supprimer » a
+  gauche, l'auteur, puis « Renvoyer a planifier », « Dupliquer » et « Fermer ».
+
 ## 0.1.82
 
 - Creation projet : nouveau champ « Référence », a cote de « Sous-projet », pour indiquer un

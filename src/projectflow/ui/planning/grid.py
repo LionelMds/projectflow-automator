@@ -15,8 +15,8 @@ left for a later lot, the arrow keys already shift every selected bar at once.
 
 Time scrolls sideways over one strip of pages (``core.planning.strip``): the body is as
 wide as the strip and the model draws the page on screen and its two neighbours. The
-grid slides from page to page and comes to rest on a page edge while a page fits the
-viewport, and scrolls freely once the zoom made a page wider. It tells which page lies
+wheel, a touchpad and a drag of the header scroll freely across the pages: nothing
+resists at a page edge and nothing snaps back to one. The grid tells which page lies
 under the middle of the viewport (``page_changed``) and moves to a page only when asked
 to (``set_model(..., asked=True)``): a model that merely follows the scroll never moves it.
 """
@@ -119,19 +119,9 @@ WHEEL_NOTCH = 120
 SLIDE_MS = 260
 """Time a page takes to slide into place."""
 SCROLL_MS = 160
-"""Time a wheel notch takes to scroll a strip that runs freely."""
+"""Time a wheel notch takes to scroll the strip."""
 FREE_STEP = 100
-"""Pixels a wheel notch scrolls on a strip that runs freely (as a browser does)."""
-PAGE_PULL = 2 * WHEEL_NOTCH
-"""Wheel travel that turns the page: two notches, or as much from a touchpad. Less than
-that only pulls the page a little, and it comes back."""
-PAGE_REPEAT_PULL = 6 * WHEEL_NOTCH
-"""Further travel of a clicking wheel, kept turning or held, for each page after the first."""
-PULL_GIVE = 0.08
-"""Share of its width a page yields under the wheel before it turns: the resistance felt."""
-GIVE_MS = 90
-WHEEL_IDLE_MS = 400
-"""Without a wheel event for this long, the gesture is over: the next one turns again."""
+"""Pixels a wheel notch scrolls on the strip (as a browser does)."""
 FIT_TOLERANCE = 0.5
 SCROLL_LEAD = 3
 """``scroll_to`` puts the instant at a third of the view width."""
@@ -1051,11 +1041,7 @@ class PlanningView(QGraphicsView):
         event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
-        """Ctrl: zoom the columns; Shift or a sideways wheel: scroll in time.
-
-        Time runs on from page to page: the wheel turns one page while a page fits the
-        viewport, and scrolls freely across the pages once the zoom made them wider.
-        """
+        """Ctrl: zoom the columns; Shift or a sideways wheel: scroll freely in time."""
         angle = event.angleDelta()
         modifiers = event.modifiers()
         if modifiers & Qt.KeyboardModifier.ControlModifier:
@@ -1210,17 +1196,8 @@ class PlanningGrid(QWidget):
         """Scrolling is not reported: a model is being placed, or an asked slide runs."""
         self._slide_to: int | None = None
         self._slide_asked = False
-        self._wheel_sum = 0
-        """Wheel travel of the gesture going on, since it began or last turned a page."""
-        self._wheel_turned = False
-        self._wheel_fine = False
-        """The gesture sent other steps than whole notches: a touchpad, a smooth wheel."""
-        self._wheel_rest: int | None = None
-        """Page edge the gesture going on pulls from, which it comes back to if given up."""
-        self._wheel_way = 0
-        """Way the gesture going on scrolls: -1 back in time, 1 ahead, 0 without one."""
-        self._pan: tuple[float, int, int] | None = None
-        """Viewport x, scroll and page where a drag of the strip began."""
+        self._pan: tuple[float, int] | None = None
+        """Viewport x and scroll where a drag of the strip began."""
         self.slide_ms = SLIDE_MS
         """Time of a slide; 0 moves at once (tests)."""
         self._follow: dict[BarKey, BarKey] = {}
@@ -1258,10 +1235,6 @@ class PlanningGrid(QWidget):
         self._slide.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._slide.valueChanged.connect(self._on_slide_step)
         self._slide.finished.connect(self._on_slide_finished)
-        self._wheel_idle = QTimer(self)
-        self._wheel_idle.setSingleShot(True)
-        self._wheel_idle.setInterval(WHEEL_IDLE_MS)
-        self._wheel_idle.timeout.connect(self._wheel_gesture_ended)
         self._wire()
 
     def _wire(self) -> None:
@@ -1329,8 +1302,6 @@ class PlanningGrid(QWidget):
         model = self._deferred
         if model is not None and self.gestures.state is Gesture.IDLE:
             self.set_model(model)
-        if self.gestures.state is Gesture.IDLE:
-            self.settle()
 
     def follow(self, old: BarKey, new: BarKey) -> None:
         """Keep ``old`` selected as ``new`` once the next model moved it to another row."""
@@ -1972,14 +1943,10 @@ class PlanningGrid(QWidget):
         )
         if asked or before is None or not same:
             slide = asked and same and before is not None and before.day_width == strip.day_width
-            self._forget_wheel()
             self._show_page(model, slide=slide)
         elif (before.day_width, before.viewport) != (strip.day_width, strip.viewport):
-            self._forget_wheel()
             self._stop_slide()
             self._scroll_to_x(strip.moved_from(before, float(scroll), focus or 0.0))
-            # Back to where a page fits the viewport: the nearest one slides into place.
-            self.settle()
 
     def _show_page(self, model: GridModel, *, slide: bool) -> None:
         """Show the page of ``model``: slid to when it is next door, else at once."""
@@ -2057,142 +2024,47 @@ class PlanningGrid(QWidget):
         self._report_page()
         self.apply_deferred()
 
-    def settle(self) -> None:
-        """Slide to the nearest page edge when pages hold the scroll and it is between two."""
-        strip = self._strip
-        if strip is None or not strip.fits or self.sliding or self.panning:
-            return
-        if self.gestures.state is not Gesture.IDLE or self._wheel_rest is not None:
-            return
-        rest = strip.nearest_rest(float(self.scroll_x))
-        if rest != self.scroll_x:
-            self._start_slide(rest)
-
-    def turn_page(self, steps: int) -> None:
-        """Slide ``steps`` pages on from the page on screen (or from the one slid to)."""
-        strip = self._strip
-        if strip is None or not steps:
-            return
-        base = self._slide_to if self._slide_to is not None else self.scroll_x
-        index = strip.clamp_index(strip.middle_page(float(base)) + steps)
-        self._start_slide(strip.rest(index))
-
     # Wheel and drag ---------------------------------------------------
 
     def scroll_sideways(self, delta: int, pixels: int = 0) -> None:
-        """Scroll in time by a wheel ``delta`` (or the ``pixels`` of a touchpad).
+        """Scroll freely in time by a wheel ``delta`` (or the ``pixels`` of a touchpad).
 
-        While a page fits the viewport, a page resists before it turns, whatever sends
-        the steps (a clicking wheel, a tilting or a sideways one, a smooth one, a touchpad):
-
-        - the travel of the gesture adds up, and the page yields a little under it. Short
-          of ``PAGE_PULL`` (two notches) it comes back when the gesture stops: a brush of
-          the wheel turns nothing;
-        - at ``PAGE_PULL`` the page turns, once. What follows of the same gesture is the
-          inertia of a touchpad and is ignored, until the wheel has been still for
-          ``WHEEL_IDLE_MS``;
-        - a wheel sending whole notches has no inertia: kept turning or held, it goes on
-          turning pages, one for every ``PAGE_REPEAT_PULL`` once the page before is in place;
-        - going back the other way begins a new gesture at once.
-
-        On pages wider than the viewport the strip scrolls freely, ``FREE_STEP`` pixels a
-        notch, animated for a notch and followed as it is for a touchpad.
+        Nothing resists at a page edge and nothing snaps back to one, whatever the zoom:
+        a notch scrolls ``FREE_STEP`` pixels, animated, and a touchpad is followed as it is.
         """
-        amount = pixels or delta
-        if not amount:
+        if not (pixels or delta):
             return
-        strip = self._strip
         bar = self.view.horizontalScrollBar()
+        strip = self._strip
         if strip is None:
             step = pixels or round(delta / WHEEL_NOTCH * bar.singleStep() * 3)
             bar.setValue(bar.value() - step)
             return
-        notch = not pixels and abs(delta) % WHEEL_NOTCH == 0
-        if not strip.fits:
-            self._wheel_freely(strip, delta, pixels, notch=notch)
-            return
-        if not self.panning:
-            self._wheel_page(strip, amount, notch=notch)
-
-    def _wheel_page(self, strip: Strip, amount: int, *, notch: bool) -> None:
-        """Add ``amount`` to the gesture of the wheel on pages that hold the scroll."""
-        self._wheel_idle.start()
-        direction = -1 if amount > 0 else 1
-        if self._wheel_way not in {0, direction}:
-            # Inertia never turns back: the other way is a gesture of its own.
-            self._forget_wheel()
-        self._wheel_way = direction
-        if self._wheel_rest is None:
-            base = self._slide_to if self._slide_to is not None else self.scroll_x
-            self._wheel_rest = strip.nearest_rest(float(base))
-        self._wheel_fine = self._wheel_fine or not notch
-        if self._wheel_turned and (self._wheel_fine or self.sliding):
-            # Inertia of a touchpad, or a page still sliding in: nothing adds up.
-            self._wheel_sum = 0
-            return
-        self._wheel_sum += amount
-        if abs(self._wheel_sum) >= (PAGE_REPEAT_PULL if self._wheel_turned else PAGE_PULL):
-            self._wheel_sum = 0
-            self._wheel_turned = True
-            self.turn_page(direction)
-        elif not self._wheel_turned:
-            self._yield_to_wheel(strip)
-
-    def _yield_to_wheel(self, strip: Strip) -> None:
-        """Let the page give a little under the wheel, as far as the gesture has travelled."""
-        rest = self._wheel_rest
-        if rest is None:
-            return
-        page = strip.middle_page(float(rest))
-        give = PULL_GIVE * strip.width_of(page) * min(abs(self._wheel_sum) / PAGE_PULL, 1.0)
-        target = rest - give if self._wheel_sum > 0 else rest + give
-        self._start_slide(round(strip.clamp(target)), duration=GIVE_MS)
-
-    def _wheel_freely(self, strip: Strip, delta: int, pixels: int, *, notch: bool) -> None:
-        bar = self.view.horizontalScrollBar()
         step = pixels or round(delta / WHEEL_NOTCH * FREE_STEP)
-        if not notch:
+        if pixels or abs(delta) % WHEEL_NOTCH:
             self._stop_slide()
             bar.setValue(bar.value() - step)
             return
         base = self._slide_to if self._slide_to is not None else bar.value()
         self._start_slide(round(strip.clamp(base - step)), duration=SCROLL_MS)
 
-    def _forget_wheel(self) -> None:
-        """Forget the gesture of the wheel going on (the strip was put somewhere else)."""
-        self._wheel_sum, self._wheel_turned, self._wheel_fine = 0, False, False
-        self._wheel_rest, self._wheel_way = None, 0
-
-    def _wheel_gesture_ended(self) -> None:
-        """Take the wheel as let go: a page only pulled comes back to its edge."""
-        turned = self._wheel_turned
-        self._forget_wheel()
-        if not turned:
-            self.settle()
-
     def pan_start(self, x: float) -> None:
         """Begin dragging the strip from the viewport ``x`` (header, middle button)."""
         strip = self._strip
         if strip is None:
             return
-        self._forget_wheel()
         self._stop_slide()
-        self._pan = (float(x), self.scroll_x, strip.middle_page(float(self.scroll_x)))
+        self._pan = (float(x), self.scroll_x)
 
     def pan_move(self, x: float) -> None:
         if self._pan is None:
             return
-        press, scroll, _page = self._pan
+        press, scroll = self._pan
         self._scroll_to_x(scroll - (x - press))
 
     def pan_end(self) -> None:
-        """Let the strip go: while pages hold the scroll, it goes one page at most."""
-        pan, self._pan = self._pan, None
-        strip = self._strip
-        if pan is None or strip is None or not strip.fits:
-            return
-        index = strip.gesture_rest(pan[2], float(self.scroll_x))
-        self._start_slide(strip.rest(index))
+        """Let the strip go where the drag left it."""
+        self._pan = None
 
     def _scroll_rows(self, delta: int) -> None:
         bar = self.view.verticalScrollBar()

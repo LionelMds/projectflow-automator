@@ -94,6 +94,7 @@ from projectflow.core.planning.walltime import WallTime
 from projectflow.ui.planning.backlog import BacklogPanel, build_cards
 from projectflow.ui.planning.colors import ColorBy
 from projectflow.ui.planning.detail import DetailPanel
+from projectflow.ui.planning.detail_window import DetailWindow
 from projectflow.ui.planning.grid import PlanningGrid
 from projectflow.ui.planning.grid_model import (
     MAX_LANE_HEIGHT,
@@ -108,6 +109,7 @@ from projectflow.ui.planning.grid_model import (
 )
 from projectflow.ui.planning.hovercard import HoverCard
 from projectflow.ui.planning.inline_editor import InlineEditor
+from projectflow.ui.planning.mini_calendar import MiniCalendar
 from projectflow.ui.planning.quick_entry_bar import QuickEntryBar
 from projectflow.ui.planning.side_panel import RAIL_WIDTH, SidePanel
 from projectflow.ui.planning.sync_badge import SyncBadge, SyncStatusLike
@@ -763,6 +765,7 @@ class PlanningTab(QWidget):
         self.calendar_popup = CalendarPopup(self)
         self.calendar_popup.day_chosen.connect(self.set_anchor)
         self.calendar_popup.hide()
+        self.detail_window = DetailWindow(self)
         self.sheet = ShortcutSheet(self)
         self.sheet.closed.connect(self._focus_grid)
 
@@ -779,7 +782,22 @@ class PlanningTab(QWidget):
 
     @property
     def detail(self) -> DetailPanel:
-        return self.side.detail
+        return self.detail_window.panel
+
+    @property
+    def calendar(self) -> MiniCalendar:
+        """The small calendar under « À planifier »."""
+        return self.side.calendar
+
+    def open_detail(self) -> None:
+        """Show the « Détail » window over the planning, in front."""
+        self.detail_window.open_window()
+
+    def close_detail(self) -> None:
+        self.detail_window.close()
+
+    def detail_open(self) -> bool:
+        return self.detail_window.is_open()
 
     def _build_toolbar(self) -> None:
         self.toolbar = QWidget()
@@ -1035,6 +1053,7 @@ class PlanningTab(QWidget):
         self.grid.page_changed.connect(self._on_page_scrolled)
         self.side.width_changed.connect(self._place_toasts)
         self.side.collapsed_changed.connect(self._on_panel_collapsed)
+        self.calendar.day_chosen.connect(self.set_anchor)
         self.backlog.set_color_by(self._color_by)
         self.grid.view.installEventFilter(self)
         self.grid.view.viewport().installEventFilter(self)
@@ -1338,6 +1357,8 @@ class PlanningTab(QWidget):
             self.view_changed.emit()
 
     def _sync_toolbar(self) -> None:
+        self.calendar.set_today(self._today)
+        self.calendar.set_period(*self.period_range())
         for key, choice in self.view_buttons.items():
             choice.setChecked(key == self._view)
         for key, choice in self.color_buttons.items():
@@ -1720,6 +1741,9 @@ class PlanningTab(QWidget):
     def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802
         self.hover.hide()
         self.calendar_popup.hide()
+        if not event.spontaneous():
+            # Another tab is shown: the detail of a task of the planning goes with it.
+            self.detail_window.close()
         super().hideEvent(event)
         self.visibility_changed.emit()
 

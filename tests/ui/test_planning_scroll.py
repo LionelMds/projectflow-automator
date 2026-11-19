@@ -29,14 +29,7 @@ from test_planning_grid import (  # type: ignore[import-not-found]
 from projectflow.core.planning.layout import Density
 from projectflow.core.planning.strip import WEEKS_BACK
 from projectflow.core.planning.walltime import wall_date
-from projectflow.ui.planning.grid import (
-    FREE_STEP,
-    PAGE_PULL,
-    PAGE_REPEAT_PULL,
-    PULL_GIVE,
-    WHEEL_NOTCH,
-    PlanningGrid,
-)
+from projectflow.ui.planning.grid import FREE_STEP, WHEEL_NOTCH, PlanningGrid
 from projectflow.ui.planning.grid_model import NIGHT_WINDOW, GridModel, build_grid_model
 from projectflow.ui.planning.planning_tab import PlanningTab
 from projectflow.ui.planning.printing import printable_model
@@ -64,10 +57,14 @@ def grid(qtbot: Any) -> PlanningGrid:
 
 
 def wheel(grid: PlanningGrid, pages: int = 1) -> None:
-    """Turn the wheel for ``pages`` gestures of one page each (back in time when negative)."""
+    """Scroll a touchpad by ``pages`` page widths (back in time when negative)."""
+    assert grid.model is not None
+    strip = grid.model.strip
+    assert strip is not None
     for _ in range(abs(pages)):
-        grid.scroll_sideways(-PAGE_PULL if pages > 0 else PAGE_PULL)
-        grid._wheel_gesture_ended()  # noqa: SLF001 - the pause between two gestures
+        page = strip.middle_page(float(grid.scroll_x))
+        width = round(strip.width_of(page if pages > 0 else page - 1))
+        grid.scroll_sideways(0, -width if pages > 0 else width)
 
 
 def pages_told(grid: PlanningGrid) -> list[date]:
@@ -243,21 +240,32 @@ def test_a_grid_shown_after_its_model_still_opens_on_the_page(qtbot: Any) -> Non
     assert widget.visible_range() == (MONDAY, FRIDAY)
 
 
-def test_two_notches_turn_one_page_and_a_single_one_only_pulls_it(grid: PlanningGrid) -> None:
+def test_a_notch_scrolls_freely_and_nothing_pulls_back(qtbot: Any, grid: PlanningGrid) -> None:
     told = pages_told(grid)
     rest = rest_of(grid, MONDAY)
-    width = grid.viewport_width()
 
     grid.scroll_sideways(-WHEEL_NOTCH)
-    # The page gives a little under the wheel, and no more: nothing is turned.
-    assert grid.scroll_x == rest + round(PULL_GIVE * width / 2)
+    # No resistance: a notch scrolls its pixels, and the page edge does not call it back.
+    assert grid.scroll_x == rest + FREE_STEP
     assert told == []
-    grid._wheel_gesture_ended()  # noqa: SLF001 - the wheel left alone
+    qtbot.wait(500)
+    assert grid.scroll_x == rest + FREE_STEP
+
+    grid.scroll_sideways(WHEEL_NOTCH)
     assert grid.scroll_x == rest
 
-    grid.scroll_sideways(-WHEEL_NOTCH)
-    grid.scroll_sideways(-WHEEL_NOTCH)
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
+
+def test_the_wheel_runs_on_across_the_pages(grid: PlanningGrid) -> None:
+    told = pages_told(grid)
+    start = grid.scroll_x
+    notches = round(grid.viewport_width() / FREE_STEP) + 2
+
+    for _ in range(notches):
+        grid.scroll_sideways(-WHEEL_NOTCH)
+
+    # Past the end of the week, without stopping at its edge.
+    assert grid.scroll_x == start + notches * FREE_STEP
+    assert grid.scroll_x not in {rest_of(grid, MONDAY), rest_of(grid, NEXT_MONDAY)}
     assert told == [NEXT_MONDAY]
 
 
@@ -269,46 +277,6 @@ def test_the_wheel_turns_back_as_it_turns_ahead(grid: PlanningGrid) -> None:
 
     assert grid.scroll_x == rest_of(grid, PREVIOUS_MONDAY)
     assert told == [NEXT_MONDAY, MONDAY, PREVIOUS_MONDAY]
-
-
-def test_going_back_the_other_way_is_a_gesture_of_its_own(grid: PlanningGrid) -> None:
-    grid.scroll_sideways(-2 * WHEEL_NOTCH)
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
-
-    # No pause: the wheel is turned back at once, and the page comes back.
-    grid.scroll_sideways(WHEEL_NOTCH)
-    grid.scroll_sideways(WHEEL_NOTCH)
-
-    assert grid.scroll_x == rest_of(grid, MONDAY)
-
-
-def test_a_clicking_wheel_kept_turning_goes_on_page_by_page(grid: PlanningGrid) -> None:
-    week = timedelta(days=7)
-
-    grid.scroll_sideways(-WHEEL_NOTCH)
-    grid.scroll_sideways(-WHEEL_NOTCH)
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
-    # A held tilt wheel, a thumb wheel rolled on: six more notches for each further page.
-    for _ in range(PAGE_REPEAT_PULL // WHEEL_NOTCH - 1):
-        grid.scroll_sideways(-WHEEL_NOTCH)
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
-    grid.scroll_sideways(-WHEEL_NOTCH)
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY + week)
-    for _ in range(PAGE_REPEAT_PULL // WHEEL_NOTCH):
-        grid.scroll_sideways(-WHEEL_NOTCH)
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY + 2 * week)
-
-
-def test_a_page_sliding_in_swallows_the_wheel(qtbot: Any, grid: PlanningGrid) -> None:
-    grid.slide_ms = 120
-
-    grid.scroll_sideways(-2 * WHEEL_NOTCH)
-    assert grid.sliding
-    for _ in range(30):  # A burst of the wheel while the page is on its way.
-        grid.scroll_sideways(-WHEEL_NOTCH)
-    qtbot.waitUntil(lambda: not grid.sliding, timeout=3000)
-
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
 
 
 def test_a_model_following_the_scroll_never_moves_it(grid: PlanningGrid) -> None:
@@ -327,41 +295,14 @@ def test_a_model_following_the_scroll_never_moves_it(grid: PlanningGrid) -> None
     assert told[-1] == NEXT_MONDAY
 
 
-def test_a_touchpad_gesture_turns_one_page_however_long_it_runs(grid: PlanningGrid) -> None:
-    for _ in range(PAGE_PULL // 20 - 1):
-        grid.scroll_sideways(-20)
-    assert rest_of(grid, MONDAY) < grid.scroll_x < rest_of(grid, MONDAY) + 200  # Pulled only.
-    grid.scroll_sideways(-20)
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
-    for _ in range(400):  # The inertia of the same gesture, however long.
-        grid.scroll_sideways(-20)
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
+def test_a_touchpad_is_followed_to_the_pixel(grid: PlanningGrid) -> None:
+    start = grid.scroll_x
 
-    grid._wheel_gesture_ended()  # noqa: SLF001 - the pause between two gestures
-    for _ in range(3):
-        grid.scroll_sideways(0, -100)  # Pixels of a touchpad, the other kind of delta.
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY + timedelta(days=7))
-
-
-def test_a_brush_of_the_touchpad_turns_nothing(grid: PlanningGrid) -> None:
     for _ in range(4):
-        grid.scroll_sideways(-20)
+        grid.scroll_sideways(-20)  # A smooth wheel: a sixth of a notch at a time.
+    grid.scroll_sideways(0, -37)  # Pixels of a touchpad, the other kind of delta.
 
-    assert grid.scroll_x != rest_of(grid, MONDAY)
-    assert grid.scroll_x - rest_of(grid, MONDAY) < 60
-    grid._wheel_gesture_ended()  # noqa: SLF001 - the fingers lifted
-    assert grid.scroll_x == rest_of(grid, MONDAY)
-
-
-def test_a_pulled_page_comes_back_by_itself(qtbot: Any, grid: PlanningGrid) -> None:
-    grid.slide_ms = 60
-
-    grid.scroll_sideways(-WHEEL_NOTCH)
-    qtbot.waitUntil(lambda: grid.scroll_x != rest_of(grid, MONDAY), timeout=2000)
-    # Left alone, the wheel lets the page go back to its edge.
-    qtbot.waitUntil(
-        lambda: not grid.sliding and grid.scroll_x == rest_of(grid, MONDAY), timeout=3000
-    )
+    assert grid.scroll_x == start + 4 * round(20 / WHEEL_NOTCH * FREE_STEP) + 37
 
 
 def test_an_asked_page_next_door_slides_into_place(qtbot: Any, grid: PlanningGrid) -> None:
@@ -391,17 +332,20 @@ def test_an_asked_page_far_away_is_shown_at_once(grid: PlanningGrid) -> None:
 def test_a_wheel_slide_is_animated_and_told_on_the_way(qtbot: Any, grid: PlanningGrid) -> None:
     told = pages_told(grid)
     grid.slide_ms = 120
+    start = grid.scroll_x
+    notches = round(grid.viewport_width() / FREE_STEP) + 1
 
-    grid.scroll_sideways(-2 * WHEEL_NOTCH)
+    for _ in range(notches):
+        grid.scroll_sideways(-WHEEL_NOTCH)
     assert grid.sliding
-    # A model arriving while the page slides waits for it to land.
+    # A model arriving while the strip slides waits for it to land.
     waiting = strip_model(grid, anchor=NEXT_MONDAY)
     qtbot.waitUntil(lambda: bool(told), timeout=3000)
     grid.set_model(waiting)
     qtbot.waitUntil(lambda: not grid.sliding, timeout=3000)
 
     assert told == [NEXT_MONDAY]
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
+    assert grid.scroll_x == start + notches * FREE_STEP
     assert grid.model is not None
     assert grid.model.first_day == NEXT_MONDAY
 
@@ -449,24 +393,25 @@ def test_a_zoom_keeps_the_instant_under_the_pointer(grid: PlanningGrid) -> None:
     assert MONDAY < wall_date(before) <= FRIDAY
 
 
-def test_back_to_a_zoom_where_a_page_fits_the_nearest_page_slides_in(grid: PlanningGrid) -> None:
+def test_back_to_a_zoom_where_a_page_fits_nothing_snaps(grid: PlanningGrid) -> None:
     grid.set_model(strip_model(grid, zoom=2.0))
     for _ in range(3):
         grid.scroll_sideways(-WHEEL_NOTCH)
     model = grid.model
     assert model is not None
-    assert model.strip is not None
-    assert grid.scroll_x not in model.strip.rests()
+    pointer = 600.0
+    before = model.timescale.time_at(grid.scroll_x + pointer)
 
-    grid.keep_point(600.0)
+    grid.keep_point(pointer)
     grid.set_model(strip_model(grid, zoom=1.0))
 
     fitted = grid.model
     assert fitted is not None
     assert fitted.strip is not None
     assert fitted.strip.fits
-    assert grid.scroll_x in fitted.strip.rests()
-    assert grid.scroll_x == rest_of(grid, MONDAY)
+    # The instant under the pointer stays there: no page edge pulls the strip.
+    assert abs(fitted.timescale.time_at(grid.scroll_x + pointer) - before) <= 3
+    assert grid.scroll_x not in fitted.strip.rests()
 
 
 def test_another_view_opens_on_the_page_of_its_model(grid: PlanningGrid) -> None:
@@ -513,7 +458,7 @@ def test_a_new_viewport_width_keeps_the_page_in_place(qtbot: Any, grid: Planning
     assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
 
 
-def test_dragging_the_header_carries_the_strip_one_page(grid: PlanningGrid) -> None:
+def test_dragging_the_header_leaves_the_strip_where_it_is_let_go(grid: PlanningGrid) -> None:
     told = pages_told(grid)
     start = grid.scroll_x
 
@@ -522,19 +467,15 @@ def test_dragging_the_header_carries_the_strip_one_page(grid: PlanningGrid) -> N
     assert grid.panning
     assert grid.scroll_x == start + 300
     grid.pan_end()
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
-    assert told == [NEXT_MONDAY]
-    # Too short a drag lets the page come back.
-    grid.pan_start(400.0)
-    grid.pan_move(460.0)
-    grid.pan_end()
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
-    # However far it is dragged, a gesture goes one page.
+    assert not grid.panning
+    assert grid.scroll_x == start + 300
+    # However far it is dragged, the strip follows.
     grid.pan_start(100.0)
     grid.pan_move(1100.0)
-    grid.pan_move(4000.0)
+    grid.pan_move(1700.0)
     grid.pan_end()
-    assert grid.scroll_x == rest_of(grid, MONDAY)
+    assert grid.scroll_x == start + 300 - 1600
+    assert told[-1] == PREVIOUS_MONDAY
 
 
 def test_the_header_is_dragged_or_clicked(qtbot: Any, grid: PlanningGrid) -> None:
@@ -551,13 +492,15 @@ def test_the_header_is_dragged_or_clicked(qtbot: Any, grid: PlanningGrid) -> Non
     assert grid.scroll_x == start + 400
     QTest.mouseRelease(header, Qt.MouseButton.LeftButton, pos=QPoint(300, 30))
     assert days == [MONDAY]  # A drag is not a click.
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
+    assert grid.scroll_x == start + 400
 
 
 def test_the_wheel_over_the_days_scrolls_in_time(grid: PlanningGrid) -> None:
+    start = grid.scroll_x
+
     grid.header.wheel_scrolled.emit(-2 * WHEEL_NOTCH, 0)
 
-    assert grid.scroll_x == rest_of(grid, NEXT_MONDAY)
+    assert grid.scroll_x == start + 2 * FREE_STEP
 
 
 def test_the_header_follows_the_body_without_shift(grid: PlanningGrid) -> None:

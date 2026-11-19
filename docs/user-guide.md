@@ -383,21 +383,20 @@ consultation seule et se synchronise de nouveau dès le retour du réseau.
 - `Jour`, `Semaine` (par défaut) et `Mois`, ou `Ctrl+1`, `Ctrl+2`, `Ctrl+3`. Un clic sur l'un
   de ces boutons, même celui de la vue affichée, recadre la vue : colonnes à 100 % et période
   calée sur son bord gauche.
-- Le temps défile en continu, d'une période à la suivante : molette horizontale, pavé tactile,
-  `Maj` + molette, glisser la ligne des jours (ou la grille avec le bouton du milieu). Tant
-  qu'une période tient à l'écran, le défilement s'aimante sur son bord gauche et un geste
-  avance d'une période ; le titre nomme celle qui est au milieu de l'écran. La ligne des jours
-  (des heures en vue Jour) reste en haut et défile avec la grille.
-- La période résiste avant de tourner : il faut deux crans de molette (ou l'équivalent au pavé
-  tactile) ; en dessous, elle cède un peu puis revient. Elle tourne une seule fois par geste,
-  l'inertie du pavé tactile est ignorée. Une molette à crans tournée ou maintenue plus
-  longtemps continue, une période à la fois, à un rythme calme.
-- `Ctrl` + molette zoome les colonnes de la vue (gardé par vue) autour du curseur. Au-delà de
-  100 %, une période est plus large que l'écran : le défilement devient libre et passe d'une
-  période à l'autre sans arrêt. Revenu à 100 %, la période la plus proche glisse en place.
+- Le temps défile librement, d'une période à la suivante : molette horizontale, pavé tactile,
+  `Maj` + molette, glisser la ligne des jours (ou la grille avec le bouton du milieu). Rien ne
+  résiste ni ne s'aimante en bout de période : le planning reste là où on le lâche. Le titre
+  nomme la période au milieu de l'écran. La ligne des jours (des heures en vue Jour) reste en
+  haut et défile avec la grille.
+- `Ctrl` + molette zoome les colonnes de la vue (gardé par vue) autour du curseur.
 - `‹` `›` ou `PgPréc` / `PgSuiv` changent de période ; `Aujourd'hui` ou `Ctrl+T` y revient ; un
-  clic sur le libellé de la période ouvre un calendrier avec les numéros de semaine. Une
-  période voisine glisse en place, une période lointaine s'affiche directement.
+  clic sur le libellé de la période ouvre un calendrier avec les numéros de semaine. Ils
+  ramènent toujours au début de la période choisie : une période voisine glisse en place, une
+  période lointaine s'affiche directement.
+- Un mini calendrier en bas du panneau de droite, sous `À planifier`, entoure aujourd'hui et
+  surligne la période affichée, qu'il suit pendant le défilement. Un clic sur un jour (ou un
+  numéro de semaine) y amène le planning ; les flèches et la molette feuillettent les mois, un
+  clic sur le titre revient au mois affiché.
 - Les barres s'aimantent à la demi-heure en vue Jour et Semaine. En vue Mois, un déplacement
   s'aimante à la demi-journée, mais la durée se règle à la demi-heure dans toutes les vues
   (bord de la barre étiré à la souris, ou `Maj+←/→`).
@@ -491,9 +490,12 @@ Le survol d'une barre affiche le dossier : client, contact, désignation, sortie
 par et les autres tâches du dossier. Le clic droit d'une barre ouvre le dossier, la fiche, la
 ligne du répertoire, le formulaire de création ou la sortie dossier.
 
-### Panneau `Détail`
+### Fenêtre `Détail`
 
-Double-clic ou `Entrée` sur une barre ou une carte. De haut en bas :
+Double-clic, `Entrée` ou clic droit > `Détail` sur une barre ou une carte. Le détail s'ouvre
+dans sa propre fenêtre, qui reste au-dessus du planning sans le bloquer et suit la barre ou la
+carte sélectionnée tant qu'elle est ouverte ; `Échap` ou `Fermer` la referment en enregistrant
+la saisie en cours. On y trouve :
 
 - **N° de projet** (`AAAA-XXXX`, vide pour une tâche interne ; `5231` seul complète le numéro)
   et le client du dossier.

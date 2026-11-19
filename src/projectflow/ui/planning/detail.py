@@ -119,6 +119,15 @@ NOTES_HEIGHT = 64
 """About three lines of notes."""
 SWATCH_SIZE = 12
 FIELD_SPACING = 16
+BODY_MARGIN = 20
+COLUMN_GAP = 28
+HEADING_HEIGHT = 18
+WHEN_WIDTH = 300
+"""Column « Quand »: the width the rolls of the dates were drawn for."""
+STATUS_WIDTH = 280
+WHAT_MIN_WIDTH = 260
+WHO_MIN_WIDTH = 290
+"""Five initials side by side, readable."""
 TYPE_COLUMNS = 3
 PEOPLE_COLUMNS = 5
 PERSON_HEIGHT = 44
@@ -554,6 +563,13 @@ class _Box(QWidget):
         painter.end()
 
 
+class _Notes(QPlainTextEdit):
+    """Notes asking for three lines, and taking the height the window leaves them."""
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(super().sizeHint().width(), NOTES_HEIGHT)
+
+
 def _tone(widget: QWidget, tone: str | None) -> None:
     """Set the tone of ``widget``, restyling it only when the tone changes."""
     if (widget.property("tone") or "") != (tone or ""):
@@ -599,7 +615,12 @@ def _clear_layout(layout: QVBoxLayout | QGridLayout) -> None:
 
 
 class DetailPanel(QWidget):
-    """Face « Détail » of the side panel: one task, several tasks, or nothing."""
+    """Content of the « Détail » window: one task, several tasks, or nothing.
+
+    What the task is leads (number, name, status), then three columns answer « quoi »,
+    « quand » and « qui »; the actions stay in a footer. ``back_requested`` (Escape)
+    asks the window to close.
+    """
 
     field_changed = Signal(str, str, object)
     people_changed = Signal(str, list, list)
@@ -607,6 +628,8 @@ class DetailPanel(QWidget):
     status_changed = Signal(str, str)
     action_requested = Signal(str, str)
     back_requested = Signal()
+    shown_changed = Signal()
+    """Another task, a selection or nothing is shown: the window names it in its title."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -638,15 +661,6 @@ class DetailPanel(QWidget):
     # -- construction ---------------------------------------------------------
 
     def _build(self) -> None:
-        self.back_button = button("‹ À planifier", "ghost", size="sm")  # noqa: RUF001
-        self.back_button.setToolTip("Revenir à « À planifier » (Échap)")
-        self.back_button.clicked.connect(self.back_requested)
-        self.header_box = QWidget()
-        header = QHBoxLayout(self.header_box)
-        header.setContentsMargins(14, 10, 10, 6)
-        header.addWidget(label("Détail", "caps"), 1)
-        header.addWidget(self.back_button)
-
         self.empty_label = label(EMPTY_TEXT, "muted", wrap=True)
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self.multi_label = label("", "h5", wrap=True)
@@ -665,9 +679,11 @@ class DetailPanel(QWidget):
         self._build_deadline()
         self._build_people()
 
-        self.notes_edit = QPlainTextEdit()
+        self.notes_edit = _Notes()
         self.notes_edit.setPlaceholderText("Matériel, accès chantier, grue…")
-        self.notes_edit.setFixedHeight(NOTES_HEIGHT)
+        # The notes take the height the window leaves under the types.
+        self.notes_edit.setMinimumHeight(NOTES_HEIGHT)
+        self.notes_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.notes_edit.setTabChangesFocus(True)
         self.notes_edit.setAccessibleName("Notes")
         self.notes_edit.textChanged.connect(self._on_notes_edited)
@@ -694,29 +710,50 @@ class DetailPanel(QWidget):
         self.status_mixed = label("", "small")
         self.status_block = _stack(_head(_caption("Statut"), self.status_mixed), status_box)
 
+        status_box.setMinimumWidth(STATUS_WIDTH)
+        self.status_block.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+
+        # What the task is, on one line: its dossier, its name, where it stands.
+        self.identity_box = QWidget()
+        identity = QHBoxLayout(self.identity_box)
+        identity.setContentsMargins(0, 0, 0, 0)
+        identity.setSpacing(COLUMN_GAP)
+        identity.addWidget(self.number_block, 0, Qt.AlignmentFlag.AlignTop)
+        identity.addWidget(self.title_block, 1, Qt.AlignmentFlag.AlignTop)
+        identity.addWidget(self.status_block, 0, Qt.AlignmentFlag.AlignTop)
+        self.identity_rule = rule()
+
+        self.what_column = self._column("Quoi", self.type_block, self.notes_block, grow=True)
+        self.when_column = self._column(
+            "Quand", self.dates_block, self.deadline_block, self.night_block
+        )
+        self.who_column = self._column("", self.people_block)
+        self.when_column.setFixedWidth(WHEN_WIDTH)
+        self.what_column.setMinimumWidth(WHAT_MIN_WIDTH)
+        self.who_column.setMinimumWidth(WHO_MIN_WIDTH)
+        self.columns_box = QWidget()
+        columns = QHBoxLayout(self.columns_box)
+        columns.setContentsMargins(0, 0, 0, 0)
+        columns.setSpacing(COLUMN_GAP)
+        columns.addWidget(self.what_column, 5)
+        columns.addWidget(self.when_column)
+        columns.addWidget(self.who_column, 6)
+
         body = QWidget()
         body.setProperty("pfRoot", "true")
         body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(14, 12, 14, 16)
+        body_layout.setContentsMargins(BODY_MARGIN, 16, BODY_MARGIN, 16)
         body_layout.setSpacing(FIELD_SPACING)
         for widget in (
             self.empty_label,
             self.read_only_label,
             self.multi_label,
             self.multi_hint,
-            self.number_block,
-            self.title_block,
-            self.type_block,
-            self.dates_block,
-            self.deadline_block,
-            self.night_block,
-            self.people_block,
-            self.notes_block,
+            self.identity_box,
+            self.identity_rule,
         ):
             body_layout.addWidget(widget)
-        # The status stays at the bottom of the content, however short the task.
-        body_layout.addStretch(1)
-        body_layout.addWidget(self.status_block)
+        body_layout.addWidget(self.columns_box, 1)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
@@ -728,9 +765,29 @@ class DetailPanel(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        root.addWidget(self.header_box)
         root.addWidget(self.scroll_area, 1)
         root.addWidget(self.footer)
+
+    @staticmethod
+    def _column(title: str, *blocks: QWidget, grow: bool = False) -> QWidget:
+        """One column of the window: a heading in capitals over its blocks.
+
+        ``grow`` lets the last block take the height left; otherwise the blocks stay
+        at the top. A block that names itself (« Qui ») comes without ``title``.
+        """
+        column = QWidget()
+        layout = QVBoxLayout(column)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(FIELD_SPACING)
+        if title:
+            heading = label(title, "caps")
+            heading.setFixedHeight(HEADING_HEIGHT)
+            layout.addWidget(heading)
+        for index, block in enumerate(blocks):
+            layout.addWidget(block, 1 if grow and index == len(blocks) - 1 else 0)
+        if not grow:
+            layout.addStretch(1)
+        return column
 
     def _build_number(self) -> None:
         self.number_edit = QLineEdit()
@@ -867,6 +924,7 @@ class DetailPanel(QWidget):
 
     def _build_footer(self) -> None:
         self.author_label = label("", "small", wrap=True)
+        self.author_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.unschedule_button = button("Renvoyer à planifier", size="sm")
         self.unschedule_button.setToolTip(
             "Retirer les dates : la tâche revient dans « À planifier »"
@@ -877,25 +935,24 @@ class DetailPanel(QWidget):
         self.delete_button = button("Supprimer", "danger", size="sm")
         self.delete_button.setToolTip("Supprimer la tâche pour tous (Maj+Suppr)")
         self.delete_button.clicked.connect(lambda: self._request_action("delete"))
+        self.close_button = button("Fermer", size="sm")
+        self.close_button.setToolTip("Fermer la fenêtre (Échap)")
+        self.close_button.clicked.connect(self._request_close)
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(4)
-        for action in (self.unschedule_button, self.duplicate_button):
-            actions.addWidget(action)
-        actions.addStretch(1)
+        actions.setSpacing(6)
         actions.addWidget(self.delete_button)
+        actions.addWidget(self.author_label, 1)
+        for action in (self.unschedule_button, self.duplicate_button, self.close_button):
+            actions.addWidget(action)
         self.footer = QWidget()
         self.footer.setProperty("role", "detail-footer")
         layout = QVBoxLayout(self.footer)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(rule())
-        inner = QVBoxLayout()
-        inner.setContentsMargins(14, 8, 14, 10)
-        inner.setSpacing(6)
-        inner.addWidget(self.author_label)
-        inner.addLayout(actions)
-        layout.addLayout(inner)
+        actions.setContentsMargins(BODY_MARGIN, 10, BODY_MARGIN, 12)
+        layout.addLayout(actions)
 
     # -- public API -----------------------------------------------------------
 
@@ -934,9 +991,13 @@ class DetailPanel(QWidget):
                 titles.append(widget.text())
         return titles
 
-    def set_header_visible(self, *, visible: bool) -> None:
-        """Show the « DÉTAIL » row and its back button, or hide it under the tabs."""
-        self.header_box.setVisible(visible)
+    def heading(self) -> str:
+        """Name what is shown in a few words: the title of the window."""
+        if self._mode == "task" and self._task is not None:
+            return self._task.label or INTERNAL_TASK
+        if self._mode == "multi":
+            return f"{self._multi_count} tâches sélectionnées"
+        return ""
 
     def set_project_choices(self, projects: Sequence[ProjectInfo]) -> None:
         """Dossiers offered by the completion of the project number."""
@@ -978,6 +1039,7 @@ class DetailPanel(QWidget):
         if read_only:
             self._close_picker(commit=False)
         self._populate_task(keep_edits=same)
+        self.shown_changed.emit()
 
     def set_multi(
         self,
@@ -1003,6 +1065,7 @@ class DetailPanel(QWidget):
         self._read_only = read_only
         self._sent = {}
         self._populate_multi()
+        self.shown_changed.emit()
 
     def clear(self) -> None:
         self.flush()
@@ -1011,6 +1074,7 @@ class DetailPanel(QWidget):
         self._sent = {}
         self._show_blocks(set())
         self.empty_label.show()
+        self.shown_changed.emit()
 
     def flush(self) -> None:
         """Save at once what is being edited: texts, rolls left open, waiting notes."""
@@ -1050,6 +1114,18 @@ class DetailPanel(QWidget):
     def _show_blocks(self, visible: set[QWidget]) -> None:
         for widget in self._blocks():
             widget.setVisible(widget in visible)
+        # A line or a column whose blocks are all hidden leaves its room to the others.
+        groups = {
+            self.identity_box: (self.number_block, self.title_block, self.status_block),
+            self.what_column: (self.type_block, self.notes_block),
+            self.when_column: (self.dates_block, self.deadline_block, self.night_block),
+            self.who_column: (self.people_block,),
+        }
+        for group, blocks in groups.items():
+            group.setVisible(any(block in visible for block in blocks))
+        shown = any(not group.isHidden() for group in groups)
+        self.columns_box.setVisible(shown)
+        self.identity_rule.setVisible(shown)
 
     def _populate_task(self, *, keep_edits: bool) -> None:
         task = self._task
@@ -1751,11 +1827,14 @@ class DetailPanel(QWidget):
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if event.key() == Qt.Key.Key_Escape:
-            self.flush()
-            self.back_requested.emit()
+            self._request_close()
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def _request_close(self) -> None:
+        self.flush()
+        self.back_requested.emit()
 
     def _on_theme(self) -> None:
         self.setStyleSheet(_panel_style(current_theme()))

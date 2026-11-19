@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent
+from PySide6.QtGui import QDropEvent
 from PySide6.QtWidgets import QApplication, QLineEdit, QVBoxLayout, QWidget
 
 from projectflow.config import AppearanceConfig
@@ -35,6 +35,12 @@ from projectflow.ui.planning.detail import (
     FitButton,
     author_text,
     availability,
+)
+from projectflow.ui.planning.detail_window import (
+    MINIMUM_SIZE,
+    WINDOW_TITLE,
+    DetailWindow,
+    window_title,
 )
 from projectflow.ui.planning.grid import task_mime_data
 from projectflow.ui.planning.side_panel import RAIL_WIDTH, SidePanel
@@ -166,7 +172,7 @@ def _detail(
 ) -> _Host:
     host = _Host()
     qtbot.addWidget(host)
-    host.resize(330, 1200)
+    host.resize(1040, 700)
     host.detail.set_project_choices(PROJECTS)
     host.detail.set_task(
         task,
@@ -207,6 +213,11 @@ def _click(qtbot: Any, widget: QWidget) -> None:
 def _top(detail: DetailPanel, widget: QWidget) -> int:
     body = detail.scroll_area.widget()
     return widget.mapTo(body, QPoint(0, 0)).y()
+
+
+def _left(detail: DetailPanel, widget: QWidget) -> int:
+    body = detail.scroll_area.widget()
+    return widget.mapTo(body, QPoint(0, 0)).x()
 
 
 # ------------------------------------------------------------- helpers ----
@@ -270,20 +281,26 @@ def test_shows_the_blocks_of_a_scheduled_task_top_to_bottom(qtbot: Any) -> None:
     assert detail.unschedule_button.isVisibleTo(detail)
     assert detail.open_picker() is None
 
-    # The order of the mockup, the status at the bottom; the footer out of the scroll.
-    blocks = [
-        detail.number_block,
-        detail.title_block,
-        detail.type_block,
-        detail.dates_block,
-        detail.deadline_block,
-        detail.night_block,
-        detail.people_block,
-        detail.notes_block,
-        detail.status_block,
-    ]
-    tops = [_top(detail, block) for block in blocks]
-    assert tops == sorted(tops)
+    # What the task is on one line, then « quoi », « quand », « qui » side by side;
+    # the footer out of the scroll.
+    identity = (detail.number_block, detail.title_block, detail.status_block)
+    assert len({_top(detail, block) for block in identity}) == 1
+    assert [_left(detail, block) for block in identity] == sorted(
+        _left(detail, block) for block in identity
+    )
+    columns = (
+        (detail.type_block, detail.notes_block),
+        (detail.dates_block, detail.deadline_block, detail.night_block),
+        (detail.people_block,),
+    )
+    under = max(_top(detail, block) + block.height() for block in identity)
+    for column in columns:
+        tops = [_top(detail, block) for block in column]
+        assert tops == sorted(tops)
+        assert tops[0] > under
+        assert len({_left(detail, block) for block in column}) == 1
+    lefts = [_left(detail, column[0]) for column in columns]
+    assert lefts == sorted(set(lefts))
     assert detail.footer.parent() is detail
     assert not detail.scroll_area.widget().isAncestorOf(detail.footer)
     # Gone from the panel: dossier buttons, « Détacher », findings, « Décaler »,
@@ -838,16 +855,13 @@ def test_multi_selection_edits_every_task_and_shows_mixed_values(qtbot: Any) -> 
     assert not detail.deadline_row.isVisibleTo(detail)
     assert detail.urgent_button.isVisibleTo(detail)
     assert not detail.author_label.isVisibleTo(detail)
-    tops = [
-        _top(detail, block)
-        for block in (
-            detail.type_block,
-            detail.deadline_block,
-            detail.people_block,
-            detail.status_block,
-        )
+    # The status leads, then what is shared stays in its column.
+    assert _top(detail, detail.status_block) < _top(detail, detail.type_block)
+    lefts = [
+        _left(detail, block)
+        for block in (detail.type_block, detail.deadline_block, detail.people_block)
     ]
-    assert tops == sorted(tops)
+    assert lefts == sorted(set(lefts))
 
     _click(qtbot, _chip(detail, "livraison"))
     _click(qtbot, detail.urgent_button)
@@ -922,27 +936,31 @@ def _side(qtbot: Any, *, height: int = 820) -> SidePanel:
     qtbot.addWidget(side)
     side.resize(312, height)
     side.backlog.set_snapshot(_snapshot(), today=TODAY, now=NOW)
-    side.detail.set_project_choices(PROJECTS)
     side.show()
     qtbot.waitExposed(side)
     return side
 
 
-def test_side_panel_tabs_show_the_count_and_switch_faces(qtbot: Any) -> None:
+def _window(qtbot: Any) -> DetailWindow:
+    window = DetailWindow()
+    qtbot.addWidget(window)
+    window.panel.set_project_choices(PROJECTS)
+    return window
+
+
+def test_side_panel_heads_the_cards_with_their_count_over_the_calendar(qtbot: Any) -> None:
     side = _side(qtbot)
 
-    assert side.face() == "backlog"
     assert side.backlog_tab_text() == "À planifier (1)"
     assert side.rail_text() == "À PLANIFIER · 1"
     assert side.backlog_tab.isChecked()
-    with qtbot.waitSignal(side.face_changed) as blocker:
-        qtbot.mouseClick(side.detail_tab, Qt.MouseButton.LeftButton)
-    assert blocker.args == ["detail"]
-    assert side.stack.currentWidget() is side.detail
-    assert side.detail_tab.isChecked()
-    with qtbot.waitSignal(side.face_changed) as blocker:
-        side.detail.back_requested.emit()
-    assert blocker.args == ["backlog"]
+    qtbot.mouseClick(side.backlog_tab, Qt.MouseButton.LeftButton)
+    assert side.backlog_tab.isChecked()  # a heading, not a face to leave
+    assert not hasattr(side, "detail")  # the detail has its own window
+    # The small calendar closes the panel, under the cards.
+    assert side.calendar.isVisible()
+    assert side.calendar.geometry().top() >= side.backlog.geometry().bottom()
+    assert side.calendar.geometry().bottom() == side.open_box.rect().bottom()
 
     side.backlog.set_snapshot(_snapshot(FAB, OTHER), today=TODAY, now=NOW)
     assert side.backlog_tab_text() == "À planifier (0)"
@@ -958,6 +976,7 @@ def test_side_panel_folds_into_a_rail_and_unfolds(qtbot: Any) -> None:
     assert side.width() == RAIL_WIDTH
     assert side.rail.isVisible()
     assert not side.open_box.isVisible()
+    assert not side.calendar.isVisible()
 
     with qtbot.waitSignal(side.collapsed_changed) as blocker:
         qtbot.mouseClick(side.rail, Qt.MouseButton.LeftButton)
@@ -965,13 +984,6 @@ def test_side_panel_folds_into_a_rail_and_unfolds(qtbot: Any) -> None:
     assert side.width() == 312
 
     side.set_collapsed(True)
-    side.show_detail()
-    assert not side.is_collapsed()
-    assert side.face() == "detail"
-    side.set_collapsed(True)
-    side.show_detail(expand=False)
-    assert side.is_collapsed()
-
     side.fold_button.click()
     assert not side.is_collapsed()
 
@@ -994,31 +1006,16 @@ def test_side_panel_grip_resizes_and_reports_the_width(qtbot: Any) -> None:
     assert side.panel_width() == 260
 
 
-def test_bars_dropped_on_the_rail_or_the_detail_go_back(qtbot: Any) -> None:
+def test_bars_dropped_on_the_rail_go_back(qtbot: Any) -> None:
     side = _side(qtbot)
     mime = task_mime_data("fab", source="grid", resource_id="mr")
-
-    side.show_detail()
-    enter = QDragEnterEvent(
-        QPoint(100, 200),
-        Qt.DropAction.MoveAction,
-        mime,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
-    side.dragEnterEvent(enter)
-    assert enter.isAccepted()
-    assert side.overlay.isVisible()
     drop = QDropEvent(
-        QPointF(100, 200),
+        QPointF(10, 200),
         Qt.DropAction.MoveAction,
         mime,
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
     )
-    with qtbot.waitSignal(side.backlog.unschedule_requested) as blocker:
-        side.overlay.dropEvent(drop)
-    assert blocker.args == ["fab"]
 
     side.set_collapsed(True)
     with qtbot.waitSignal(side.backlog.unschedule_requested) as blocker:
@@ -1050,22 +1047,54 @@ def test_side_panel_grip_starts_from_a_width_set_by_the_tab(qtbot: Any) -> None:
     assert widths == [410]
 
 
-def test_side_panel_drop_highlight_goes_when_the_drag_leaves(qtbot: Any) -> None:
-    side = _side(qtbot)
-    mime = task_mime_data("fab", source="grid", resource_id="mr")
-    side.show_detail()
-    enter = QDragEnterEvent(
-        QPoint(100, 200),
-        Qt.DropAction.MoveAction,
-        mime,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
+# -------------------------------------------------------- detail window ----
 
-    side.dragEnterEvent(enter)
-    assert side.overlay.isVisible()
-    side.dragLeaveEvent(QDragLeaveEvent())
-    qtbot.waitUntil(lambda: not side.overlay.isVisible(), timeout=1000)
+
+def test_the_detail_window_opens_beside_the_planning_and_names_its_task(qtbot: Any) -> None:
+    window = _window(qtbot)
+    opened: list[bool] = []
+    window.opened_changed.connect(opened.append)
+
+    assert not window.is_open()
+    assert window.isWindow()
+    assert window.windowModality() == Qt.WindowModality.NonModal
+    assert window.windowTitle() == WINDOW_TITLE
+    window.panel.set_task(FAB, _snapshot(), calendar=GE, project=PROJECTS[0], now=NOW)
+    assert window.windowTitle() == window_title(FAB.label)
+    window.open_window()
+    qtbot.waitExposed(window)
+    assert window.is_open()
+    assert opened == [True]
+    assert window.width() >= MINIMUM_SIZE.width()
+
+    window.panel.set_multi(3, {"status": "confirmed"}, snapshot=_snapshot())
+    assert window.windowTitle() == window_title("3 tâches sélectionnées")
+    window.panel.clear()
+    assert window.windowTitle() == WINDOW_TITLE
+
+
+def test_closing_the_detail_window_saves_what_is_typed(qtbot: Any) -> None:
+    window = _window(qtbot)
+    panel = window.panel
+    panel.set_task(FAB, _snapshot(), calendar=GE, project=PROJECTS[0], now=NOW)
+    window.open_window()
+    qtbot.waitExposed(window)
+    opened: list[bool] = []
+    window.opened_changed.connect(opened.append)
+
+    _focus(qtbot, panel.title_edit)
+    qtbot.keyClicks(panel.title_edit, " bis")
+    with qtbot.waitSignal(panel.field_changed) as blocker:
+        qtbot.keyClick(panel.title_edit, Qt.Key.Key_Escape)  # Escape closes the window
+    assert blocker.args[:2] == [FAB.id, "title"]
+    assert str(blocker.args[2]).endswith(" bis")
+    assert not window.is_open()
+    assert opened == [False]
+
+    window.open_window()
+    assert window.is_open()
+    panel.close_button.click()
+    assert not window.is_open()
 
 
 def test_a_side_panel_without_parent_is_freed() -> None:
@@ -1089,7 +1118,9 @@ def _save(widget: QWidget, name: str) -> None:
 
 
 @pytest.mark.parametrize("mode", ["light", "dark"])
-def test_screenshots_of_both_faces(qtbot: Any, qapp: QApplication, mode: str) -> None:
+def test_screenshots_of_the_panel_and_the_detail_window(
+    qtbot: Any, qapp: QApplication, mode: str
+) -> None:
     apply_theme(qapp, AppearanceConfig(mode=mode))  # type: ignore[arg-type]
     cards = [
         _task(
@@ -1134,33 +1165,33 @@ def test_screenshots_of_both_faces(qtbot: Any, qapp: QApplication, mode: str) ->
     qtbot.wait(700)  # the flash is over, the « nouveau » mark stays
     _save(side, f"backlog_{mode}")
 
-    side.detail.set_task(
+    window = _window(qtbot)
+    window.panel.set_task(
         FAB,
         _snapshot(FAB, OTHER, *cards),
         calendar=GE,
         project=PROJECTS[0],
         now=NOW,
     )
-    side.show_detail()
-    side.resize(312, 1460)
-    side.detail.scroll_area.widget().adjustSize()
+    window.open_window()
+    qtbot.waitExposed(window)
     qtbot.wait(50)
-    _save(side, f"detail_{mode}")
+    _save(window, f"detail_{mode}")
 
-    side.detail.start_row.click()
-    side.detail.start_picker.step(1, 1)
+    window.panel.start_row.click()
+    window.panel.start_picker.step(1, 1)
     qtbot.wait(20)
-    _save(side, f"detail_rolls_{mode}")
-    side.detail.flush()
+    _save(window, f"detail_rolls_{mode}")
+    window.panel.flush()
 
-    side.detail.set_multi(
+    window.panel.set_multi(
         4,
         {"task_type": "montage", "status": "confirmed", "resource_ids": ["nf"]},
         snapshot=_snapshot(FAB, OTHER, *cards),
     )
-    side.resize(312, 880)
     qtbot.wait(50)
-    _save(side, f"multi_{mode}")
+    _save(window, f"multi_{mode}")
+    window.close()
 
     side.set_collapsed(True)
     side.set_new_cards(has_new=True)

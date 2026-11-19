@@ -829,7 +829,7 @@ async def test_detail_panel_edits_go_through_commands(
     assert service is not None
 
     tab.grid.detail_requested.emit("t-fab", "mre")
-    assert tab.side.face() == "detail"
+    assert tab.detail_open()
     assert tab.detail.task_id() == "t-fab"
 
     tab.detail.field_changed.emit("t-fab", "title", "Fabrication garde-corps inox")

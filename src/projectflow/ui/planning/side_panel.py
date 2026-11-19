@@ -1,15 +1,13 @@
-"""Right side panel of the Planning tab: « À planifier » and « Détail » on two faces.
+"""Right side panel of the Planning tab: « À planifier » over a small calendar.
 
 The panel folds into a 32 px rail that reads « À PLANIFIER · 6 » from top to bottom
 (Ctrl+B is handled by the tab, which calls ``toggle``). Its left edge is a grip that
 resizes it; ``width_changed`` tells the tab the width to keep in the poste settings once
-the grip is released. A bar of the grid dropped on the rail or on the « Détail » face
-goes back to « À planifier », like a drop on the cards.
+the grip is released. A bar of the grid dropped on the rail goes back to « À planifier »,
+like a drop on the cards. The detail of a task opens in its own window (``DetailWindow``).
 """
 
 from __future__ import annotations
-
-from typing import Literal
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
@@ -26,13 +24,11 @@ from PySide6.QtGui import (
     QPainterPath,
     QPaintEvent,
     QPen,
-    QResizeEvent,
 )
 from PySide6.QtWidgets import (
     QAbstractButton,
     QHBoxLayout,
     QSizePolicy,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -42,13 +38,10 @@ from projectflow.core.planning.poste_config import (
     MAX_PANEL_WIDTH,
     MIN_PANEL_WIDTH,
 )
-from projectflow.ui.planning.backlog import BacklogPanel, DropOverlay
-from projectflow.ui.planning.detail import DetailPanel
+from projectflow.ui.planning.backlog import BacklogPanel
 from projectflow.ui.planning.grid import parse_task_mime
+from projectflow.ui.planning.mini_calendar import MiniCalendar
 from projectflow.ui.theme import Theme, body_font, current_theme, theme_notifier
-
-SideFace = Literal["backlog", "detail"]
-FACES: tuple[SideFace, ...] = ("backlog", "detail")
 
 RAIL_WIDTH = 32
 TAB_HEIGHT = 40
@@ -68,7 +61,6 @@ PANEL_MAX_WIDTH = min(MAX_PANEL_WIDTH, 520)
 """Widths the grip allows; the poste settings accept a wider range, clamped here."""
 
 BACKLOG_TITLE = "À planifier"
-DETAIL_TITLE = "Détail"
 FOLD_TOOLTIP = "Replier le panneau (Ctrl+B)"
 KEYBOARD_REASONS = (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason)
 UNFOLD_TOOLTIP = "Déplier le panneau (Ctrl+B)"
@@ -411,12 +403,11 @@ class _Grip(QWidget):
 
 
 class SidePanel(QWidget):
-    """Right panel of the Planning tab, with its « À planifier » and « Détail » faces.
+    """Right panel of the Planning tab: « À planifier », then the small calendar.
 
     Put it in a layout beside the grid: it sets its own width, open or folded.
     """
 
-    face_changed = Signal(str)
     collapsed_changed = Signal(bool)
     width_changed = Signal(int)
 
@@ -425,51 +416,43 @@ class SidePanel(QWidget):
         parent: QWidget | None = None,
         *,
         backlog: BacklogPanel | None = None,
-        detail: DetailPanel | None = None,
         width: int = DEFAULT_PANEL_WIDTH,
         collapsed: bool = False,
     ) -> None:
         super().__init__(parent)
         self.backlog = backlog or BacklogPanel()
-        self.detail = detail or DetailPanel()
-        # The tabs name the faces and lead back to « À planifier ».
+        # The heading of the panel names the cards and counts them.
         self.backlog.set_title_visible(visible=False)
-        self.detail.set_header_visible(visible=False)
-        self._face: SideFace = "backlog"
+        self.calendar = MiniCalendar()
         self._collapsed = False
         self._width = clamp_width(width)
         self._press_width = self._width
-        self.setAcceptDrops(True)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
 
         self.backlog_tab = _FaceTab(BACKLOG_TITLE)
-        self.detail_tab = _FaceTab(DETAIL_TITLE)
+        self.backlog_tab.setChecked(True)
+        self.backlog_tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.fold_button = _FoldButton()
         # Bound methods, not lambdas: a lambda holding ``self`` would keep a panel
         # without parent alive for ever.
-        self.backlog_tab.clicked.connect(self.show_backlog)
-        self.detail_tab.clicked.connect(self._on_detail_tab)
+        self.backlog_tab.clicked.connect(self._keep_heading_checked)
         self.fold_button.clicked.connect(self.toggle)
         tabs = QHBoxLayout()
         tabs.setContentsMargins(0, 0, 0, 0)
         tabs.setSpacing(0)
         tabs.addWidget(self.backlog_tab, 1)
-        tabs.addWidget(self.detail_tab, 1)
         tabs.addWidget(self.fold_button)
         self.tabs_box = QWidget()
         self.tabs_box.setLayout(tabs)
         self.tabs_box.setFixedHeight(TAB_HEIGHT)
-
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self.backlog)
-        self.stack.addWidget(self.detail)
 
         self.open_box = QWidget()
         column = QVBoxLayout(self.open_box)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(0)
         column.addWidget(self.tabs_box)
-        column.addWidget(self.stack, 1)
+        column.addWidget(self.backlog, 1)
+        column.addWidget(self.calendar)
 
         self.grip = _Grip()
         self.grip.pressed.connect(self._on_grip_pressed)
@@ -487,42 +470,14 @@ class SidePanel(QWidget):
         root.addWidget(self.open_box, 1)
         root.addWidget(self.rail)
 
-        self.overlay = DropOverlay(self)
-        self.overlay.dropped.connect(self.backlog.drop_task)
-
         self.backlog.count_changed.connect(self._on_count)
-        self.detail.back_requested.connect(self.show_backlog)
         theme_notifier().changed.connect(self.update)
         self._on_count(self.backlog.count())
-        self._select_tab()
         self.setFixedWidth(self._width)
         if collapsed:
             self.set_collapsed(True)
 
     # -- public API -----------------------------------------------------------
-
-    def face(self) -> SideFace:
-        return self._face
-
-    def set_face(self, face: SideFace) -> None:
-        if face not in FACES:
-            return
-        if face != self._face:
-            if self._face == "detail":
-                self.detail.flush()
-            self._face = face
-            self.stack.setCurrentWidget(self.backlog if face == "backlog" else self.detail)
-            self.face_changed.emit(face)
-        self._select_tab()
-
-    def show_backlog(self) -> None:
-        self.set_face("backlog")
-
-    def show_detail(self, *, expand: bool = True) -> None:
-        """Show the « Détail » face, unfolding the panel unless ``expand`` is False."""
-        self.set_face("detail")
-        if expand:
-            self.set_collapsed(False)
 
     def is_collapsed(self) -> bool:
         return self._collapsed
@@ -531,14 +486,11 @@ class SidePanel(QWidget):
         """Fold the panel into its 32 px rail, or unfold it at its last width."""
         if collapsed == self._collapsed:
             return
-        if collapsed:
-            self.detail.flush()
         self._collapsed = collapsed
         self.open_box.setVisible(not collapsed)
         self.grip.setVisible(not collapsed)
         self.rail.setVisible(collapsed)
         self.setFixedWidth(RAIL_WIDTH if collapsed else self._width)
-        self.overlay.hide()
         self.collapsed_changed.emit(collapsed)
 
     def toggle(self) -> None:
@@ -570,15 +522,11 @@ class SidePanel(QWidget):
         self.backlog_tab.set_count(count)
         self.rail.set_count(count)
 
-    def _on_detail_tab(self) -> None:
-        self.show_detail(expand=False)
+    def _keep_heading_checked(self) -> None:
+        self.backlog_tab.setChecked(True)
 
     def _on_rail_clicked(self) -> None:
         self.set_collapsed(False)
-
-    def _select_tab(self) -> None:
-        self.backlog_tab.setChecked(self._face == "backlog")
-        self.detail_tab.setChecked(self._face == "detail")
 
     def _on_grip_pressed(self) -> None:
         # Measured from the width at the press: ``set_panel_width`` may have changed it.
@@ -593,46 +541,6 @@ class SidePanel(QWidget):
         self._press_width = self._width
 
     # -- events -----------------------------------------------------------------
-
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
-        # Only the « Détail » face lands here: the cards and the rail handle their own drops.
-        payload = parse_task_mime(event.mimeData())
-        if (
-            payload is None
-            or self._collapsed
-            or self._face != "detail"
-            or not self.backlog.accepts_task(payload.task_id)
-        ):
-            event.ignore()
-            return
-        self.show_drop_overlay()
-        event.acceptProposedAction()
-
-    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:  # noqa: N802
-        # The drag may move onto the overlay, or leave or be cancelled before it gets there.
-        self.overlay.release_later()
-        event.accept()
-
-    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
-        payload = parse_task_mime(event.mimeData())
-        self.overlay.hide()
-        if payload is None:
-            event.ignore()
-            return
-        event.acceptProposedAction()
-        self.backlog.drop_task(payload.task_id)
-
-    def show_drop_overlay(self) -> None:
-        """Cover the open face with « Déposer ici pour renvoyer dans « À planifier » »."""
-        top = self.tabs_box.height()
-        self.overlay.setGeometry(self.open_box.x(), top, self.open_box.width(), self.height() - top)
-        self.overlay.show()
-        self.overlay.raise_()
-
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        if self.overlay.isVisible():
-            self.show_drop_overlay()
 
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802
         theme = current_theme()
