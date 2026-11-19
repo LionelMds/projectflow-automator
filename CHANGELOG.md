@@ -19,6 +19,13 @@
   projet, sous-designation et statut ; dessous, trois colonnes « Quoi » (type, notes),
   « Quand » (debut, fin, echeance, urgent, nuit) et « Qui » ; en pied, « Supprimer » a
   gauche, l'auteur, puis « Renvoyer a planifier », « Dupliquer » et « Fermer ».
+- Fiche dossier : le lien de la reference en A4 ouvre le dossier sur le poste, dans
+  l'Explorateur ou le Finder. Il nomme le dossier (`projectflow://dossier/2024-4493`) au lieu
+  de donner un chemin : ProjectFlow, installe sur le poste, le recoit et ouvre le dossier
+  sous la racine projets de ce poste, Windows ou macOS. Le lien relatif de la 0.1.82 menait
+  au navigateur, car Excel ouvre une fiche synchronisee par OneDrive sous son adresse web ;
+  il est remplace a la prochaine mise a jour du projet. Excel peut demander une confirmation
+  avant de suivre le lien.
 
 ## 0.1.82
 

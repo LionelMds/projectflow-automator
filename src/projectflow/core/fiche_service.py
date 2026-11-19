@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from openpyxl import load_workbook
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from projectflow.core.dossier_link import dossier_link
 from projectflow.core.excel_patch import CellEdits
 from projectflow.core.models import ProjectInput
 from projectflow.core.numero import (
@@ -132,7 +132,7 @@ class FicheService:
                 worksheet["C6"] = project.gere_par.strip()
             if user_initials.strip():
                 worksheet["C9"] = user_initials.strip()
-            _write_reference(worksheet, edits, fiche_path, project_dir, project.reference_number)
+            _write_reference(worksheet, edits, project.reference_number)
             self._write_creation_date(worksheet, overwrite=new_fiche)
             if new_fiche:
                 _clear_inherited_atelier_date(worksheet)
@@ -188,7 +188,7 @@ class FicheService:
                 worksheet["C6"] = project.gere_par.strip()
             if user_initials.strip():
                 worksheet["C9"] = user_initials.strip()
-            _write_reference(worksheet, edits, target_path, project_dir, project.reference_number)
+            _write_reference(worksheet, edits, project.reference_number)
             self._write_creation_date(worksheet, overwrite=fiche_created)
             if fiche_created:
                 _clear_inherited_atelier_date(worksheet)
@@ -243,15 +243,16 @@ def _clear_inherited_atelier_date(worksheet: Worksheet) -> None:
 def _write_reference(
     worksheet: Worksheet,
     edits: CellEdits,
-    fiche_path: Path,
-    project_dir: Path,
     reference: ProjectNumber | None,
 ) -> None:
     """Name the older dossier in A4 and link the cell to its folder.
 
-    Without a reference, A4 keeps its text. Only a link already there is rebuilt: a
-    sub-project fiche copied from its parent can sit one folder deeper, where the
-    copied link would point one level too high. An empty reference never clears A4.
+    The link names the dossier (``projectflow://dossier/2024-4493``), not a path: the
+    poste where it is clicked opens its own copy of the folder. See ``dossier_link``.
+
+    Without a reference, A4 keeps its text. Only a link already there is rebuilt, which
+    replaces the relative path written by version 0.1.82. An empty reference never
+    clears A4.
     """
     cell = worksheet[REFERENCE_CELL]
     if reference is None:
@@ -263,19 +264,9 @@ def _write_reference(
         cell.value = f"{REFERENCE_PREFIX} : {reference}"
     edits.set_hyperlink(
         REFERENCE_CELL,
-        _reference_link(fiche_path, project_dir, reference),
+        dossier_link(reference),
         tooltip=f"Ouvrir le dossier {project_folder_name(reference)}",
     )
-
-
-def _reference_link(fiche_path: Path, project_dir: Path, reference: ProjectNumber) -> str:
-    """Path from the fiche to the referenced folder, relative so it holds on every poste.
-
-    The projects root is synchronised under a different absolute path on each machine
-    (user name, macOS); dossiers always sit at ``<root>/<year>/<number>``.
-    """
-    reference_dir = project_dir.parent.parent / str(reference.year) / project_folder_name(reference)
-    return Path(os.path.relpath(reference_dir, fiche_path.parent)).as_posix()
 
 
 def _reference_text(value: object) -> str:

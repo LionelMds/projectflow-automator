@@ -48,6 +48,14 @@ Source: "..\..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
+[Registry]
+; A fiche names its reference dossier with a « projectflow://dossier/2024-4493 » link:
+; Windows hands such links to ProjectFlow, which opens the folder of this poste.
+Root: HKCU; Subkey: "Software\Classes\projectflow"; ValueType: string; ValueName: ""; ValueData: "URL:ProjectFlow"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\projectflow"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\projectflow\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"",0"
+Root: HKCU; Subkey: "Software\Classes\projectflow\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+
 [Run]
 ; Same reset as the in-app "Tout reinitialiser", run before the first start.
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--reset-all"; StatusMsg: "Reinitialisation de ProjectFlow..."; Tasks: cleaninstall; Flags: runhidden waituntilterminated

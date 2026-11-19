@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import plistlib
 import sys
 from pathlib import Path
 
 import pytest
 
-from projectflow.build import BuildSettings, detect_target, pyinstaller_command
+from projectflow import build
+from projectflow.build import (
+    BuildSettings,
+    declare_link_scheme,
+    detect_target,
+    pyinstaller_command,
+)
 
 
 def test_detect_target_windows() -> None:
@@ -73,3 +80,56 @@ def test_resources_are_added_with_platform_separator(tmp_path: Path) -> None:
     assert "--add-data" in command
     assert f"{ui_resources_dir};projectflow/ui/resources" in command
     assert f"{app_resources_dir};projectflow/resources" in command
+
+
+def test_macos_bundle_declares_the_projectflow_links(tmp_path: Path) -> None:
+    info_plist = tmp_path / "Info.plist"
+    with info_plist.open("wb") as stream:
+        plistlib.dump(
+            {
+                "CFBundleIdentifier": "ch.balzmetal.projectflow",
+                "CFBundleURLTypes": [{"CFBundleURLSchemes": ["autre"]}],
+            },
+            stream,
+        )
+
+    declare_link_scheme(info_plist)
+    declare_link_scheme(info_plist)
+
+    with info_plist.open("rb") as stream:
+        info = plistlib.load(stream)
+    assert info["CFBundleIdentifier"] == "ch.balzmetal.projectflow"
+    assert [url_type["CFBundleURLSchemes"] for url_type in info["CFBundleURLTypes"]] == [
+        ["autre"],
+        ["projectflow"],
+    ]
+
+
+def test_macos_build_declares_the_links_before_the_bundle_is_signed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    info_plist = tmp_path / "dist" / "ProjectFlow Automator.app" / "Contents" / "Info.plist"
+
+    def fake_pyinstaller(*_args: object, **_kwargs: object) -> None:
+        info_plist.parent.mkdir(parents=True)
+        with info_plist.open("wb") as stream:
+            plistlib.dump({"CFBundleName": "ProjectFlow Automator"}, stream)
+
+    monkeypatch.setattr(build.subprocess, "run", fake_pyinstaller)
+
+    build.run_pyinstaller(BuildSettings(project_root=tmp_path, target="macos"))
+
+    with info_plist.open("rb") as stream:
+        assert plistlib.load(stream)["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == ["projectflow"]
+
+
+def test_windows_build_leaves_the_link_declaration_to_the_installer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(build.subprocess, "run", lambda *_args, **_kwargs: None)
+
+    build.run_pyinstaller(BuildSettings(project_root=tmp_path, target="windows"))
+
+    assert not (tmp_path / "dist").exists()

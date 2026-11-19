@@ -319,11 +319,11 @@ def test_reference_link_is_added_without_losing_the_photo(tmp_path: Path) -> Non
     assert 'Id="rId1"' in relations
     assert "../drawings/drawing1.xml" in relations
     assert 'Id="rId2"' in relations
-    assert 'Target="../../2024/2024-4493" TargetMode="External"' in relations
+    assert 'Target="projectflow://dossier/2024-4493" TargetMode="External"' in relations
     workbook = load_workbook(fiche_path)
     worksheet = workbook["Fiche"]
     assert worksheet["A4"].value == "Réf. : 2024-4493"
-    assert worksheet["A4"].hyperlink.target == "../../2024/2024-4493"
+    assert worksheet["A4"].hyperlink.target == "projectflow://dossier/2024-4493"
     assert worksheet["A4"].font.underline == "single"
     assert worksheet["D3"].value == "Societe : Balz"
     assert worksheet["D3"].font.bold

@@ -42,6 +42,7 @@ from projectflow.core.planning.store import PlanningStore
 from projectflow.core.project_service import ProjectService
 from projectflow.core.repertoire_service import RepertoireRow, RepertoireService, RepertoireSnapshot
 from projectflow.core.sortie_service import SortieDossierService
+from projectflow.dossier_links import open_dossier_link
 from projectflow.exceptions import PrintError, ProjectFlowError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
@@ -1634,6 +1635,19 @@ class ProjectFlowController:
             self._error(str(exc))
             return
         self._log(f"+ Dossier projet ouvert: {project_dir}")
+
+    def open_dossier_link(self, link: str) -> None:
+        """Open the folder named by a « projectflow:// » link clicked in a fiche."""
+        try:
+            folder = open_dossier_link(
+                link,
+                self._config.paths.racine_projets,
+                open_folder=open_path,
+            )
+        except (ProjectFlowError, OSError) as exc:
+            self._error(str(exc))
+            return
+        self._log(f"+ Dossier ouvert depuis un lien: {folder}")
 
     def open_repertoire(self) -> None:
         repertoire = self._config.paths.repertoire_chantier

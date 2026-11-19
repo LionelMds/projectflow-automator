@@ -595,8 +595,18 @@ disponible, mais ses valeurs viennent uniquement du formulaire.
 Le champ `Référence`, a cote de `Sous-projet`, recoit le numero d'un ancien dossier, par
 exemple `2024-4493`. A la creation ou a la mise a jour, ProjectFlow inscrit `Réf. : 2024-4493`
 en A4 de la fiche, sous le numero de chantier, avec un lien qui ouvre le dossier de cet ancien
-projet. Le lien est relatif a la fiche (`../../2024/2024-4493`) : il fonctionne sur chaque poste
-ou le dossier des projets est synchronise, quel que soit son emplacement.
+projet.
+
+Le lien ne contient pas de chemin mais le numero du dossier (`projectflow://dossier/2024-4493`).
+Au clic, ProjectFlow ouvre ce dossier dans l'Explorateur ou le Finder, a partir de la racine
+projets configuree sur le poste : le meme lien fonctionne donc sur chaque poste Windows ou
+macOS, quel que soit l'emplacement de son OneDrive. ProjectFlow doit etre installe sur le
+poste ; il n'a pas besoin d'etre ouvert. Excel peut demander une confirmation avant de suivre
+le lien. Si le dossier est absent du poste, un message l'indique.
+
+Une fiche ecrite par la version 0.1.82 porte un lien relatif, qu'Excel ouvre dans le
+navigateur quand la fiche est synchronisee par OneDrive : `Mettre a jour le projet` le
+remplace par le nouveau lien.
 
 `Charger` relit la reference depuis A4. Un champ laisse vide ne retire pas une reference deja
 inscrite : pour la supprimer, vider A4 dans Excel. Si le dossier de l'ancien projet est

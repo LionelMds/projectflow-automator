@@ -19,6 +19,7 @@ from projectflow.auth.browser_sign_in import set_sign_in_prompt
 from projectflow.config import AppConfig
 from projectflow.core.planning.poste_config import PlanningPosteConfig
 from projectflow.demo import build_demo_environment
+from projectflow.dossier_links import DossierLinkEvents
 from projectflow.exceptions import ProjectFlowError
 from projectflow.logging import configure_logging, get_logger
 from projectflow.platform.single_instance import SingleInstanceGuard
@@ -64,6 +65,10 @@ def run(argv: Sequence[str]) -> int:
     app_icon = _application_icon()
     if app_icon is not None:
         app.setWindowIcon(app_icon)
+
+    # macOS sends a « projectflow:// » link clicked in a fiche as an event, at any time.
+    link_events = DossierLinkEvents(app)
+    app.installEventFilter(link_events)
 
     single_instance = SingleInstanceGuard(parent=app)
     if not single_instance.listen():
@@ -136,6 +141,7 @@ def run(argv: Sequence[str]) -> int:
     if tray is not None:
         logger.info("app.tray.enabled")
     single_instance.activation_requested.connect(lambda _command: controller.show_window())
+    link_events.deliver_to(controller.open_dossier_link)
     _show_at_start(window, controller, argv, has_tray=tray is not None)
     logger.info("app.started", version=__version__)
     # After the first paint: the planning reads its cache and its store in the background.

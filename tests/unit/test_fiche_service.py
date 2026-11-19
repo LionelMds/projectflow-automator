@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook, load_workbook
 
+from projectflow.core.dossier_link import parse_dossier_link
 from projectflow.core.fiche_service import FicheService, standard_fiche_path
 from projectflow.core.models import ProjectInput
 from projectflow.core.numero import parse_project_number
@@ -335,7 +336,7 @@ def _blank_fiche(path: Path, **cells: object) -> None:
     workbook.close()
 
 
-def test_fill_fiche_writes_reference_in_a4_with_relative_link(tmp_path: Path) -> None:
+def test_fill_fiche_writes_reference_in_a4_with_a_projectflow_link(tmp_path: Path) -> None:
     project_dir = tmp_path / "Clients" / "2026" / "2026-5271"
     _blank_fiche(project_dir / "modele fiche.xlsx")
     project = ProjectInput(
@@ -348,17 +349,17 @@ def test_fill_fiche_writes_reference_in_a4_with_relative_link(tmp_path: Path) ->
     workbook = load_workbook(fiche_path)
     cell = workbook.active["A4"]
     assert cell.value == "Réf. : 2024-4493"
-    assert cell.hyperlink.target == "../../2024/2024-4493"
+    # Names the dossier, not a path: each poste opens its own copy of the folder.
+    assert cell.hyperlink.target == "projectflow://dossier/2024-4493"
+    assert cell.hyperlink.tooltip == "Ouvrir le dossier 2024-4493"
     assert cell.hyperlink.ref == "A4"
     assert cell.font.underline == "single"
     workbook.close()
-    assert (fiche_path.parent / cell.hyperlink.target).resolve() == (
-        tmp_path / "Clients" / "2024" / "2024-4493"
-    )
+    assert parse_dossier_link(cell.hyperlink.target) == parse_project_number("2024-4493")
     assert FicheService().read_fiche(fiche_path).reference == "2024-4493"
 
 
-def test_fill_fiche_links_a_subproject_reference_to_its_parent_folder(tmp_path: Path) -> None:
+def test_fill_fiche_links_a_subproject_reference_by_its_full_number(tmp_path: Path) -> None:
     project_dir = tmp_path / "Clients" / "2026" / "2026-5271"
     _blank_fiche(project_dir / "modele fiche.xlsx")
     project = ProjectInput(
@@ -370,7 +371,8 @@ def test_fill_fiche_links_a_subproject_reference_to_its_parent_folder(tmp_path: 
 
     workbook = load_workbook(fiche_path)
     assert workbook.active["A4"].value == "Réf. : 2024-4493-2"
-    assert workbook.active["A4"].hyperlink.target == "../../2024/2024-4493"
+    assert workbook.active["A4"].hyperlink.target == "projectflow://dossier/2024-4493-2"
+    assert workbook.active["A4"].hyperlink.tooltip == "Ouvrir le dossier 2024-4493"
     workbook.close()
 
 
@@ -388,7 +390,7 @@ def test_fill_fiche_without_reference_keeps_the_existing_one(tmp_path: Path) -> 
 
     workbook = load_workbook(fiche_path)
     assert workbook.active["A4"].value == "Réf. : 2024-4493"
-    assert workbook.active["A4"].hyperlink.target == "../../2024/2024-4493"
+    assert workbook.active["A4"].hyperlink.target == "projectflow://dossier/2024-4493"
     workbook.close()
 
 
@@ -408,7 +410,27 @@ def test_fill_fiche_without_reference_leaves_a4_alone(tmp_path: Path, content: s
     assert FicheService().read_fiche(fiche_path).reference == ""
 
 
-def test_subproject_fiche_copied_one_folder_deeper_rebuilds_the_reference_link(
+def test_relative_link_of_an_older_version_becomes_a_projectflow_link(tmp_path: Path) -> None:
+    # Version 0.1.82 wrote a path relative to the fiche, which Excel resolves against
+    # the web address of a synchronised workbook.
+    project_dir = tmp_path / "Clients" / "2026" / "2026-5271"
+    number = parse_project_number("2026-5271")
+    fiche_path = standard_fiche_path(project_dir, number)
+    _blank_fiche(fiche_path, A4="Réf. : 2024-4493")
+    workbook = load_workbook(fiche_path)
+    workbook.active["A4"].hyperlink = "../../2024/2024-4493"
+    workbook.save(fiche_path)
+    workbook.close()
+
+    FicheService().fill_fiche(project_dir, ProjectInput(number=number, designation="Paroi"))
+
+    workbook = load_workbook(fiche_path)
+    assert workbook.active["A4"].value == "Réf. : 2024-4493"
+    assert workbook.active["A4"].hyperlink.target == "projectflow://dossier/2024-4493"
+    workbook.close()
+
+
+def test_subproject_fiche_copied_from_its_parent_keeps_the_reference_link(
     tmp_path: Path,
 ) -> None:
     project_dir = tmp_path / "Clients" / "2026" / "2026-5271"
@@ -429,7 +451,7 @@ def test_subproject_fiche_copied_one_folder_deeper_rebuilds_the_reference_link(
     assert fiche_path.parent == project_dir / "2026-5271-2"
     workbook = load_workbook(fiche_path)
     assert workbook.active["A4"].value == "Réf. : 2024-4493"
-    assert workbook.active["A4"].hyperlink.target == "../../../2024/2024-4493"
+    assert workbook.active["A4"].hyperlink.target == "projectflow://dossier/2024-4493"
     workbook.close()
 
 

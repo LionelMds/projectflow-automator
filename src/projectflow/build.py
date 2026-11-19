@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -11,7 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
+from projectflow.core.dossier_link import LINK_SCHEME
+
 BuildTarget = Literal["windows", "macos"]
+MACOS_APP_NAME = "ProjectFlow Automator"
+MACOS_BUNDLE_IDENTIFIER = "ch.balzmetal.projectflow"
 
 
 @dataclass(frozen=True)
@@ -79,9 +84,9 @@ def pyinstaller_command(settings: BuildSettings) -> list[str]:
             [
                 "--onedir",
                 "--name",
-                "ProjectFlow Automator",
+                MACOS_APP_NAME,
                 "--osx-bundle-identifier",
-                "ch.balzmetal.projectflow",
+                MACOS_BUNDLE_IDENTIFIER,
             ],
         )
         _append_icon(command, source_root / "projectflow" / "ui" / "resources" / "icon.icns")
@@ -92,6 +97,36 @@ def pyinstaller_command(settings: BuildSettings) -> list[str]:
 
 def run_pyinstaller(settings: BuildSettings) -> None:
     subprocess.run(pyinstaller_command(settings), cwd=settings.project_root, check=True)
+    if settings.target == "macos":
+        # Before the bundle is signed: the signature covers Info.plist.
+        declare_link_scheme(
+            settings.project_root / "dist" / f"{MACOS_APP_NAME}.app" / "Contents" / "Info.plist",
+        )
+
+
+def declare_link_scheme(info_plist: Path) -> None:
+    """Tell macOS that this application opens « projectflow:// » links.
+
+    PyInstaller's command line cannot add keys to Info.plist. The Windows installer
+    declares the same scheme in the registry.
+    """
+    with info_plist.open("rb") as stream:
+        info = plistlib.load(stream)
+    url_types = [
+        url_type
+        for url_type in info.get("CFBundleURLTypes", [])
+        if LINK_SCHEME not in url_type.get("CFBundleURLSchemes", [])
+    ]
+    url_types.append(
+        {
+            "CFBundleURLName": f"{MACOS_BUNDLE_IDENTIFIER}.dossier",
+            "CFBundleTypeRole": "Viewer",
+            "CFBundleURLSchemes": [LINK_SCHEME],
+        },
+    )
+    info["CFBundleURLTypes"] = url_types
+    with info_plist.open("wb") as stream:
+        plistlib.dump(info, stream)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

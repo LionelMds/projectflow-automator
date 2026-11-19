@@ -758,6 +758,51 @@ def test_controller_open_folder_for_subproject_uses_parent_project_directory(
     assert project_creation_post_actions["opened"] == [project_dir]
 
 
+def test_controller_opens_the_folder_named_by_a_link(
+    qtbot: Any,
+    tmp_path: Path,
+    project_creation_post_actions: dict[str, list[Any]],
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    project_dir = config.paths.racine_projets / "2024" / "2024-4493"
+    project_dir.mkdir(parents=True)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.open_dossier_link("projectflow://dossier/2024-4493")
+
+    assert project_creation_post_actions["opened"] == [project_dir]
+    assert "Dossier ouvert depuis un lien" in window.creation_tab.logs.toPlainText()
+
+
+def test_controller_tells_when_a_link_names_a_missing_folder(
+    qtbot: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_creation_post_actions: dict[str, list[Any]],
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    shown: list[str] = []
+    monkeypatch.setattr(
+        "PySide6.QtWidgets.QMessageBox.critical",
+        lambda *args: shown.append(args[2]),
+    )
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+
+    controller.open_dossier_link("projectflow://dossier/2024-4493")
+
+    assert project_creation_post_actions["opened"] == []
+    assert len(shown) == 1
+    assert "2024-4493 introuvable" in shown[0]
+
+
 def test_controller_open_repertoire_uses_default_app(
     qtbot: Any,
     tmp_path: Path,
