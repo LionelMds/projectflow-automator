@@ -40,10 +40,11 @@ from projectflow.core.planning.poste_config import (
 )
 from projectflow.core.planning.store import PlanningStore
 from projectflow.core.project_service import ProjectService
+from projectflow.core.project_years import ProjectYearIndex, split_typed_number
 from projectflow.core.repertoire_service import RepertoireRow, RepertoireService, RepertoireSnapshot
 from projectflow.core.sortie_service import SortieDossierService
 from projectflow.dossier_links import open_dossier_link
-from projectflow.exceptions import PrintError, ProjectFlowError
+from projectflow.exceptions import PrintError, ProjectFlowError, ProjectNumberError
 from projectflow.graph.client import GraphClient
 from projectflow.graph.planner import GraphPlannerClient
 from projectflow.graph.workbook_opening import excel_document_uri
@@ -75,6 +76,7 @@ from projectflow.ui.widgets.planner import (
     PlannerMemberOption,
     PlannerSelectionWidget,
 )
+from projectflow.ui.widgets.project_number import ProjectNumberEdit
 from projectflow.updates import (
     GitHubReleaseChecker,
     InstallPlan,
@@ -223,6 +225,10 @@ class ProjectFlowController:
         self._client_directories: dict[int, ClientDirectory] = {}
         self._client_directory_loading: set[int] = set()
         self._client_directory_failed: set[int] = set()
+        # The year of a number « XXXX », shared by every number field of the window.
+        self._years = ProjectYearIndex()
+        self._sheet_years_task: asyncio.Task[tuple[int, ...]] | None = None
+        self._year_lookups: set[str] = set()
         self._sortie_service = SortieDossierService(self._services.fiche())
         self._sortie_project_dir: Path | None = None
         self._sortie_number: ProjectNumber | None = None
@@ -328,6 +334,12 @@ class ProjectFlowController:
             lambda: self._request_client_suggestions(tab),
         )
         self._window.settings_requested.connect(self.open_settings)
+        for edit in self._number_edits():
+            edit.set_year_lookup(self._year_of)
+            edit.year_lookup_requested.connect(self._request_year_lookup)
+        self._window.repertoire_tab.number_search_requested.connect(
+            lambda text: self._schedule_task(self._find_in_repertoire(text)),
+        )
         self._window.microsoft_sign_in_requested.connect(
             lambda: self._schedule_task(self.reconnect_microsoft()),
         )
@@ -360,6 +372,7 @@ class ProjectFlowController:
     def _planning_hooks(self) -> PlanningHooks:
         return PlanningHooks(
             read_repertoire=self._read_snapshot,
+            year_of=self._year_of,
             open_project_dir=self.open_project_dir,
             open_fiche=self._deferred(self.open_project_fiche),
             show_in_repertoire=self.show_in_repertoire,
@@ -744,12 +757,108 @@ class ProjectFlowController:
         key = (self._repertoire_generation, year)
         task = self._snapshot_tasks.get(key)
         if task is None:
-            task = asyncio.create_task(self._services.repertoire().read_snapshot(year=year))
+            task = asyncio.create_task(self._read_and_learn(year))
             self._snapshot_tasks[key] = task
             task.add_done_callback(
                 lambda completed: self._finish_read(self._snapshot_tasks, key, completed),
             )
         return await asyncio.shield(task)
+
+    async def _read_and_learn(self, year: int) -> RepertoireSnapshot:
+        snapshot = await self._services.repertoire().read_snapshot(year=year)
+        self._years.learn(year, (row.number for row in snapshot.rows))
+        return snapshot
+
+    # ------------------------------------------------ years of the numbers ----
+
+    def _number_edits(self) -> tuple[ProjectNumberEdit, ...]:
+        creation = self._window.creation_tab
+        return (
+            creation.project_id_edit,
+            creation.reference_edit,
+            self._window.sortie_tab.project_id_edit,
+        )
+
+    def _year_of(self, project_id: str) -> int | None:
+        """Year of the dossier « XXXX » from what is known, without reading anything."""
+        self._years.set_projects_root(self._config.paths.racine_projets)
+        return self._years.year_of(project_id)
+
+    async def _sheet_years(self) -> tuple[int, ...]:
+        """Years of the répertoire sheets (read once per connection), most recent first."""
+        if self._years.sheet_years:
+            return self._years.sheet_years
+        task = self._sheet_years_task
+        if task is None or task.done():
+            task = asyncio.create_task(self._services.repertoire().list_years())
+            self._sheet_years_task = task
+        years = await asyncio.shield(task)
+        self._years.set_sheet_years(years)
+        self._window.repertoire_tab.set_years(years)
+        return self._years.sheet_years
+
+    async def _find_year(self, project_id: str) -> int | None:
+        """Year of ``project_id``, reading the répertoire sheets not read yet (newest first)."""
+        found = self._year_of(project_id)
+        if found is not None:
+            return found
+        try:
+            years = await self._sheet_years()
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            get_logger(__name__).info("repertoire.years.unlisted", error=type(exc).__name__)
+            return None
+        for year in years:
+            if self._years.has_read(year):
+                continue
+            try:
+                await self._read_snapshot(year)
+            except (ProjectFlowError, ValueError, OSError):
+                continue
+            found = self._year_of(project_id)
+            if found is not None:
+                return found
+        return None
+
+    def _request_year_lookup(self, project_id: str) -> None:
+        if project_id in self._year_lookups or self._closing:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return  # No event loop yet (start-up, tests): the action looks the year up.
+        self._year_lookups.add(project_id)
+        self._schedule_task(self._lookup_year(project_id))
+
+    async def _lookup_year(self, project_id: str) -> None:
+        try:
+            await self._find_year(project_id)
+        finally:
+            self._year_lookups.discard(project_id)
+        for edit in self._number_edits():
+            edit.refresh_year()
+
+    async def _resolve_typed_number(self, text: str) -> ProjectNumber:
+        """Return the number of « XXXX » or « 20YY-XXXX », reading the répertoire if needed."""
+        typed = split_typed_number(text)
+        if typed.year is None and typed.project_id.isdigit():
+            await self._find_year(typed.project_id)
+        self._years.set_projects_root(self._config.paths.racine_projets)
+        return self._years.resolve(text)
+
+    async def _complete_number_fields(self) -> None:
+        """Find the years still unknown in the fields before an action reads them."""
+        for edit in self._number_edits():
+            if edit.typed_text() and edit.year() is None and edit.project_id().isdigit():
+                await self._find_year(edit.project_id())
+                edit.refresh_year()
+
+    async def _find_in_repertoire(self, text: str) -> None:
+        try:
+            number = await self._resolve_typed_number(text)
+        except (ProjectFlowError, ValueError) as exc:
+            self._window.repertoire_tab.set_status_message(str(exc))
+            return
+        await self._show_in_repertoire(number)
 
     @staticmethod
     def _finish_read(
@@ -765,6 +874,7 @@ class ProjectFlowController:
             task.exception()
 
     def _invalidate_repertoire_data(self) -> None:
+        # The years of the numbers stay known: a number never changes its year.
         self._repertoire_generation += 1
         self._client_directories.clear()
         self._client_directory_loading.clear()
@@ -859,6 +969,7 @@ class ProjectFlowController:
 
     @_exclusive_action
     async def create_project(self) -> None:
+        await self._complete_number_fields()
         try:
             project = self._project_from_form()
             self._window.creation_tab.show_operation_progress(
@@ -903,6 +1014,7 @@ class ProjectFlowController:
 
     @_exclusive_action
     async def update_project(self) -> None:
+        await self._complete_number_fields()
         try:
             project = self._project_from_form()
             result = await self._services.project().update_project(project)
@@ -917,30 +1029,50 @@ class ProjectFlowController:
         await self._print_saved_fiche(result, project.number)
 
     async def next_available(self) -> None:
+        """Put the next free number of the répertoire in the form, whatever year it shows.
+
+        The free row is looked for in the sheet of the current year (or one already
+        prepared after it), never in the year typed: an older sheet only has numbers
+        skipped long ago.
+        """
         generation = self._repertoire_generation
-        requested_year = self._window.creation_tab.data().year
+        tab = self._window.creation_tab
+        requested = tab.project_id_edit.number_text()
         try:
-            year = int(requested_year)
-            snapshot = await self._read_snapshot(year)
-        except (ProjectFlowError, ValueError) as exc:
-            self._error(str(exc))
+            years = await self._sheet_years()
+            snapshot = await self._current_next_available(years)
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            self._error(redact_sensitive_links(str(exc)))
             return
-        if (
-            generation != self._repertoire_generation
-            or requested_year != self._window.creation_tab.data().year
+        if generation != self._repertoire_generation or requested != (
+            tab.project_id_edit.number_text()
         ):
+            return
+        if snapshot is None or snapshot.next_available is None:
+            self._log("! Aucun numero disponible trouve dans le repertoire de l'annee en cours")
             return
         self._remember_client_directory(snapshot.year, snapshot.rows)
         result = snapshot.next_available
-        if result is None:
-            self._log("! Aucun numero disponible trouve")
-            return
-        self._window.creation_tab.set_project_identity(
+        tab.set_project_identity(
             year=str(result.number.year),
             project_id=result.number.project_id,
         )
         self._save_config_if_available()
         self._log(f"+ Numero disponible: {result.number}")
+
+    async def _current_next_available(self, years: Sequence[int]) -> RepertoireSnapshot | None:
+        """Sheet holding the next free number: this year's, a later one, else the last one."""
+        this_year = date.today().year
+        later = sorted(year for year in years if year > this_year)
+        older = [year for year in years if year < this_year]
+        order = [*([this_year] if this_year in years else []), *later]
+        if not order and older:
+            order = [max(older)]
+        for year in order:
+            snapshot = await self._read_snapshot(year)
+            if snapshot.next_available is not None:
+                return snapshot
+        return None
 
     def _on_tab_changed(self, index: int) -> None:
         self._update_planning_visibility()
@@ -955,16 +1087,18 @@ class ProjectFlowController:
         if self._repertoire_loading_generation == self._repertoire_generation or self._closing:
             return
         tab = self._window.repertoire_tab
-        try:
-            year = tab.year()
-        except ValueError:
-            tab.set_error("L'année doit être un nombre valide.")
-            return
         generation = self._repertoire_generation
         self._repertoire_loading_generation = generation
         self._repertoire_load_task = asyncio.current_task()
         tab.set_loading(loading=True)
+        year: int | None = None
         try:
+            await self._offer_sheet_years()
+            try:
+                year = tab.year()
+            except ValueError:
+                tab.set_error("Aucune feuille d'année dans le répertoire.")
+                return
             snapshot = await self._read_snapshot(year)
         except (ProjectFlowError, ValueError, OSError) as exc:
             if generation == self._repertoire_generation:
@@ -980,11 +1114,37 @@ class ProjectFlowController:
                 self._repertoire_loading_generation = None
                 tab.set_loading(loading=False)
 
-    def _request_client_suggestions(self, target: ClientSuggestionsTarget) -> None:
+    async def _offer_sheet_years(self) -> None:
+        """Offer every sheet in the répertoire tab; show the current year when it has one."""
+        tab = self._window.repertoire_tab
         try:
-            year = int(target.data().year)
-        except ValueError:
+            years = await self._sheet_years()
+        except (ProjectFlowError, ValueError, OSError) as exc:
+            get_logger(__name__).info("repertoire.years.unlisted", error=type(exc).__name__)
             return
+        if not years:
+            return
+        try:
+            shown: int | None = tab.year()
+        except ValueError:
+            shown = None
+        if shown not in years:
+            this_year = date.today().year
+            tab.set_year(max((year for year in years if year <= this_year), default=years[-1]))
+
+    def _suggestion_year(self, target: ClientSuggestionsTarget) -> int:
+        """Sheet whose clients are suggested: the dossier's, else the current one."""
+        try:
+            return int(target.data().year)
+        except ValueError:
+            pass
+        this_year = date.today().year
+        return max(
+            (year for year in self._years.sheet_years if year <= this_year), default=this_year
+        )
+
+    def _request_client_suggestions(self, target: ClientSuggestionsTarget) -> None:
+        year = self._suggestion_year(target)
         cached = self._client_directories.get(year)
         if cached is not None:
             target.set_client_directory(cached)
@@ -1020,10 +1180,7 @@ class ProjectFlowController:
         self._apply_cached_client_directory(self._window.creation_tab)
 
     def _apply_cached_client_directory(self, target: ClientSuggestionsTarget) -> None:
-        try:
-            year = int(target.data().year)
-        except ValueError:
-            return
+        year = self._suggestion_year(target)
         directory = self._client_directories.get(year, ClientDirectory.from_repertoire_rows(()))
         target.set_client_directory(directory)
 
@@ -1402,7 +1559,9 @@ class ProjectFlowController:
         tab.set_loading(loading=True)
         try:
             year, project_id = tab.project_identity()
-            number = _parse_sortie_number(year, project_id)
+            number = await self._resolve_typed_number(
+                f"{year}-{project_id}" if year else project_id,
+            )
             root = self._config.paths.racine_projets
             if root is None:
                 self._output_error("Racine projets non configuree.")
@@ -1431,7 +1590,9 @@ class ProjectFlowController:
         tab = self._window.sortie_tab
         year, project_id = tab.project_identity()
         try:
-            number = _parse_sortie_number(year, project_id)
+            number = await self._resolve_typed_number(
+                f"{year}-{project_id}" if year else project_id,
+            )
         except (ProjectFlowError, ValueError) as exc:
             self._output_error(str(exc))
             return
@@ -1928,6 +2089,8 @@ class ProjectFlowController:
     def _reset_repertoire_connection(self) -> None:
         if isinstance(self._services, ServiceContainer):
             self._services.reset_repertoire()
+        self._years.clear()
+        self._sheet_years_task = None
         self._invalidate_repertoire_data()
 
     def _reset_planner_connection(self) -> None:
@@ -2159,9 +2322,7 @@ class ProjectFlowController:
         return self._project_from_data(data)
 
     def _project_from_data(self, data: CreationFormData) -> ProjectInput:
-        number = parse_project_number(
-            format_project_number(data.year, data.project_id, data.subproject_id),
-        )
+        number = self._form_number(data)
         return ProjectInput(
             number=number,
             designation=data.designation,
@@ -2177,7 +2338,7 @@ class ProjectFlowController:
             ),
             add_solidworks=data.add_solidworks,
             add_autocad=data.add_autocad,
-            reference_number=_reference_number(data.reference, number),
+            reference_number=self._reference_number(data.reference, number),
         )
 
     def _log_missing_reference(self, project: ProjectInput) -> None:
@@ -2196,8 +2357,38 @@ class ProjectFlowController:
             )
 
     def _number_from_form(self) -> str:
-        data = self._window.creation_tab.data()
-        return format_project_number(data.year, data.project_id, data.subproject_id)
+        return str(self._form_number(self._window.creation_tab.data()))
+
+    def _form_number(self, data: CreationFormData) -> ProjectNumber:
+        """Return the number of the form, its year looked up when the field lacks it."""
+        if not data.project_id:
+            raise ProjectNumberError("Saisissez un numéro de dossier (20YY-XXXX).")
+        if data.year:
+            return parse_project_number(
+                format_project_number(data.year, data.project_id, data.subproject_id),
+            )
+        self._years.set_projects_root(self._config.paths.racine_projets)
+        parent = self._years.resolve(data.project_id)
+        return parse_project_number(
+            format_project_number(parent.year, parent.project_id, data.subproject_id),
+        )
+
+    def _reference_number(self, text: str, number: ProjectNumber) -> ProjectNumber | None:
+        """Return the older dossier typed in « Référence », or None when the field is empty."""
+        if not text.strip():
+            return None
+        try:
+            self._years.set_projects_root(self._config.paths.racine_projets)
+            reference = self._years.resolve(text)
+        except ProjectFlowError as exc:
+            if split_typed_number(text).project_id.isdigit():
+                raise ValueError(f"Référence : {exc}") from exc
+            raise ValueError(
+                "La référence doit être un numéro de dossier, par exemple 2024-4493.",
+            ) from exc
+        if reference == number:
+            raise ValueError("La référence doit désigner un autre dossier que celui du formulaire.")
+        return reference
 
     def _project_dir(self, number: object) -> Path:
         root = self._config.paths.racine_projets
@@ -2483,21 +2674,6 @@ def _cad_summary(result: ProjectCreationResult) -> str:
     return summary
 
 
-def _reference_number(text: str, number: ProjectNumber) -> ProjectNumber | None:
-    """Return the older dossier typed in « Référence », or None when the field is empty."""
-    if not text.strip():
-        return None
-    try:
-        reference = parse_project_number(text)
-    except ProjectFlowError as exc:
-        raise ValueError(
-            "La référence doit être un numéro de dossier, par exemple 2024-4493.",
-        ) from exc
-    if reference == number:
-        raise ValueError("La référence doit désigner un autre dossier que celui du formulaire.")
-    return reference
-
-
 def _non_empty_changed(current: str, existing: str) -> bool:
     normalized_current = current.strip()
     if not normalized_current:
@@ -2541,13 +2717,6 @@ def _project_deletion_rows(
         return tuple(row for row in rows if row.number == str(number))
     prefix = f"{number}-"
     return tuple(row for row in rows if row.number == str(number) or row.number.startswith(prefix))
-
-
-def _parse_sortie_number(year: str, project_id: str) -> ProjectNumber:
-    raw_project_id = project_id.strip()
-    if "-" in raw_project_id:
-        return parse_project_number(raw_project_id)
-    return parse_project_number(format_project_number(year, raw_project_id))
 
 
 def _update_prompt_text(version: str, release_notes: str) -> str:

@@ -183,7 +183,8 @@ def test_creation_tab_uses_expanding_field_widths(qtbot) -> None:  # type: ignor
     qtbot.addWidget(tab)
 
     assert tab.minimumWidth() >= 760
-    assert tab.project_id_edit.minimumWidth() > tab.year_combo.minimumWidth()
+    assert tab.project_id_edit.minimumWidth() >= 170
+    assert tab.project_id_edit.placeholderText() == "XXXX"
     assert tab.designation_edit.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
 
 
@@ -214,9 +215,7 @@ def test_creation_tab_normalizes_company_and_filters_contacts(qtbot) -> None:  #
 def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # type: ignore[no-untyped-def]
     tab = CreationTab()
     qtbot.addWidget(tab)
-    tab.year_combo.addItem("2026")
-    tab.year_combo.setCurrentText("2026")
-    tab.project_id_edit.setText("4995")
+    tab.project_id_edit.setText("2026-4995")
     tab.subproject_edit.setText("2")
     tab.reference_edit.setText("2024-4493")
     tab.designation_edit.setText("Escalier")
@@ -229,8 +228,8 @@ def test_creation_tab_reset_button_clears_form_fields_only(qtbot) -> None:  # ty
 
     tab.reset_button.click()
 
-    assert tab.year_combo.currentText() == "2026"
     assert tab.project_id_edit.text() == ""
+    assert tab.project_id_edit.year() is None
     assert tab.subproject_edit.text() == ""
     assert tab.reference_edit.text() == ""
     assert tab.designation_edit.text() == ""
@@ -261,10 +260,11 @@ def test_creation_tab_can_apply_form_data(qtbot) -> None:  # type: ignore[no-unt
         ),
     )
 
-    assert tab.year_combo.currentText() == "2027"
+    assert tab.project_id_edit.year() == 2027
     assert tab.project_id_edit.text() == "6001"
     assert tab.subproject_edit.text() == "2"
-    assert tab.reference_edit.text() == "2024-4493"
+    assert tab.reference_edit.text() == "4493"
+    assert tab.reference_edit.year() == 2024
     assert tab.data().reference == "2024-4493"
     assert tab.designation_edit.text() == "Escalier rapide"
     assert tab.societe_edit.text() == "Balz"

@@ -50,10 +50,13 @@ def qasync_loop(qapp: Any) -> Iterator[QEventLoop]:
 
 
 class SignInFailedRepertoire:
-    """2025 fails like a refused Microsoft sign-in; 2026 waits until released."""
+    """Listing the sheets fails like a refused Microsoft sign-in; 2026 waits until released."""
 
     def __init__(self) -> None:
         self.release = asyncio.Event()
+
+    async def list_years(self) -> tuple[int, ...]:
+        raise AuthError("Connexion Microsoft refusee.")
 
     async def read_snapshot(self, *, year: int) -> RepertoireSnapshot:
         if year == 2025:

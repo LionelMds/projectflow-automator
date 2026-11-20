@@ -37,6 +37,9 @@ class ControlledRepertoire:
         self.entered: asyncio.Queue[int] = asyncio.Queue()
         self.releases: list[asyncio.Event] = []
 
+    async def list_years(self) -> tuple[int, ...]:
+        return (2026,)
+
     async def read_snapshot(self, *, year: int) -> RepertoireSnapshot:
         index = len(self.calls)
         self.calls.append(year)

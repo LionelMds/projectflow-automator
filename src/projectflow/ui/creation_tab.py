@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from projectflow.config import CadConfig, PlannerConfig
 from projectflow.core.client_directory import ClientDirectory
+from projectflow.core.project_years import split_typed_number
 from projectflow.ui.theme import current_theme, theme_notifier
 from projectflow.ui.widgets.cad import CadOptionsWidget
 from projectflow.ui.widgets.client_autocomplete import ClientAutocomplete
@@ -44,6 +44,7 @@ from projectflow.ui.widgets.planner import (
     PlannerTaskFormData,
     default_assignees,
 )
+from projectflow.ui.widgets.project_number import ProjectNumberEdit
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,9 +89,11 @@ class CreationTab(QWidget):
     def data(self) -> CreationFormData:
         add_solidworks, add_autocad = self.cad_options.values()
         return CreationFormData(
-            year=self.year_combo.currentText().strip(),
-            project_id=self.project_id_edit.text().strip(),
-            subproject_id=self.subproject_edit.text().strip(),
+            year=str(self.project_id_edit.year() or ""),
+            project_id=self.project_id_edit.project_id(),
+            subproject_id=(
+                self.subproject_edit.text().strip() or self.project_id_edit.subproject_id()
+            ),
             designation=self.designation_edit.text().strip(),
             societe=self.societe_edit.text().strip(),
             contact=self.contact_edit.text().strip(),
@@ -99,17 +102,15 @@ class CreationTab(QWidget):
             planner=self.planner_widget.data(),
             add_solidworks=add_solidworks,
             add_autocad=add_autocad,
-            reference=self.reference_edit.text().strip(),
+            reference=self.reference_edit.number_text(),
         )
 
     def set_project_identity(self, *, year: str, project_id: str, subproject_id: str = "") -> None:
-        index = self.year_combo.findText(year)
-        if index >= 0:
-            self.year_combo.setCurrentIndex(index)
-        else:
-            self.year_combo.addItem(year)
-            self.year_combo.setCurrentText(year)
-        self.project_id_edit.setText(project_id)
+        """Show a dossier number; ``year`` may be empty: it is then looked up."""
+        text = project_id.strip()
+        if text and year.strip() and split_typed_number(text).year is None:
+            text = f"{year.strip()}-{text}"
+        self.project_id_edit.set_number(text)
         self.subproject_edit.setText(subproject_id)
 
     def set_form_data(self, data: CreationFormData) -> None:
@@ -243,7 +244,7 @@ class CreationTab(QWidget):
 
         for edit in (self.project_id_edit, self.subproject_edit, self.designation_edit):
             edit.textChanged.connect(self._refresh_headline)
-        self.year_combo.currentTextChanged.connect(self._refresh_headline)
+        self.project_id_edit.number_changed.connect(self._refresh_headline)
         self._refresh_headline()
         self._render_logs()
 
@@ -266,29 +267,23 @@ class CreationTab(QWidget):
         section.box.addWidget(section_heading("01", "Identification"))
         row = QHBoxLayout()
         row.setSpacing(10)
-        self.year_combo = QComboBox()
-        self.year_combo.setEditable(True)
-        self.year_combo.setFixedWidth(110)
-        self.project_id_edit = QLineEdit()
-        self.project_id_edit.setPlaceholderText("4995")
-        self.project_id_edit.setMinimumWidth(140)
+        self.project_id_edit = ProjectNumberEdit()
+        self.project_id_edit.setMinimumWidth(170)
         self.subproject_edit = QLineEdit()
         self.subproject_edit.setPlaceholderText("Optionnel")
         self.next_button = button("Suivant disponible")
         self.next_button.clicked.connect(self.next_available_requested.emit)
-        row.addWidget(caption_field("Année", self.year_combo))
         row.addWidget(caption_field("Numéro", self.project_id_edit), 1)
         subproject = caption_field("Sous-projet", self.subproject_edit)
         subproject.setFixedWidth(120)
         row.addWidget(subproject)
-        self.reference_edit = QLineEdit()
-        self.reference_edit.setPlaceholderText("2024-4493")
+        self.reference_edit = ProjectNumberEdit()
         self.reference_edit.setToolTip(
-            "Ancien dossier servant de référence, par exemple 2024-4493. "
-            "Il est inscrit en A4 de la fiche avec un lien vers son dossier.",
+            "Ancien dossier servant de référence : tapez son numéro, l'année est "
+            "retrouvée. Il est inscrit en A4 de la fiche avec un lien vers son dossier.",
         )
         reference = caption_field("Référence", self.reference_edit)
-        reference.setFixedWidth(140)
+        reference.setFixedWidth(160)
         row.addWidget(reference)
         row.addWidget(self.next_button, 0, Qt.AlignmentFlag.AlignBottom)
         section.box.addLayout(row)
@@ -489,7 +484,11 @@ class CreationTab(QWidget):
         if not project_id:
             self.headline_label.setText("Nouveau projet")
             return
-        number = f"{self.year_combo.currentText().strip()}-{project_id}"
+        number = (
+            self.project_id_edit.number_text()
+            if self.project_id_edit.year()
+            else (f"20YY-{project_id}")
+        )
         subproject = self.subproject_edit.text().strip()
         if subproject:
             number = f"{number}-{subproject}"

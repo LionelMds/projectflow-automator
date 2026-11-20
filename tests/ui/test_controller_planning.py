@@ -122,6 +122,9 @@ class FakeRepertoire:
     def __init__(self) -> None:
         self.reads: list[int] = []
 
+    async def list_years(self) -> tuple[int, ...]:
+        return (2026,)
+
     async def read_snapshot(self, *, year: int) -> RepertoireSnapshot:
         self.reads.append(year)
         return RepertoireSnapshot(
@@ -405,7 +408,7 @@ async def test_prepare_sortie_hook_fills_and_loads_the_sortie_tab(
     await _drain(setup.controller)
 
     assert setup.window.tabs.currentWidget() is setup.window.sortie_tab
-    assert loads == [("2026", NUMBER)]
+    assert loads == [("2026", NUMBER.removeprefix("2026-"))]
 
 
 def test_open_settings_hook_shows_the_planning_section(

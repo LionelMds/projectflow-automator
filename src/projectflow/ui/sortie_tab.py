@@ -6,12 +6,10 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QComboBox,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListView,
     QListWidget,
     QListWidgetItem,
@@ -22,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from projectflow.core.project_years import split_typed_number
 from projectflow.core.sortie_service import OutputCandidate, OutputInventory, SortieSelection
 from projectflow.ui.widgets.industry import (
     META_ROLE,
@@ -34,6 +33,7 @@ from projectflow.ui.widgets.industry import (
     rule,
     section_heading,
 )
+from projectflow.ui.widgets.project_number import ProjectNumberEdit
 
 
 class SortieDossierTab(QWidget):
@@ -55,13 +55,11 @@ class SortieDossierTab(QWidget):
         self.create_output_button.setEnabled(not loading and bool(self._inventory.fiches))
 
     def set_project_identity(self, *, year: str, project_id: str) -> None:
-        index = self.year_combo.findText(year)
-        if index >= 0:
-            self.year_combo.setCurrentIndex(index)
-        elif year:
-            self.year_combo.addItem(year)
-            self.year_combo.setCurrentText(year)
-        self.project_id_edit.setText(project_id)
+        """Show a dossier number; ``year`` may be empty: it is then looked up."""
+        text = project_id.strip()
+        if text and year.strip() and split_typed_number(text).year is None:
+            text = f"{year.strip()}-{text}"
+        self.project_id_edit.set_number(text)
 
     def set_project_directory(self, project_dir: Path) -> None:
         self._photo_directory = project_dir / "photos"
@@ -69,7 +67,9 @@ class SortieDossierTab(QWidget):
         self._refresh_browse_buttons()
 
     def project_identity(self) -> tuple[str, str]:
-        return self.year_combo.currentText().strip(), self.project_id_edit.text().strip()
+        """Year (empty while unknown) and number typed after it."""
+        year = self.project_id_edit.year()
+        return ("" if year is None else str(year)), self.project_id_edit.typed_text()
 
     def set_inventory(self, inventory: OutputInventory) -> None:
         self._inventory = inventory
@@ -92,9 +92,7 @@ class SortieDossierTab(QWidget):
         self._refresh_status()
         self.create_output_button.setEnabled(bool(inventory.fiches))
         self.pages.setCurrentIndex(1)
-        year, project_id = self.project_identity()
-        number = project_id if "-" in project_id or not year else f"{year}-{project_id}"
-        self.title_label.setText(number or "Projet chargé")
+        self.title_label.setText(self.project_id_edit.number_text() or "Projet chargé")
 
     def data(self) -> SortieSelection:
         fiche = self._current_path(self.fiche_list)
@@ -175,17 +173,12 @@ class SortieDossierTab(QWidget):
         self.title_label = label("Projet à sortir", "h2")
         titles.addWidget(self.title_label)
         row.addLayout(titles, 1)
-        self.year_combo = QComboBox()
-        self.year_combo.setEditable(True)
-        self.project_id_edit = QLineEdit()
-        self.project_id_edit.setPlaceholderText("2026-4995")
+        self.project_id_edit = ProjectNumberEdit()
+        self.project_id_edit.returnPressed.connect(self.load_requested.emit)
         self.load_button = button("Charger")
         self.load_button.clicked.connect(self.load_requested.emit)
-        year = field("Année", self.year_combo)
-        year.setFixedWidth(112)
         number = field("Numéro", self.project_id_edit)
         number.setFixedWidth(200)
-        row.addWidget(year, 0, Qt.AlignmentFlag.AlignBottom)
         row.addWidget(number, 0, Qt.AlignmentFlag.AlignBottom)
         row.addWidget(self.load_button, 0, Qt.AlignmentFlag.AlignBottom)
         return row

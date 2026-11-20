@@ -146,6 +146,9 @@ class PlanningHooks:
     read_outlook_selection: Callable[[], Awaitable[list[ImportedEvent]]] | None = None
     """Optional: the items selected in the classic Outlook of the poste (Windows), read
     when they are dragged onto the planning."""
+    year_of: Callable[[str], int | None] | None = None
+    """Optional: year of a dossier number typed without it (« 4493 »), from every sheet of
+    the répertoire and the project folders."""
 
 
 PlanningStoreFactory = Callable[[PlanningPosteConfig], Awaitable[PlanningStore]]
@@ -863,6 +866,7 @@ class PlanningController:
             task_types=snapshot.meta.task_types,
             find_project=self._find_project,
             default_year=self._tab.anchor.year,
+            year_of=self._project_year,
             cell_resource_ids=cells,
             cell_start=start,
             cell_end=end,
@@ -3034,6 +3038,19 @@ class PlanningController:
         if found is None and clean:
             self._want_project(clean)
         return found
+
+    def _project_year(self, project_id: str) -> int | None:
+        """Year of the dossier « XXXX »: a number names one dossier among all the years."""
+        suffix = f"-{project_id}"
+        years = {
+            int(number[:4])
+            for number in self._projects
+            if number[:4].isdigit() and number[4:] == suffix
+        }
+        if len(years) == 1:
+            return years.pop()
+        year_of = self._hooks.year_of
+        return year_of(project_id) if year_of is not None else None
 
     def _want_project(self, number: str) -> None:
         """Read the répertoire sheet of ``number``'s year when it was not read yet."""

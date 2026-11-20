@@ -350,6 +350,9 @@ class EntryContext:
     cell_start: WallTime | None = None
     cell_end: WallTime | None = None
     calendar_for: Callable[[str | None], WorkCalendar] | None = None
+    year_of: Callable[[str], int | None] | None = None
+    """Year of a number typed without it (« 4493 »): it names one dossier among all the
+    years. Without it, or when it knows nothing, ``default_year`` and the year before."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1368,7 +1371,11 @@ class _Parser:
     ) -> tuple[str, ProjectInfo | None]:
         suffix = (f"-{int(sub)}" if sub.isdigit() else f"-{sub.upper()}") if sub else ""
         default_year = self.context.default_year
-        years = (int(year),) if year else (default_year, default_year - 1)
+        years: tuple[int, ...] = (int(year),) if year else (default_year, default_year - 1)
+        if not year and self.context.year_of is not None:
+            found = self.context.year_of(number)
+            if found is not None:
+                years = (found, *(other for other in years if other != found))
         for candidate_year in years:
             candidate = f"{candidate_year}-{number}{suffix}"
             project = self.context.find_project(candidate)

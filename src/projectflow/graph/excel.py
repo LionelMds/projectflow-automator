@@ -158,6 +158,20 @@ class GraphExcelWorkbookGateway:
             raise
         return True
 
+    async def worksheet_names(self) -> list[str]:
+        payload = await self._graph.get(
+            f"{self._workbook_path()}/worksheets?$select=name",
+            headers=self._session_headers(),
+        )
+        values = payload.get("value")
+        if not isinstance(values, list):
+            raise GraphError("Microsoft Graph n'a pas retourne les onglets du repertoire Excel.")
+        return [
+            value["name"]
+            for value in values
+            if isinstance(value, dict) and isinstance(value.get("name"), str)
+        ]
+
     async def used_range_values(self, worksheet_name: str) -> list[list[Any]]:
         payload = await self._graph.get(
             f"{self._worksheet_path(worksheet_name)}/usedRange(valuesOnly=true)",

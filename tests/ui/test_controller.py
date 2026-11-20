@@ -77,6 +77,9 @@ class FakeRepertoireService:
         assert year == 2026
         return NextAvailableProject(number=parse_project_number("2026-4995"), row_index=1)
 
+    async def list_years(self) -> tuple[int, ...]:
+        return (2026,)
+
     async def read_snapshot(self, *, year: int) -> RepertoireSnapshot:
         assert year == 2026
         return RepertoireSnapshot(
@@ -272,8 +275,75 @@ async def test_controller_next_available_prefills_identity(qtbot: Any, tmp_path:
     await controller.next_available()
 
     assert window.creation_tab.project_id_edit.text() == "4995"
+    assert window.creation_tab.project_id_edit.year() == 2026
     assert window.creation_tab.subproject_edit.text() == ""
     assert _completer_values(window.creation_tab.societe_edit) == ["Balz Metal SA"]
+
+
+@pytest.mark.asyncio
+async def test_next_available_ignores_a_year_forced_in_the_form(
+    qtbot: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """« 2025 » typed by hand: the next free number is still the one of this year."""
+    window, config, services = _window(qtbot, tmp_path)
+    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.critical", lambda *_args: None)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    window.creation_tab.project_id_edit.clear()
+    qtbot.keyClicks(window.creation_tab.project_id_edit, "2025-4100")
+    assert window.creation_tab.project_id_edit.year_is_forced()
+
+    await controller.next_available()
+
+    edit = window.creation_tab.project_id_edit
+    assert edit.number_text() == "2026-4995"
+    assert not edit.year_is_forced()
+    assert "Numero disponible: 2026-4995" in window.creation_tab.logs.toPlainText()
+
+
+@pytest.mark.asyncio
+async def test_a_number_typed_alone_finds_its_year_in_the_repertoire(
+    qtbot: Any, tmp_path: Path
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    controller = ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    edit = window.creation_tab.project_id_edit
+    edit.clear()
+    qtbot.keyClicks(edit, "4994")
+    assert edit.year() is None  # The répertoire is being read.
+
+    await asyncio.gather(*controller._background_tasks)  # noqa: SLF001
+
+    assert edit.year() == 2026
+    assert edit.number_text() == "2026-4994"
+    assert window.creation_tab.data().year == "2026"
+
+
+def test_a_number_typed_alone_finds_its_year_from_the_project_folders(
+    qtbot: Any, tmp_path: Path
+) -> None:
+    window, config, services = _window(qtbot, tmp_path)
+    ProjectFlowController(
+        window=window,
+        config=config,
+        services=services,  # type: ignore[arg-type]
+    )
+    assert config.paths.racine_projets is not None
+    (config.paths.racine_projets / "2023" / "2023-4120").mkdir(parents=True)
+
+    window.sortie_tab.project_id_edit.setFocus()
+    qtbot.keyClicks(window.sortie_tab.project_id_edit, "4120")
+
+    assert window.sortie_tab.project_identity() == ("2023", "4120")
+    qtbot.keyClicks(window.creation_tab.reference_edit, "4120")
+    assert window.creation_tab.data().reference == "2023-4120"
 
 
 @pytest.mark.asyncio
@@ -385,7 +455,7 @@ async def test_repertoire_right_click_on_a_project_row_offers_its_dossier(
 
     actions["Préparer la sortie"].trigger()
     assert window.tabs.currentWidget() is window.sortie_tab
-    assert window.sortie_tab.project_identity() == ("2026", "2026-4994")
+    assert window.sortie_tab.project_identity() == ("2026", "4994")
     await asyncio.sleep(0)  # The sortie tab reads the dossier in a task.
 
 
@@ -1094,7 +1164,7 @@ async def test_controller_warns_when_the_reference_folder_is_missing(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reference", ["ancien escalier", "4493", "2026-4995"])
+@pytest.mark.parametrize("reference", ["ancien escalier", "2026-4995"])
 async def test_controller_refuses_an_invalid_reference(
     qtbot: Any,
     tmp_path: Path,

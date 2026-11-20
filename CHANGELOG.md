@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Numero de dossier sans annee : un numero « XXXX » designe un seul dossier, toutes annees
+  confondues. Les champs Numero (Creation projet, Sortie dossier) et Reference s'affichent
+  « 20YY-XXXX » : on ne tape que le numero et l'annee se remplit seule, retrouvee dans le
+  repertoire (toutes ses feuilles, lues au besoin) ou dans les dossiers annuels de la racine
+  projets. Les listes « Annee » de Creation et Sortie disparaissent. Taper « 2025-4493 »
+  impose l'annee (affichee en gras) ; Retour arriere au debut du champ, ou vider le champ,
+  la rend a la recherche automatique.
+- Creation projet : « Suivant disponible » prend toujours la premiere ligne libre de la
+  feuille de l'annee en cours (ou d'une feuille deja preparee apres elle ; en janvier, avant
+  la nouvelle feuille, la plus recente), meme si une autre annee est tapee dans le
+  formulaire : l'annee 2025 imposee a la main donnait une erreur.
+- Repertoire chantier : la liste « Annee » propose toutes les feuilles du classeur (plus
+  seulement l'annee en cours et la suivante) et charge la feuille choisie. Le repertoire reste
+  lu une annee a la fois, plus leger ; un numero tape dans la recherche puis Entree ouvre la
+  feuille de son annee et selectionne sa ligne.
+- Planning : un numero tape sans annee dans la saisie rapide (« 4120 couvert ») retrouve son
+  annee, meme pour un dossier de plus de deux ans.
+
 ## 0.1.83
 
 - Planning : le defilement horizontal est libre dans les vues Jour, Semaine et Mois. Plus de

@@ -193,6 +193,22 @@ def test_dossier_lookup_tries_the_previous_year_with_normalised_numbers() -> Non
     assert asked == ["2026-301", "2025-301"]
 
 
+def test_dossier_typed_without_year_takes_the_year_of_its_number() -> None:
+    """A number names one dossier among all the years: an old one is found too."""
+    old = ProjectInfo("2022-4120", "Migros", "", "Couvert vélos", "LMO")
+    asked: list[str] = []
+
+    def find(number: str) -> ProjectInfo | None:
+        asked.append(number)
+        return {**PROJECTS, old.number: old}.get(number)
+
+    entry = parse("4120 couvert", find_project=find, year_of={"4120": 2022}.get)
+
+    assert entry.project_number == "2022-4120"
+    assert entry.project == old
+    assert asked == ["2022-4120"]
+
+
 def test_unknown_dossier_is_kept_with_a_warning() -> None:
     entry = parse("255 portail")
 
@@ -1046,10 +1062,7 @@ def test_consistent_entries_have_no_warning(text: str) -> None:
         ("255 portail LBI", "2026-255 · Portail · LBI · À planifier"),
         (
             "LBI pose 121 jeu",
-            (
-                "2026-121 Commune de Marsens · Pose · LBI · "
-                "jeu 22.10 06:30 → jeu 22.10 16:30 · 1 j"
-            ),
+            ("2026-121 Commune de Marsens · Pose · LBI · jeu 22.10 06:30 → jeu 22.10 16:30 · 1 j"),
         ),
         (
             "jeu 2j 121 LBI",

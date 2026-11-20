@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from projectflow.core.project_years import split_typed_number
 from projectflow.core.repertoire_service import (
     NextAvailableProject,
     RepertoireRow,
@@ -220,6 +222,8 @@ class RepertoireDossierTab(QWidget):
     print_fiche_requested = Signal()
     prepare_sortie_requested = Signal()
     new_project_with_number_requested = Signal()
+    number_search_requested = Signal(str)
+    """A dossier number searched that is not in the sheet shown: find its year."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -248,7 +252,12 @@ class RepertoireDossierTab(QWidget):
         titles.addWidget(label("Répertoire chantier", "h2"))
         heading.addLayout(titles, 1)
         self.year_combo = QComboBox()
-        self.year_combo.setEditable(True)
+        self.year_combo.setToolTip(
+            "Feuille du répertoire affichée. Pour un dossier d'une autre année, tapez "
+            "simplement son numéro dans la recherche puis Entrée.",
+        )
+        # A year picked by hand is read at once; set_year() leaves the reading to its caller.
+        self.year_combo.activated.connect(lambda _index: self.load_requested.emit())
         year = field("Année", self.year_combo)
         year.setFixedWidth(112)
         heading.addWidget(year, 0, Qt.AlignmentFlag.AlignBottom)
@@ -262,6 +271,7 @@ class RepertoireDossierTab(QWidget):
         # A bound method: Qt disconnects it with the tab, a lambda would outlive it.
         theme_notifier().changed.connect(self._refresh_search_icon)
         self.search_edit.textChanged.connect(self._filter_rows)
+        self.search_edit.returnPressed.connect(self._search_number_elsewhere)
         search = field("Rechercher", self.search_edit)
         search.setFixedWidth(340)
         heading.addWidget(search, 0, Qt.AlignmentFlag.AlignBottom)
@@ -432,8 +442,33 @@ class RepertoireDossierTab(QWidget):
         text = str(year)
         index = self.year_combo.findText(text)
         if index < 0:
-            self.year_combo.addItem(text)
-        self.year_combo.setCurrentText(text)
+            self._insert_year(text)
+            index = self.year_combo.findText(text)
+        self.year_combo.setCurrentIndex(index)
+
+    def set_years(self, years: Sequence[int]) -> None:
+        """Offer every sheet of the répertoire, most recent first; the year shown stays."""
+        current = self.year_combo.currentText().strip()
+        blocked = self.year_combo.blockSignals(True)  # noqa: FBT003 - Qt API
+        try:
+            self.year_combo.clear()
+            self.year_combo.addItems([str(year) for year in sorted(set(years), reverse=True)])
+            if current:
+                self.set_year(int(current))
+        finally:
+            self.year_combo.blockSignals(blocked)
+
+    def _insert_year(self, text: str) -> None:
+        for index in range(self.year_combo.count()):
+            if self.year_combo.itemText(index) < text:
+                self.year_combo.insertItem(index, text)
+                return
+        self.year_combo.addItem(text)
+
+    def _search_number_elsewhere(self) -> None:
+        text = self.search_edit.text().strip()
+        if self._proxy.rowCount() == 0 and is_searchable_number(text):
+            self.number_search_requested.emit(text)
 
     def selected_row_payload(self) -> tuple[int, tuple[Any, ...], tuple[Any, ...]] | None:
         proxy_index = self.table.currentIndex()
@@ -642,6 +677,12 @@ class RepertoireRowDelegate(QStyledItemDelegate):
             painter.drawRect(tag.adjusted(0.5, 0.5, -0.5, -0.5))
             painter.drawText(tag, int(Qt.AlignmentFlag.AlignCenter), "Disponible")
         painter.restore()
+
+
+def is_searchable_number(text: str) -> bool:
+    """Whether a search is a dossier number (« 5102 », « 2025-4493 »)."""
+    typed = split_typed_number(text)
+    return typed.project_id.isdigit() and len(typed.project_id) >= 3  # noqa: PLR2004
 
 
 def _legend(role: str, text: str) -> QHBoxLayout:

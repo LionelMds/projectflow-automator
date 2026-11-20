@@ -28,6 +28,9 @@ class WorkbookGateway(Protocol):
     async def worksheet_exists(self, worksheet_name: str) -> bool:
         """Return whether a worksheet exists."""
 
+    async def worksheet_names(self) -> list[str]:
+        """Return the names of every worksheet of the workbook."""
+
     async def used_range_values(self, worksheet_name: str) -> list[list[Any]]:
         """Return worksheet used range values."""
 
@@ -88,9 +91,39 @@ class RepertoireService:
         self._workbook = workbook
         self._today = today
 
+    async def list_years(self) -> tuple[int, ...]:
+        """Years that have a sheet in the répertoire, most recent first."""
+        async with self._workbook.session():
+            names = await self._workbook.worksheet_names()
+        return tuple(sorted({int(name.strip()) for name in names if _is_year(name)}, reverse=True))
+
     async def next_available(self, *, year: int) -> NextAvailableProject | None:
         snapshot = await self.read_snapshot(year=year)
         return snapshot.next_available
+
+    async def current_next_available(
+        self,
+        years: Sequence[int] | None = None,
+    ) -> RepertoireSnapshot | None:
+        """Snapshot of the sheet that holds the next free number, whatever year is shown.
+
+        The sheet of this year comes first, then a later one already prepared; in
+        January, before the new sheet exists, the most recent one. An older sheet is
+        never used: its free rows are numbers skipped long ago. None when no sheet
+        has a free row.
+        """
+        listed = tuple(years) if years is not None else await self.list_years()
+        this_year = self._today().year
+        later = sorted(year for year in listed if year > this_year)
+        older = [year for year in listed if year < this_year]
+        order = [*([this_year] if this_year in listed else []), *later]
+        if not order and older:
+            order = [max(older)]
+        for year in order:
+            snapshot = await self.read_snapshot(year=year)
+            if snapshot.next_available is not None:
+                return snapshot
+        return None
 
     async def read_snapshot(self, *, year: int) -> RepertoireSnapshot:
         async with self._workbook.session():
@@ -271,6 +304,11 @@ class RepertoireService:
     async def _assert_worksheet_exists(self, worksheet_name: str) -> None:
         if not await self._workbook.worksheet_exists(worksheet_name):
             raise ProjectCreationError(f"Onglet introuvable dans le repertoire: {worksheet_name}")
+
+
+def _is_year(name: str) -> bool:
+    text = name.strip()
+    return len(text) == 4 and text.isdigit() and text[:2] in {"19", "20"}  # noqa: PLR2004
 
 
 def _apply_project_to_row(row: list[Any], project: ProjectInput, *, created_on: date) -> list[Any]:

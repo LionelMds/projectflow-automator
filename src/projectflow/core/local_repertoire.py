@@ -195,6 +195,9 @@ class LocalWorkbookGateway:
     async def worksheet_exists(self, worksheet_name: str) -> bool:
         return worksheet_name in self._require_workbook().sheetnames
 
+    async def worksheet_names(self) -> list[str]:
+        return list(self._require_workbook().sheetnames)
+
     async def used_range_values(self, worksheet_name: str) -> list[list[Any]]:
         worksheet = self._worksheet(worksheet_name)
         return [

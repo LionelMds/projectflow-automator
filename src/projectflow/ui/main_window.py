@@ -87,12 +87,10 @@ class MainWindow(QMainWindow):
         tabs.setDocumentMode(True)
         self.tabs = tabs
         self.creation_tab = CreationTab()
-        years = [str(date.today().year), str(date.today().year + 1)]
-        self.creation_tab.year_combo.addItems(years)
         self.sortie_tab = SortieDossierTab()
-        self.sortie_tab.year_combo.addItems(years)
         self.repertoire_tab = RepertoireDossierTab()
-        self.repertoire_tab.year_combo.addItems(years)
+        # Until the sheets of the répertoire are listed: the year of today.
+        self.repertoire_tab.set_years([date.today().year])
         self.planning_tab = PlanningTab()
         tabs.addTab(self.creation_tab, "Création projet")
         tabs.addTab(self.sortie_tab, "Sortie dossier")
