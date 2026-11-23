@@ -352,6 +352,38 @@ sa durée (une journée entière vaut 10 h). Le week-end, les jours fériés et 
 restent exclus ; avant 06:30 et après 16:30, c'est le `Travail de nuit`. Relâché, le bouton
 remet la tâche sur les horaires standard en gardant sa durée.
 
+### Alertes et notifications
+
+Dans `Détail`, sous `Hors horaires standard`, `Alerte notification` règle quand une tâche
+prévient. `+ Alerte` propose `Au début de la tâche`, `5 min`, `15 min`, `30 min`, `1 h`, `2 h`
+ou `1 j avant`, et `À un moment précis…` qui déroule les rouleaux d'un jour et d'une heure.
+Une tâche porte jusqu'à 6 alertes ; un clic sur une alerte la retire. Une alerte « avant »
+suit la tâche quand on la déplace ; une alerte à un moment précis reste où elle a été mise.
+
+À l'heure dite, l'alerte s'affiche en bas de l'onglet Planning avec `Ouvrir`, et dans le
+centre de notifications de Windows ou de macOS (ProjectFlow doit être lancé, fenêtre ouverte
+ou réduit dans la zone de notification). La cloche de la barre d'outils compte les alertes
+non lues ; elle ouvre l'historique du poste, groupé par jour, où chaque alerte se rouvre
+(`Ouvrir`), se reporte (`Reporter` : 10 min, 30 min, 1 h, demain matin) ou se retire.
+
+Un poste sonne pour les tâches de la personne indiquée dans `Paramètres > Planning`
+(initiales). Une tâche sans personne sonne chez celui qui l'a créée ; un poste sans initiales
+sonne pour toutes. Les tâches terminées ne sonnent pas. Les alertes échues pendant que
+ProjectFlow était fermé sont annoncées au démarrage, marquées `manquée`.
+
+`Paramètres > Notifications` règle les alertes du poste, sans rien changer chez les autres :
+
+- `Activer les alertes sur ce poste`, et `Prévenir pour` : `Mes tâches` ou `Toutes les tâches`.
+- `Afficher aussi dans le centre de notifications` du système, et `Signal sonore`.
+- `Heures de silence` : une plage horaire (18:00 à 06:00 par défaut) et le week-end. Une alerte
+  échue pendant le silence ne s'affiche pas ; elle attend dans l'historique de la cloche.
+- `Résumés` : `Ma journée` annonce les tâches du jour à l'heure choisie, `À venir` celles du
+  prochain jour travaillé. Un clic sur un résumé amène le planning sur ce jour.
+- `Alerte des nouvelles tâches` : une alerte par type de tâche, donnée d'office aux tâches
+  créées sur ce poste (saisie rapide, saisie dans une cellule, import d'un rendez-vous).
+- `Lancer ProjectFlow à l'ouverture de session` : l'application démarre réduite dans la zone
+  de notification, pour que les alertes sonnent sans l'ouvrir.
+
 ### Stockage du planning
 
 `Paramètres > Planning > Stockage du planning` propose deux choix :

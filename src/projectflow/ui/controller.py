@@ -49,6 +49,7 @@ from projectflow.graph.planner import GraphPlannerClient
 from projectflow.graph.workbook_opening import excel_document_uri
 from projectflow.logging import get_logger, redact_sensitive_links
 from projectflow.outlook.selection import read_outlook_selection
+from projectflow.platform.autostart import autostart_enabled, autostart_supported, set_autostart
 from projectflow.platform.filemanager import open_excel_uri, open_file_default_app, open_path
 from projectflow.platform.printing import print_workbook_a4
 from projectflow.platform.sync_paths import is_excel_recovery_copy
@@ -207,6 +208,7 @@ class ProjectFlowController:
         self._planning_tasks: set[asyncio.Task[None]] = set()
         self._member_tasks: dict[tuple[int, str], asyncio.Task[PlannerMembers]] = {}
         self._notify: Notifier | None = None
+        self._notify_alert: Notifier | None = None
         self._showing_in_repertoire = False
         self._repertoire_load_task: asyncio.Task[Any] | None = None
         self._background_tasks: set[asyncio.Task[None]] = set()
@@ -260,6 +262,21 @@ class ProjectFlowController:
     def set_notifier(self, notify: Notifier | None) -> None:
         """Where to announce what the planning did on its own (a card « À planifier »)."""
         self._notify = notify
+
+    def set_alert_notifier(self, notify: Notifier | None) -> None:
+        """Where the alerts of the planning go outside the window (notification centre)."""
+        self._notify_alert = notify
+
+    def _show_planning_alert(self, title: str, message: str) -> None:
+        if self._notify_alert is not None:
+            self._notify_alert(title, message)
+
+    def show_planning_alerts(self) -> None:
+        """Bring the window on the Planning tab with the history of the alerts open."""
+        self._window.show_and_raise()
+        self._window.show_planning_tab()
+        if self._planning is not None:
+            self._planning.show_alerts()
 
     def _connect(self) -> None:
         tab = self._window.creation_tab
@@ -372,6 +389,7 @@ class ProjectFlowController:
             ask=self._ask,
             log=self._log,
             save_config=self._store_planning_config,
+            notify_alert=self._show_planning_alert,
             open_outlook_calendar=(
                 self._open_outlook_calendar if self._outlook_calendar_factory else None
             ),
@@ -1741,6 +1759,8 @@ class ProjectFlowController:
             self._config,
             parent=self._window,
             planning_config=planning.poste_config if planning is not None else None,
+            planning_task_types=_task_type_names(planning),
+            autostart=autostart_enabled() if autostart_supported() else None,
         )
         dialog.microsoft_sign_in_requested.connect(
             lambda: self._schedule_task(self.reconnect_microsoft(dialog)),
@@ -1774,6 +1794,22 @@ class ProjectFlowController:
         poste_config = planning.poste_config.model_copy(deep=True)
         dialog.apply_to_planning_config(poste_config)
         self._schedule_planning(self._reconfigure_planning(planning, poste_config))
+        self._apply_autostart(dialog.alerts_page.autostart_wanted())
+
+    def _apply_autostart(self, wanted: bool | None) -> None:  # noqa: FBT001
+        """Start ProjectFlow with the session or not, as the settings ask."""
+        if wanted is None or wanted == autostart_enabled():
+            return
+        try:
+            set_autostart(enabled=wanted)
+        except OSError as exc:
+            self._log(f"! Démarrage avec la session non modifié : {exc}")
+            return
+        self._log(
+            "+ ProjectFlow démarre avec la session."
+            if wanted
+            else "+ ProjectFlow ne démarre plus avec la session."
+        )
 
     async def _copy_planning_to_onedrive(self, dialog: SettingsDialog, folder: str) -> None:
         """Add this poste's local planning to the OneDrive folder, after confirmation.
@@ -2432,6 +2468,14 @@ class ProjectFlowController:
 
     async def _ask(self, ask: Callable[[], Answer]) -> Answer:
         return await ask_outside_task(ask, skip=lambda: self._closing)
+
+
+def _task_type_names(planning: PlanningController | None) -> list[tuple[str, str]]:
+    """Key and name of the shared task types, empty while the planning is not loaded."""
+    service = planning.service if planning is not None else None
+    if service is None:
+        return []
+    return [(task_type.key, task_type.label) for task_type in service.snapshot.meta.task_types]
 
 
 def _copy_finished(dialog: SettingsDialog, message: str, *, copied: bool) -> None:

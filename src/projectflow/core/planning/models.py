@@ -379,6 +379,37 @@ class ProjectCache(_Frozen):
     read_at: str = ""
 
 
+ReminderKind = Literal["before", "at"]
+MAX_REMINDER_MINUTES = 14 * 1440
+"""Longest « x avant le début »: two weeks."""
+MAX_REMINDERS = 6
+
+
+class Reminder(_Frozen):
+    """One « Alerte notification » of a task.
+
+    ``before``: ``minutes`` before the start of the task, so it follows the task when it
+    moves (0 is the start itself). ``at``: a set moment, whatever the task does.
+    """
+
+    kind: ReminderKind = "before"
+    minutes: int = Field(default=0, ge=0, le=MAX_REMINDER_MINUTES)
+    at: WallTimeField | None = None
+
+    @model_validator(mode="after")
+    def _check_moment(self) -> Self:
+        if self.kind == "at" and self.at is None:
+            raise ValueError("Une alerte a un moment precis a une date et une heure.")
+        return self
+
+    @property
+    def key(self) -> str:
+        """What tells two alerts of one task apart (« b30 », « a2026-11-24T07:00 »)."""
+        if self.kind == "at" and self.at is not None:
+            return f"a{format_wall_time(self.at)}"
+        return f"b{self.minutes}"
+
+
 def task_label(number: str, designation: str) -> str:
     """« 2026-5271 - Local grillagé »; the number or the designation alone without the other."""
     number, designation = number.strip(), designation.strip()
@@ -423,6 +454,9 @@ class PlanningTask(PlanningDocument):
     """« Hors horaires standard »: the task is not held by the working hours inside a day.
     It may lie over the lunch hour and on Friday afternoon, and those hours count in its
     length (``WorkCalendar.without_breaks``). Never set together with ``off_hours``."""
+    reminders: tuple[Reminder, ...] = Field(default=(), max_length=MAX_REMINDERS)
+    """« Alerte notification »: when the postes and phones of its people are told about
+    the task (see ``alerts``)."""
 
     @model_validator(mode="after")
     def _check_dates(self) -> Self:

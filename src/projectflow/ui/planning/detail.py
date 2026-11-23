@@ -90,6 +90,7 @@ from projectflow.core.planning.night import elapsed_text, rest_text
 from projectflow.core.planning.quick_entry import ProjectInfo, format_days, format_duration
 from projectflow.core.planning.timescale import WEEKDAY_NAMES, move_preserving_work
 from projectflow.core.planning.walltime import WallTime, wall_date
+from projectflow.ui.planning.alert_editor import AlertEditor
 from projectflow.ui.planning.backlog import FlowLayout, relative_time
 from projectflow.ui.planning.wheel_picker import (
     DateTimeWheel,
@@ -725,7 +726,7 @@ class DetailPanel(QWidget):
 
         self.what_column = self._column("Quoi", self.type_block, self.notes_block, grow=True)
         self.when_column = self._column(
-            "Quand", self.dates_block, self.deadline_block, self.night_block
+            "Quand", self.dates_block, self.deadline_block, self.night_block, self.alert_block
         )
         self.who_column = self._column("", self.people_block)
         self.when_column.setFixedWidth(WHEN_WIDTH)
@@ -903,6 +904,11 @@ class DetailPanel(QWidget):
         )
         self.off_standard_button.clicked.connect(self._commit_off_standard)
         self.night_block = _stack(self.night_button, self.rest_label, self.off_standard_button)
+        self.alert_block = AlertEditor()
+        self.alert_block.changed.connect(self._commit_reminders)
+        self.alert_block.moment_opened.connect(
+            lambda: QTimer.singleShot(0, self, self._show_alert_moment)
+        )
 
         for picker in (self.start_picker, self.end_picker, self.deadline_picker):
             picker.changed.connect(self._on_picker_rolled)
@@ -1105,6 +1111,7 @@ class DetailPanel(QWidget):
             self.dates_block,
             self.deadline_block,
             self.night_block,
+            self.alert_block,
             self.people_block,
             self.notes_block,
             self.status_block,
@@ -1118,7 +1125,12 @@ class DetailPanel(QWidget):
         groups = {
             self.identity_box: (self.number_block, self.title_block, self.status_block),
             self.what_column: (self.type_block, self.notes_block),
-            self.when_column: (self.dates_block, self.deadline_block, self.night_block),
+            self.when_column: (
+                self.dates_block,
+                self.deadline_block,
+                self.night_block,
+                self.alert_block,
+            ),
             self.who_column: (self.people_block,),
         }
         for group, blocks in groups.items():
@@ -1141,6 +1153,7 @@ class DetailPanel(QWidget):
                 self.dates_block,
                 self.deadline_block,
                 self.night_block,
+                self.alert_block,
                 self.people_block,
                 self.notes_block,
                 self.status_block,
@@ -1163,6 +1176,9 @@ class DetailPanel(QWidget):
             self.urgent_button.setChecked(task.urgent)
             self.night_button.setChecked(task.off_hours)
             self.off_standard_button.setChecked(task.off_standard)
+            if not (keep_edits and self.alert_block.moment_open()):
+                self.alert_block.close_moment()
+            self.alert_block.set_reminders(task.reminders, start=task.start, today=self._today())
             night = task.off_hours and task.start is not None and task.end is not None
             self.rest_label.setVisible(night)
             if night and task.start is not None and task.end is not None:
@@ -1446,6 +1462,7 @@ class DetailPanel(QWidget):
         # Night work has its own hours: the two switches never go together.
         night = self._task is not None and self._task.off_hours
         self.off_standard_button.setEnabled(editable and not night)
+        self.alert_block.set_editable(editable=editable)
         if not editable:
             self.clear_deadline_button.hide()
 
@@ -1709,6 +1726,14 @@ class DetailPanel(QWidget):
     def _commit_off_standard(self, checked: bool) -> None:  # noqa: FBT001
         if self._mode == "task":
             self._commit_value("off_standard", bool(checked))
+
+    def _show_alert_moment(self) -> None:
+        if self.alert_block.moment_open():
+            self.scroll_area.ensureWidgetVisible(self.alert_block.moment_box, 0, 0)
+
+    def _commit_reminders(self, reminders: object) -> None:
+        if self._mode == "task" and isinstance(reminders, tuple):
+            self._commit_value("reminders", reminders)
 
     def _commit_start(self) -> None:
         task = self._task

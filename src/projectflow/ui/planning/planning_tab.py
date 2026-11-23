@@ -91,6 +91,7 @@ from projectflow.core.planning.timescale import (
     week_start,
 )
 from projectflow.core.planning.walltime import WallTime
+from projectflow.ui.planning.alert_panel import AlertPanel, BellButton
 from projectflow.ui.planning.backlog import BacklogPanel, build_cards
 from projectflow.ui.planning.colors import ColorBy
 from projectflow.ui.planning.detail import DetailPanel
@@ -275,6 +276,9 @@ TOOL_ICONS: Final[Mapping[str, str]] = {
     "rows": '<path d="M3 6h18"/><path d="M3 12h18"/><path d="M3 18h18"/>',
     "minus": '<path d="M5 12h14"/>',
     "plus": '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    "bell": '<path d="M10.268 21a2 2 0 0 0 3.464 0"/>'
+    '<path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 '
+    '0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>',
 }
 ICON_SIZE: Final = 16
 ICON_RATIO: Final = 2.0
@@ -939,6 +943,8 @@ class PlanningTab(QWidget):
         self.team_button.setToolTip("Personnes, sous-traitants, équipes et calendrier partagés")
 
         self.badge = SyncBadge(local=True)
+        self.bell = BellButton()
+        self.alert_panel = AlertPanel(self)
 
         for widget in (self.prev_button, self.today_button, self.next_button):
             layout.addWidget(widget)
@@ -953,6 +959,7 @@ class PlanningTab(QWidget):
         layout.addWidget(self.redo_button)
         layout.addWidget(self.print_button)
         layout.addWidget(self.team_button)
+        layout.addWidget(self.bell)
         layout.addWidget(self.badge)
         # Hidden first, then the next ones, when the tab is too narrow: each is also
         # reachable from the display menu.
@@ -966,6 +973,7 @@ class PlanningTab(QWidget):
             (self.redo_button, "redo"),
             (self.print_button, "printer"),
             (self.display_button, "rows"),
+            (self.bell, "bell"),
         )
         self.toolbar.setStyleSheet(
             '#planningToolbar QPushButton[variant="seg"] { padding: 4px 11px; }'

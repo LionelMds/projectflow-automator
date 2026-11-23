@@ -21,7 +21,13 @@ from typing import Any, Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from projectflow.core.planning.models import Author
+from projectflow.core.planning.alerts import AlertAudience, AlertRules
+from projectflow.core.planning.models import MAX_REMINDER_MINUTES, Author
+from projectflow.core.planning.walltime import (
+    HOURS_PER_DAY,
+    MINUTES_PER_HOUR,
+    format_hhmm,
+)
 from projectflow.exceptions import ConfigError
 from projectflow.graph.drive_planning_store import DEFAULT_ONEDRIVE_FOLDER, folder_segments
 from projectflow.graph.planning_store import DEFAULT_PLANNING_LIST_NAME
@@ -69,6 +75,18 @@ def new_poste_id() -> str:
     return uuid.uuid4().hex
 
 
+def clock_minutes(text: str) -> int:
+    """Minutes since midnight of « 06:15 » (also « 6:15 », « 6h15 », « 6h »)."""
+    hours, _, minutes = text.strip().lower().replace("h", ":").partition(":")
+    try:
+        value = int(hours) * MINUTES_PER_HOUR + int(minutes or 0)
+    except ValueError as error:
+        raise ValueError(f"Heure illisible: {text!r}") from error
+    if not (0 <= int(hours) < HOURS_PER_DAY and 0 <= int(minutes or 0) < MINUTES_PER_HOUR):
+        raise ValueError(f"Heure hors de la journee: {text!r}")
+    return value
+
+
 class PlanningPosteConfig(BaseModel):
     # Unknown keys are kept and written back: an older ProjectFlow must not erase them.
     model_config = ConfigDict(extra="allow", validate_assignment=True)
@@ -111,6 +129,22 @@ class PlanningPosteConfig(BaseModel):
     several."""
     outlook_hide_details: bool = False
     """Leave the clients, places and notes out of the calendar (its link is public)."""
+    alerts_enabled: bool = True
+    """« Alerte notification »: this poste rings (see ``alert_rules``)."""
+    alerts_audience: AlertAudience = "mine"
+    alerts_system: bool = True
+    alerts_sound: bool = False
+    alerts_quiet: bool = False
+    alerts_quiet_from: str = "18:00"
+    alerts_quiet_to: str = "06:00"
+    alerts_quiet_weekend: bool = True
+    alerts_morning: bool = False
+    alerts_morning_time: str = "06:15"
+    alerts_evening: bool = False
+    alerts_evening_time: str = "16:00"
+    alert_defaults: dict[str, int] = Field(default_factory=dict)
+    """Alert given to a task created on this poste, by task type: minutes before its
+    start. A type left out gets none."""
 
     @field_validator(
         "local_directory",
@@ -186,6 +220,22 @@ class PlanningPosteConfig(BaseModel):
             if view in VIEWS and zoom > 1
         }
 
+    @field_validator(
+        "alerts_quiet_from", "alerts_quiet_to", "alerts_morning_time", "alerts_evening_time"
+    )
+    @classmethod
+    def _clock(cls, value: str) -> str:
+        return format_hhmm(clock_minutes(value))
+
+    @field_validator("alert_defaults")
+    @classmethod
+    def _alert_defaults(cls, value: dict[str, int]) -> dict[str, int]:
+        return {
+            key.strip(): int(minutes)
+            for key, minutes in value.items()
+            if key.strip() and 0 <= int(minutes) <= MAX_REMINDER_MINUTES
+        }
+
     @field_validator("panel_width")
     @classmethod
     def _panel_width(cls, value: int) -> int:
@@ -195,6 +245,21 @@ class PlanningPosteConfig(BaseModel):
     def is_identified(self) -> bool:
         """Whether the person at this poste said who they are (needed to sign changes)."""
         return bool(self.user_initials)
+
+    def alert_rules(self) -> AlertRules:
+        """Give what this poste chose for its alerts, as ``alerts`` reads it."""
+        return AlertRules(
+            enabled=self.alerts_enabled,
+            audience=self.alerts_audience,
+            system=self.alerts_system,
+            sound=self.alerts_sound,
+            quiet=self.alerts_quiet,
+            quiet_from=clock_minutes(self.alerts_quiet_from),
+            quiet_to=clock_minutes(self.alerts_quiet_to),
+            quiet_weekend=self.alerts_quiet_weekend,
+            morning=clock_minutes(self.alerts_morning_time) if self.alerts_morning else None,
+            evening=clock_minutes(self.alerts_evening_time) if self.alerts_evening else None,
+        )
 
     def author(self) -> Author:
         return Author(

@@ -30,6 +30,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMenu, QWidget
 
 from projectflow.core.numero import canonical_project_number
 from projectflow.core.planning import commands
+from projectflow.core.planning.alerts import AlertRules
 from projectflow.core.planning.cache import PlanningCache
 from projectflow.core.planning.calendar import WorkCalendar
 from projectflow.core.planning.calendar_import import ImportedEvent, drafts_for_drop
@@ -56,6 +57,7 @@ from projectflow.core.planning.models import (
     PlanningDocument,
     PlanningTask,
     ProjectCache,
+    Reminder,
     TaskStatus,
     utc_now_text,
 )
@@ -98,6 +100,7 @@ from projectflow.ui.dialogs.planning_team import (
     TeamDialog,
     task_type_counts,
 )
+from projectflow.ui.planning.alert_watcher import AlertWatcher
 from projectflow.ui.planning.backlog import release_day
 from projectflow.ui.planning.detail import MULTI_SELECTION, author_text
 from projectflow.ui.planning.external_drop import ExternalDrop
@@ -146,6 +149,9 @@ class PlanningHooks:
     read_outlook_selection: Callable[[], Awaitable[list[ImportedEvent]]] | None = None
     """Optional: the items selected in the classic Outlook of the poste (Windows), read
     when they are dragged onto the planning."""
+    notify_alert: Callable[[str, str], None] | None = None
+    """Optional: show an alert of the planning (title, text) in the notification centre
+    of the system. Without it the alerts stay in the Planning tab."""
 
 
 PlanningStoreFactory = Callable[[PlanningPosteConfig], Awaitable[PlanningStore]]
@@ -566,6 +572,17 @@ class PlanningController:
         self._outlook_repair_timer.setInterval(OUTLOOK_REPAIR_MS)
         self._outlook_repair_timer.timeout.connect(self._repair_outlook)
 
+        self._alerts = AlertWatcher(
+            tab,
+            snapshot=self._alert_snapshot,
+            identity=lambda: (self._config.user_initials, self._config.user_m365_id),
+            now=lambda: self._now(self._today()),
+            open_task=self._open_alert_task,
+            notify=lambda: self._hooks.notify_alert,
+            rules=self._alert_rules,
+            open_day=self._open_alert_day,
+        )
+
         self._wire()
         self._apply_config(initial=True)
         self._apply_status()
@@ -575,6 +592,44 @@ class PlanningController:
     @property
     def poste_config(self) -> PlanningPosteConfig:
         return self._config
+
+    @property
+    def alerts(self) -> AlertWatcher:
+        """The alerts of this poste (« Alerte notification ») and their history."""
+        return self._alerts
+
+    def show_alerts(self) -> None:
+        """Open the history of the alerts under the bell of the toolbar."""
+        if not self._closed:
+            self._alerts.show_panel()
+
+    def _alert_snapshot(self) -> PlanningSnapshot | None:
+        session = self._session
+        if session is None or self._quiet or self._closed:
+            return None
+        return session.service.snapshot
+
+    def _alert_rules(self) -> AlertRules:
+        # Read at each look: the settings of the poste may have changed meanwhile.
+        return self._config.alert_rules()
+
+    def _open_alert_day(self, day: date) -> None:
+        """Show the day a summary tells (« Ma journée », the next working day)."""
+        self._tab.set_anchor(day)
+
+    def _default_reminders(self, task_type: str) -> tuple[Reminder, ...]:
+        """Alert this poste gives to a new task of ``task_type`` (its settings)."""
+        minutes = self._config.alert_defaults.get(task_type)
+        return () if minutes is None else (Reminder(kind="before", minutes=minutes),)
+
+    def _open_alert_task(self, task_id: str) -> bool:
+        task = self._task(task_id)
+        if task is None or task.deleted:
+            return False
+        self._reveal(task)
+        self._schedule_rebuild()
+        self._open_detail(task_id)
+        return True
 
     @property
     def service(self) -> PlanningService | None:
@@ -636,6 +691,7 @@ class PlanningController:
         if self._closed:
             return
         self._closed = True
+        self._alerts.stop()
         for timer in (
             self._rebuild_timer,
             self._hover_timer,
@@ -915,6 +971,7 @@ class PlanningController:
             return
         self._note_failure(failure)
         cache = PlanningCache(config.cache_directory())
+        self._alerts.open_log(config.cache_directory())
         service = PlanningService(store, cache, config.author(), clock=self._clock)
         engine = SyncEngine(service, store) if failure is None else None
         session = _Session(
@@ -984,6 +1041,8 @@ class PlanningController:
         self._last_snapshot = session.service.snapshot
         self._apply_status()
         self._schedule_rebuild()
+        self._alerts.check()
+        self._alerts.start()
 
     async def _close_session(self) -> None:
         """``aclose``: let an opening in progress end (it closes its own store), then stop.
@@ -1850,6 +1909,7 @@ class PlanningController:
                     estimate_days=draft.estimate_days,
                     notes=draft.notes,
                     origin="backlog" if draft.start is None else "grid",
+                    reminders=self._default_reminders(task_type),
                 )
                 for draft in drafts
             ),
@@ -2051,6 +2111,7 @@ class PlanningController:
                 notes=entry.notes,
                 origin=origin,
                 off_hours=entry.off_hours,
+                reminders=self._default_reminders(entry.task_type),
             ),
             refuse=refuse,
         )
@@ -2247,24 +2308,9 @@ class PlanningController:
             info = self._projects.get(number)
             if info is not None:
                 fields["project_cache"] = self._project_cache(number, info)
-        if name == "off_hours":
-            night = bool(value)
-            verb = "Passer en travail de nuit" if night else "Remettre en horaire de jour"
-            changes = self._execute(
-                f"{verb} {self._names(targets)}",
-                chain(step(commands.set_night, target, night) for target in targets),
-            )
-            if changes is None:
-                self._refresh_from_service()
-            return
-        if name == "off_standard":
-            free = bool(value)
-            verb = "Sortir des horaires standard" if free else "Remettre aux horaires standard"
-            changes = self._execute(
-                f"{verb} {self._names(targets)}",
-                chain(step(commands.set_off_standard, target, free) for target in targets),
-            )
-            if changes is None:
+        own = self._own_command(name, value, targets)
+        if own is not None:
+            if self._execute(*own) is None:
                 self._refresh_from_service()
             return
         subject = FIELD_LABELS.get(name, name)
@@ -2274,6 +2320,33 @@ class PlanningController:
         )
         if changes is None:
             self._refresh_from_service()
+
+    def _own_command(
+        self, name: str, value: object, targets: Sequence[str]
+    ) -> tuple[str, Step] | None:
+        """Label and step of a field of the Détail that has its own command, else None."""
+        names = self._names(targets)
+        if name == "off_hours":
+            night = bool(value)
+            verb = "Passer en travail de nuit" if night else "Remettre en horaire de jour"
+            return (
+                f"{verb} {names}",
+                chain(step(commands.set_night, target, night) for target in targets),
+            )
+        if name == "off_standard":
+            free = bool(value)
+            verb = "Sortir des horaires standard" if free else "Remettre aux horaires standard"
+            return (
+                f"{verb} {names}",
+                chain(step(commands.set_off_standard, target, free) for target in targets),
+            )
+        if name == "reminders":
+            reminders = tuple(value) if isinstance(value, (tuple, list)) else ()
+            return (
+                f"Modifier les alertes de {names}",
+                chain(step(commands.set_reminders, target, reminders) for target in targets),
+            )
+        return None
 
     def _on_people_changed(self, task_id: str, added: object, removed: object) -> None:
         targets = self._targets(task_id)

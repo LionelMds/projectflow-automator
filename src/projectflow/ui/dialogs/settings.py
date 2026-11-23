@@ -78,6 +78,7 @@ from projectflow.ui.dialogs.planning_team import (
     SegmentedChoice,
     propose_initials,
 )
+from projectflow.ui.dialogs.settings_alerts import AlertSettingsPage
 from projectflow.ui.modal import ask_outside_task, show_outside_task
 from projectflow.ui.theme import (
     HEADING_FAMILY,
@@ -184,9 +185,18 @@ class SettingsDialog(QDialog):
         parent: QWidget | None = None,
         license_storage: LicenseKeyStorage | None = None,
         planning_config: PlanningPosteConfig | None = None,
+        planning_task_types: Sequence[tuple[str, str]] = (),
+        autostart: bool | None = None,
     ) -> None:
+        """``planning_task_types``: key and name of the task types, for the alert defaults.
+
+        ``autostart``: whether the session starts ProjectFlow, None when it cannot be set.
+        """
         super().__init__(parent)
         self.setWindowTitle("Paramètres")
+        self.alerts_page = AlertSettingsPage(
+            planning_config, task_types=planning_task_types, autostart=autostart
+        )
         self._license_storage = license_storage or SolidWorksLicenseStorage()
         self._license_clear_requested = False
         self._reconnect_repertoire = False
@@ -376,6 +386,7 @@ class SettingsDialog(QDialog):
             ("planner", "Microsoft Planner", self._planner_group(config)),
             ("cad", "Modèles CAO", self._cad_group(config)),
             ("planning", "Planning", self._planning_group(config, planning_config)),
+            ("alerts", "Notifications", self.alerts_page),
             ("ms", "Compte Microsoft", self._microsoft_group()),
             ("appearance", "Apparence", self._appearance_group(config)),
         ]
@@ -441,6 +452,8 @@ class SettingsDialog(QDialog):
         self.planning_initials_edit.textChanged.connect(self._refresh_section_meta)
         self.planning_sharepoint_radio.toggled.connect(self._refresh_section_meta)
         self.planning_onedrive_radio.toggled.connect(self._refresh_section_meta)
+        self.alerts_page.enabled_check.toggled.connect(self._refresh_section_meta)
+        self.alerts_page.quiet_check.toggled.connect(self._refresh_section_meta)
         self._refresh_section_meta()
 
     def show_section(self, key: str) -> None:
@@ -465,6 +478,9 @@ class SettingsDialog(QDialog):
             " · ".join(part for part in (initials, storage) if part)
             if self._planning_available
             else "",
+        )
+        self._section_meta["alerts"].setText(
+            self.alerts_page.summary() if self._planning_available else ""
         )
         self._section_meta["appearance"].setText(
             f"{MODES[self._appearance_mode]} · {PALETTES[self._appearance_palette][0]}",
@@ -511,6 +527,7 @@ class SettingsDialog(QDialog):
             self.planning_color_choice.current(),
             config.color_by,
         )
+        self.alerts_page.apply_to(config)
 
     def set_planning_members(self, members: Sequence[PlannerMember]) -> None:
         """Offer the Microsoft 365 members (id, name, e-mail) in « Je suis… »."""

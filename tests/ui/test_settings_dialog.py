@@ -727,10 +727,13 @@ def test_planning_section_sits_before_microsoft_account(qtbot) -> None:  # type:
 
     dialog.show_section("planning")
     planning_index = dialog.pages.currentIndex()
+    # « Notifications », the alerts of the planning, comes right after it.
+    dialog.show_section("alerts")
+    assert dialog.pages.currentIndex() == planning_index + 1
     dialog.show_section("ms")
 
-    assert dialog.pages.currentIndex() == planning_index + 1
-    assert dialog._section_buttons.button(planning_index + 1).isChecked()  # noqa: SLF001
+    assert dialog.pages.currentIndex() == planning_index + 2
+    assert dialog._section_buttons.button(planning_index + 2).isChecked()  # noqa: SLF001
     dialog.show_section("appearance")
     assert dialog.pages.currentIndex() == dialog.pages.count() - 1
 

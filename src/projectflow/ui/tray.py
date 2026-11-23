@@ -4,6 +4,8 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QAction, QCursor, QIcon
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
+ALERT_MESSAGE_MS = 12_000
+
 
 class ProjectFlowTray(QObject):
     show_requested = Signal()
@@ -12,6 +14,8 @@ class ProjectFlowTray(QObject):
     update_check_requested = Signal()
     reset_requested = Signal()
     quit_requested = Signal()
+    alert_clicked = Signal()
+    """The message of a planning alert was clicked."""
 
     def __init__(self, *, icon: QIcon, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -19,6 +23,8 @@ class ProjectFlowTray(QObject):
         self._menu = self._build_menu()
         self._tray.setToolTip("ProjectFlow Automator")
         self._tray.activated.connect(self._on_activated)
+        self._tray.messageClicked.connect(self._on_message_clicked)
+        self._alert_shown = False
 
     @property
     def is_available(self) -> bool:
@@ -30,7 +36,20 @@ class ProjectFlowTray(QObject):
 
     def show_message(self, title: str, message: str) -> None:
         if self.is_available and self._tray.supportsMessages():
+            self._alert_shown = False
             self._tray.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 3500)
+
+    def show_alert(self, title: str, message: str) -> None:
+        """Planning alert: shown longer, with the application icon; a click opens the alerts."""
+        if self.is_available and self._tray.supportsMessages():
+            self._alert_shown = True
+            self._tray.showMessage(title, message, self._tray.icon(), ALERT_MESSAGE_MS)
+
+    def _on_message_clicked(self) -> None:
+        if self._alert_shown:
+            self.alert_clicked.emit()
+        else:
+            self.show_requested.emit()
 
     def _build_menu(self) -> QMenu:
         menu = QMenu()

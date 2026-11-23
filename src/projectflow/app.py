@@ -266,6 +266,8 @@ def _configure_tray(
     tray.reset_requested.connect(controller.request_reset)
     tray.quit_requested.connect(lambda: _quit_from_tray(app, window))
     controller.set_notifier(tray.show_message)
+    controller.set_alert_notifier(tray.show_alert)
+    tray.alert_clicked.connect(controller.show_planning_alerts)
     window.hidden_to_background.connect(
         lambda: tray.show_message(
             "ProjectFlow reste actif",

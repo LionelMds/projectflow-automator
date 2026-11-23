@@ -29,6 +29,7 @@ from pydantic import ValidationError
 from projectflow.core.planning.calendar import CANTONS, SNAP_MINUTES, WorkCalendar, snap
 from projectflow.core.planning.changes import DocumentChange, PlanningSnapshot
 from projectflow.core.planning.models import (
+    MAX_REMINDERS,
     STATUS_LABELS,
     Absence,
     AbsenceReason,
@@ -39,6 +40,7 @@ from projectflow.core.planning.models import (
     PlanningTask,
     ProjectCache,
     RecurringOff,
+    Reminder,
     Resource,
     ResourceKind,
     TaskOrigin,
@@ -201,6 +203,7 @@ def create_task(
     origin: TaskOrigin = "grid",
     off_hours: bool = False,
     off_standard: bool = False,
+    reminders: Sequence[Reminder] = (),
 ) -> Changes:
     """Create a task, always the first change returned.
 
@@ -232,6 +235,7 @@ def create_task(
         "assignments": {resource_id: {} for resource_id in people},
         "off_hours": off_hours,
         "off_standard": off_standard and not off_hours,
+        "reminders": tuple(reminders),
     }
     extra: list[DocumentChange] = []
     if start is None:
@@ -622,6 +626,29 @@ def set_off_standard(ctx: CommandContext, task_id: str, off_standard: bool) -> C
     standard = _calendar(ctx, next(iter(task.assignments), None))
     begin, finish = _span(standard, task.start, minutes)
     return _save(ctx, task, off_standard=False, start=begin, end=finish)
+
+
+def set_reminders(ctx: CommandContext, task_id: str, reminders: Iterable[object]) -> Changes:
+    """Replace the alerts (« Alerte notification ») of a task.
+
+    The same alert given twice counts once; they are kept in the order they ring for a
+    task that does not move: the furthest before the start first, then the set moments.
+    """
+    task = _task(ctx, task_id)
+    unique: dict[str, Reminder] = {}
+    for item in reminders:
+        try:
+            reminder = item if isinstance(item, Reminder) else Reminder.model_validate(item)
+        except ValidationError as error:
+            raise PlanningCommandError(_validation_message(error)) from error
+        unique.setdefault(reminder.key, reminder)
+    if len(unique) > MAX_REMINDERS:
+        raise PlanningCommandError(f"Au plus {MAX_REMINDERS} alertes par tache.")
+    ordered = sorted(
+        unique.values(),
+        key=lambda reminder: (reminder.kind == "at", -reminder.minutes, reminder.at or 0),
+    )
+    return _save(ctx, task, reminders=tuple(ordered))
 
 
 def task_days(calendar: WorkCalendar, task: PlanningTask) -> float:
@@ -1190,6 +1217,10 @@ def _replaced(
 def _copy_data(task: PlanningTask) -> dict[str, object]:
     data: dict[str, object] = task.model_dump(exclude=set(_ENVELOPE_FIELDS))
     data["planner_task_id"] = ""
+    # A copy keeps the alerts that follow its start, not the ones set at a moment.
+    data["reminders"] = [
+        reminder.model_dump() for reminder in task.reminders if reminder.kind == "before"
+    ]
     return data
 
 
