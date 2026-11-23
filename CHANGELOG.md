@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+- Planning : « Alerte notification » dans le Detail d'une tache, colonne « Quand ». « + Alerte »
+  previent avant le debut (au debut, 5, 15, 30 min, 1 h, 2 h, 1 jour) ou « A un moment
+  precis » choisi sur les rouleaux ; jusqu'a 6 alertes par tache, un clic sur une alerte la
+  retire. Une alerte « avant le debut » suit la tache quand elle est deplacee.
+- Planning : une cloche dans la barre d'outils compte les alertes non lues et ouvre leur
+  historique, groupe par jour : « Ouvrir » montre la tache, « Reporter » la fait sonner a
+  nouveau (10 min, 30 min, 1 h, demain matin), « Retirer » l'enleve. A l'heure dite, l'alerte
+  s'affiche dans l'onglet Planning et dans le centre de notifications de Windows ou de macOS ;
+  un clic sur ce message ouvre l'historique. Un poste sonne pour les taches de sa personne
+  (initiales des Parametres), ou de celui qui a cree une tache sans personne. Les alertes
+  echues pendant que ProjectFlow etait ferme sont annoncees au demarrage. L'historique reste
+  sur le poste (60 jours).
+- Parametres : nouvelle page « Notifications », propre a chaque poste. Activer ou couper les
+  alertes ; prevenir pour « Mes taches » ou « Toutes les taches » ; afficher ou non dans le
+  centre de notifications du systeme ; signal sonore ; heures de silence (par defaut 18:00 a
+  06:00 et le week-end), pendant lesquelles une alerte attend dans l'historique, non lue.
+- Planning : deux resumes a l'heure choisie dans « Notifications ». « Ma journee » annonce les
+  taches du jour, « A venir » celles du prochain jour travaille (lundi pour un vendredi). Un
+  clic sur le resume amene le planning sur ce jour ; un jour sans tache n'annonce rien.
+- Planning : une alerte par defaut par type de tache (« Notifications »), donnee d'office aux
+  taches creees sur le poste par la saisie rapide, la saisie dans une cellule ou l'import d'un
+  rendez-vous.
+- « Lancer ProjectFlow a l'ouverture de session » (page « Notifications ») : l'application
+  demarre reduite dans la zone de notification, pour que les alertes sonnent sans l'ouvrir.
+  Windows et macOS, application installee uniquement.
+- Mobile : « Alerte notification » dans une tache et a la derniere etape de la creation. Les
+  delais courants (au debut, 15 min, 30 min, 1 h, 1 jour avant) s'activent d'un toucher,
+  « A un moment precis » ouvre les rouleaux d'un jour et d'une heure ; les alertes posees sur
+  le poste s'y retrouvent. Le telephone previent meme ProjectFlow ferme (notification locale,
+  sans serveur) et un toucher sur l'alerte ouvre la tache. Parametres > Notifications : activer
+  ou couper, « Mes taches » ou « Toutes les taches », autorisation du telephone. Demande un
+  nouveau build de l'application (module expo-notifications) ; une tache deplacee par un
+  collegue sonne a sa nouvelle heure une fois le planning relu, a l'ouverture suivante.
+
 ## 0.1.83
 
 - Planning : le defilement horizontal est libre dans les vues Jour, Semaine et Mois. Plus de

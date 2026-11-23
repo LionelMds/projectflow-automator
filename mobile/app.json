@@ -41,6 +41,13 @@
       "expo-font",
       "expo-sharing",
       [
+        "expo-notifications",
+        {
+          "color": "#5980a6",
+          "enableRemoteNotifications": false
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",

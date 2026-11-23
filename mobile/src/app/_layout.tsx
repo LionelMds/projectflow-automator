@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '@/lib/auth';
+import { NotificationSync } from '@/lib/notifications/NotificationSync';
 import { PlanningProvider } from '@/lib/planning/PlanningContext';
 import { RecentProvider } from '@/lib/recent/RecentContext';
 import { RepertoireProvider } from '@/lib/repertoire/RepertoireContext';
@@ -36,6 +37,7 @@ export default function RootLayout() {
               <RecentProvider>
                 <PlanningProvider>
                   <WidgetSync />
+                  <NotificationSync />
                   <StatusBar style="dark" />
                   <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
                     <Stack.Screen name="(tabs)" />

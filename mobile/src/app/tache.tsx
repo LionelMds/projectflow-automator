@@ -5,6 +5,7 @@ import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollVie
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ActionSheet, type SheetSection } from '@/components/ActionSheet';
+import { AlertPicker } from '@/components/AlertPicker';
 import { Button } from '@/components/Button';
 import { Notice } from '@/components/Notice';
 import { Segmented } from '@/components/Segmented';
@@ -23,6 +24,7 @@ import {
   resizeTask,
   scheduleTask,
   setOffStandard,
+  setReminders,
   setStatus,
   unassign,
   unscheduleTask,
@@ -398,6 +400,16 @@ export default function TacheScreen() {
             {scheduled ? (
               <LinkButton label="Renvoyer à planifier" disabled={locked || busy} onPress={() => void run(() => unscheduleTask(ctx, task.id), `Remis à planifier : ${label}`)} />
             ) : null}
+          </Card>
+
+          <Card title="Alerte notification">
+            <AlertPicker
+              reminders={task.reminders ?? []}
+              start={start}
+              today={today}
+              disabled={locked || busy}
+              onChange={(next) => void run(() => setReminders(ctx, task.id, next), `Alertes : ${label}`)}
+            />
           </Card>
 
           {/* Who */}

@@ -7,11 +7,13 @@ import { Button } from '@/components/Button';
 import { Chip } from '@/components/Choice';
 import { Field } from '@/components/Field';
 import { MicrosoftSignIn } from '@/components/MicrosoftSignIn';
+import { Segmented } from '@/components/Segmented';
 import { Body, Caps, Kicker, Muted, SectionHeading, Title } from '@/components/Text';
 import { useAuth } from '@/lib/auth';
 import { COMPANY_LABELS, companySettingsFor, emptyCompanyFields, type CompanyField } from '@/lib/companySettings';
 import { DEMO_PLAN_ID, demoPlanner } from '@/lib/demoProjects';
 import { close } from '@/lib/navigation';
+import { NOTIFICATIONS_AVAILABLE, notificationPermission, requestNotificationPermission, type Permission } from '@/lib/notifications/schedule';
 import { usePlanning } from '@/lib/planning/PlanningContext';
 import { errorMessage } from '@/lib/projects/creation';
 import { graphDrive } from '@/lib/projects/drive';
@@ -385,6 +387,15 @@ export default function ParametresScreen() {
             </Blueprint>
           ) : null}
 
+          {NOTIFICATIONS_AVAILABLE ? (
+            <AlertsSection
+              enabled={draft.alerts}
+              audience={draft.alertsAudience}
+              onEnabled={(alerts) => setEdits((previous) => ({ ...previous, alerts }))}
+              onAudience={(alertsAudience) => setEdits((previous) => ({ ...previous, alertsAudience }))}
+            />
+          ) : null}
+
           <AccessSection />
 
           {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
@@ -392,6 +403,85 @@ export default function ParametresScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+const AUDIENCE_OPTIONS: { value: Settings['alertsAudience']; label: string }[] = [
+  { value: 'mine', label: 'Mes tâches' },
+  { value: 'all', label: 'Toutes les tâches' },
+];
+
+/**
+ * « Notifications »: whether this phone rings for the alerts of the planning, for whom, and
+ * the permission of the system, asked here or at the first alert to plan.
+ */
+function AlertsSection({
+  enabled,
+  audience,
+  onEnabled,
+  onAudience,
+}: {
+  enabled: boolean;
+  audience: Settings['alertsAudience'];
+  onEnabled: (enabled: boolean) => void;
+  onAudience: (audience: Settings['alertsAudience']) => void;
+}) {
+  const [permission, setPermission] = useState<Permission | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void notificationPermission()
+      .then((state) => {
+        if (alive) setPermission(state);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  return (
+    <Blueprint style={styles.section}>
+      <View style={styles.switchRow}>
+        <View style={styles.flex}>
+          <SectionHeading number="09">Notifications</SectionHeading>
+          <Muted>
+            Le téléphone prévient à l’heure choisie dans « Alerte notification » d’une tâche, même ProjectFlow fermé.
+          </Muted>
+        </View>
+        <Switch
+          accessibilityLabel="Alertes du planning"
+          value={enabled}
+          onValueChange={onEnabled}
+          trackColor={{ true: colors.accent700, false: colors.line }}
+        />
+      </View>
+      {enabled ? (
+        <>
+          <Caps>Prévenir pour</Caps>
+          <Segmented accessibilityLabel="Prévenir pour" options={AUDIENCE_OPTIONS} value={audience} onChange={onAudience} />
+          <Muted>
+            « Mes tâches » : celles de vos initiales, et les tâches sans personne que vous avez créées. Une tâche déplacée
+            par un collègue sonne à sa nouvelle heure une fois le planning relu, à la prochaine ouverture de ProjectFlow.
+          </Muted>
+          {permission === 'undetermined' ? (
+            <Button
+              label="Autoriser les notifications"
+              onPress={() =>
+                void requestNotificationPermission()
+                  .then(setPermission)
+                  .catch(() => undefined)
+              }
+            />
+          ) : null}
+          {permission === 'denied' ? (
+            <Text style={styles.error}>
+              Notifications refusées pour ProjectFlow : autorisez-les dans les réglages du téléphone, rubrique Notifications.
+            </Text>
+          ) : null}
+          {permission === 'granted' ? <Muted>Notifications autorisées sur ce téléphone.</Muted> : null}
+        </>
+      ) : null}
+    </Blueprint>
   );
 }
 
@@ -426,7 +516,7 @@ function AccessSection() {
 
   return (
     <Blueprint style={styles.section}>
-      <SectionHeading number="09">Accès limité</SectionHeading>
+      <SectionHeading number="10">Accès limité</SectionHeading>
       {restricted ? (
         <>
           <Body>Actif sur ce téléphone : Explorer, avec les dossiers Photos et Plans de chaque dossier, et Planning en consultation.</Body>

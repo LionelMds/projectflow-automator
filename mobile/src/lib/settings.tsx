@@ -36,6 +36,10 @@ export type Settings = {
   planningHidden: string[];
   /** Task types left out of the planning board on this phone, by key; the others are shown. */
   planningHiddenTypes: string[];
+  /** « Alerte notification »: this phone rings for the alerts of the planning. */
+  alerts: boolean;
+  /** `mine`: the tasks of these initials; `all`: every task. */
+  alertsAudience: 'mine' | 'all';
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -55,6 +59,8 @@ export const DEFAULT_SETTINGS: Settings = {
   widgetPeople: [],
   planningHidden: [],
   planningHiddenTypes: [],
+  alerts: true,
+  alertsAudience: 'mine',
 };
 const STORAGE_KEY = 'projectflow.settings';
 
@@ -106,6 +112,9 @@ export function parseSettings(raw: string | null): Settings {
       widgetPeople: strings(data.widgetPeople),
       planningHidden: strings(data.planningHidden),
       planningHiddenTypes: strings(data.planningHiddenTypes),
+      // On unless switched off: settings saved before the alerts existed keep them on.
+      alerts: data.alerts !== false,
+      alertsAudience: data.alertsAudience === 'all' ? 'all' : 'mine',
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -138,6 +147,8 @@ export function cleanSettings(next: Settings): Settings {
     widgetPeople: [...new Set(next.widgetPeople)],
     planningHidden: [...new Set(next.planningHidden)],
     planningHiddenTypes: [...new Set(next.planningHiddenTypes)],
+    alerts: next.alerts,
+    alertsAudience: next.alertsAudience === 'all' ? 'all' : 'mine',
   };
 }
 

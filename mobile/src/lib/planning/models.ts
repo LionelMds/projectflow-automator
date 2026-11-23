@@ -23,6 +23,13 @@ type Envelope = {
 export type TaskStatus = 'provisional' | 'confirmed' | 'done';
 export type DayPart = 'day' | 'morning' | 'afternoon';
 
+/**
+ * One « Alerte notification » of a task (`Reminder` on the desktop). `before`: `minutes`
+ * before the start, so it follows the task when it moves (0 is the start itself). `at`: a
+ * set moment, wall-clock text as `start`.
+ */
+export type Reminder = { kind?: 'before' | 'at'; minutes?: number; at?: string | null };
+
 export type PlanningTask = Envelope & {
   status?: TaskStatus;
   task_type?: string;
@@ -58,6 +65,8 @@ export type PlanningTask = Envelope & {
    * length (`WorkCalendar.withoutBreaks`). Never set together with `off_hours`.
    */
   off_standard?: boolean;
+  /** « Alerte notification »: when the postes and phones of its people are told about the task. */
+  reminders?: Reminder[];
 };
 
 export type RecurringOff = { weekday: number; part?: DayPart; reason?: string };

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AlertPicker } from '@/components/AlertPicker';
 import { Button } from '@/components/Button';
 import { Chip } from '@/components/Chip';
 import { Notice } from '@/components/Notice';
@@ -22,7 +23,7 @@ import type { Change } from '@/lib/planning/documents';
 import { dossierCache, resolveDossierNumber } from '@/lib/planning/dossiers';
 import { dossierSuggestions } from '@/lib/planning/entryShortcuts';
 import { dayStart, instantDay } from '@/lib/planning/instant';
-import { taskTypeOf, taskTypesOf, teamsOf } from '@/lib/planning/models';
+import { taskTypeOf, taskTypesOf, teamsOf, type Reminder } from '@/lib/planning/models';
 import { useLoadedPlanning } from '@/lib/planning/PlanningContext';
 import { UNASSIGNED } from '@/lib/planning/week';
 import { dateParts, todayNumber } from '@/lib/planning/walltime';
@@ -117,6 +118,7 @@ export default function CreerScreen() {
   const [urgent, setUrgent] = useState(false);
   const [deadline, setDeadline] = useState<number | null>(null);
   const [choosingDeadline, setChoosingDeadline] = useState(false);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
   const [error, setError] = useState('');
   const [done, setDone] = useState('');
   const [busy, setBusy] = useState(false);
@@ -269,6 +271,7 @@ export default function CreerScreen() {
           origin: 'quick_entry',
           offHours: night && span !== null,
           offStandard: offStandard && !night,
+          reminders,
         });
       } catch (exc) {
         setError(exc instanceof Error ? exc.message : 'Création impossible.');
@@ -628,6 +631,10 @@ export default function CreerScreen() {
             </Pressable>
           </View>
         ) : null}
+        <View style={styles.block}>
+          <Caps>Alerte notification (facultatif)</Caps>
+          <AlertPicker reminders={reminders} start={span?.start ?? null} today={today} onChange={setReminders} />
+        </View>
         <View style={styles.block}>
           <Caps>Notes (facultatif)</Caps>
           <TextInput

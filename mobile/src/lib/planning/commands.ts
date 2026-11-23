@@ -9,6 +9,7 @@
  * a scheduled task without assignment sits on the « Non affecté » row.
  */
 
+import { MAX_REMINDERS, orderedReminders } from '@/lib/planning/alerts';
 import { calendarFromMeta, snap, SNAP_MINUTES, WorkCalendar } from '@/lib/planning/calendar';
 import { creation, envelope, update, type Change } from '@/lib/planning/documents';
 import { formatDate, formatInstant, parseInstant, type Instant } from '@/lib/planning/instant';
@@ -22,6 +23,7 @@ import {
   type DayPart,
   type PlanningData,
   type PlanningTask,
+  type Reminder,
   type Resource,
   type TaskStatus,
 } from '@/lib/planning/models';
@@ -260,6 +262,8 @@ export type NewTask = {
   offHours?: boolean;
   /** « Hors horaires standard »: laid out without the breaks of the working hours; night work is never one. */
   offStandard?: boolean;
+  /** « Alerte notification » of the new task. */
+  reminders?: readonly Reminder[];
 };
 
 /** Create a task, always the first change returned (`create_task`). */
@@ -300,6 +304,7 @@ export function createTask(ctx: CommandContext, input: NewTask): Change[] {
     planner_task_id: '',
     off_hours: input.offHours ?? false,
     off_standard: Boolean(input.offStandard) && !input.offHours,
+    reminders: orderedReminders(input.reminders ?? []),
   };
   const start = input.start ?? null;
   const end = input.end ?? null;
@@ -519,6 +524,16 @@ export function setOffStandard(ctx: CommandContext, id: string, offStandard: boo
   const standard = calendarOf(ctx, Object.keys(task.assignments ?? {})[0]);
   const [begin, finish] = standardSpan(standard, taskCalendar(ctx, task), start, end);
   return save(ctx, 'task', task, { off_standard: false, ...wallTimes(begin, finish) });
+}
+
+/** Replace the alerts (« Alerte notification ») of a task (`set_reminders`). */
+export function setReminders(ctx: CommandContext, id: string, reminders: readonly Reminder[]): Change[] {
+  const ordered = orderedReminders(reminders);
+  if (ordered.length > MAX_REMINDERS) throw new PlanningCommandError(`Au plus ${MAX_REMINDERS} alertes par tâche.`);
+  const task = taskOf(ctx, id);
+  // A task written before the alerts existed is not rewritten to say it has none.
+  if (!ordered.length && !task.reminders?.length) return [];
+  return save(ctx, 'task', task, { reminders: ordered });
 }
 
 export function setStatus(ctx: CommandContext, id: string, status: TaskStatus): Change[] {
