@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.84
+
 - Fermeture : les fenetres sont detruites avant la sortie de l'application. Sans cela,
   ProjectFlow pouvait planter en quittant (code 139), une fois tout enregistre ; le test de
   demarrage de la CI echouait pour cette raison.
