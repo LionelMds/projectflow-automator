@@ -1041,8 +1041,10 @@ class PlanningController:
         self._last_snapshot = session.service.snapshot
         self._apply_status()
         self._schedule_rebuild()
-        self._alerts.check()
-        self._alerts.start()
+        if not self._closed:
+            # A reading that ends while the application leaves rings nothing.
+            self._alerts.check()
+            self._alerts.start()
 
     async def _close_session(self) -> None:
         """``aclose``: let an opening in progress end (it closes its own store), then stop.

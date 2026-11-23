@@ -427,3 +427,25 @@ async def test_the_detail_saves_the_alerts_and_the_poste_keeps_its_history(
     assert tab.alert_panel.isVisible()
     await close(controller)
     assert not tab.alert_panel.isVisible()
+
+
+@pytest.mark.asyncio
+async def test_a_planning_read_while_the_application_closes_rings_nothing(
+    qtbot: Any,
+    tmp_path: Path,
+    data_dirs: Any,  # noqa: F811
+) -> None:
+    store = tmp_path / "store"
+    await seed_store(store)
+    config = make_config(store)
+    controller, _tab, _hooks = make_controller(qtbot, config)
+    await started(controller)
+    session = controller._session  # noqa: SLF001 - the session being read
+    assert session is not None
+    assert controller.alerts.running
+
+    # The planning ends its reading once the application is leaving.
+    await close(controller)
+    controller._loaded(session)  # noqa: SLF001
+
+    assert not controller.alerts.running

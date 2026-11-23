@@ -9,7 +9,7 @@ from importlib import resources
 from pathlib import Path
 
 import structlog
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
@@ -161,7 +161,21 @@ def run(argv: Sequence[str]) -> int:
             finally:
                 single_instance.release()
     _after_exit(controller, logger)
+    _release_windows(app)
     return result if isinstance(result, int) else 0
+
+
+def _release_windows(app: QApplication) -> None:
+    """Destroy the windows while Qt is still whole, once everything is saved and closed.
+
+    Left to the end of the interpreter they go in no order, some after the application:
+    Python 3.11 then crashed about one exit in three (exit code 139). They are not
+    closed first: closing the main window would hide it to the tray and say so.
+    """
+    for widget in app.topLevelWidgets():
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    app.processEvents()
 
 
 def _show_at_start(

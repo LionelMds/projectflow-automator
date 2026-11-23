@@ -107,6 +107,10 @@ class AlertWatcher(QObject):
         self._log = AlertLog(directory)
         self._refresh()
 
+    @property
+    def running(self) -> bool:
+        return self._timer.isActive()
+
     def start(self) -> None:
         self._timer.start()
 

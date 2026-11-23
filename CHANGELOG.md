@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fermeture : les fenetres sont detruites avant la sortie de l'application. Sans cela,
+  ProjectFlow pouvait planter en quittant (code 139), une fois tout enregistre ; le test de
+  demarrage de la CI echouait pour cette raison.
 - Planning : « Alerte notification » dans le Detail d'une tache, colonne « Quand ». « + Alerte »
   previent avant le debut (au debut, 5, 15, 30 min, 1 h, 2 h, 1 jour) ou « A un moment
   precis » choisi sur les rouleaux ; jusqu'a 6 alertes par tache, un clic sur une alerte la
